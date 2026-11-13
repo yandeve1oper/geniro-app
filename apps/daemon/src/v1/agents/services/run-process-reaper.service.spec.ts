@@ -18,6 +18,7 @@ import {
   type ScannedProcess,
 } from '../utils/run-process-scan';
 import type { StoppedCommands } from '../utils/spawn-cli';
+import { ActionCommandRegistry } from './action-command.registry';
 import type { AgentSessionRegistry } from './agent-session.registry';
 import { RunProcessAttribution } from './run-process-attribution.service';
 import {
@@ -495,6 +496,48 @@ describe('RunProcessReaper', () => {
     expect(logger.warn).toHaveBeenCalledWith(
       `could not stop the processes of run(s) ${RUN}: boom`,
     );
+  });
+});
+
+describe('createRunProcessReaper', () => {
+  it('leaves a finished card’s leftovers to the idle reap when a command action starts during its close', async () => {
+    // Pressed while the card's CLIs were still exiting: the run is in use when
+    // the finished card's reap scans, and that command's processes carry the
+    // same run tag as what the agents left.
+    const commands = new ActionCommandRegistry();
+    const signals: [number, NodeJS.Signals][] = [];
+    const sessions = {
+      processRoots: () => [],
+      onLeftCommands: () => undefined,
+    } as unknown as AgentSessionRegistry;
+    const subject = createRunProcessReaper(
+      new RunProcessAttribution(OWNER, {
+        scan: () =>
+          Promise.resolve([row(10, 1, 'node dev-server.js', { env: tag() })]),
+        selfPid: SELF,
+        uid: UID,
+      }),
+      sessions,
+      [commands],
+      {
+        signal: (pid, sig) => signals.push([pid, sig]),
+        startTimes: sameAsListed,
+        wait: () => Promise.resolve(),
+        logger: { log: vi.fn(), warn: vi.fn() },
+        selfPid: SELF,
+        uid: UID,
+      },
+    );
+    const pressed = commands.start(RUN);
+
+    subject.reapInBackground(RUN);
+    await subject.settled();
+    expect(signals).toEqual([]);
+
+    pressed.release();
+    const stopped = await subject.reapIdle(RUN);
+    expect(stopped.map((process) => process.pid)).toEqual([10]);
+    expect(signals).toContainEqual([10, 'SIGTERM']);
   });
 });
 
