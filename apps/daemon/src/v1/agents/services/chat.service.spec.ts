@@ -1560,6 +1560,7 @@ function setup(
     statuses,
     deletedRuns,
     reapedRuns,
+    teardown,
     changedRuns,
     createdRuns,
     removedAttachmentRuns,
@@ -6525,6 +6526,59 @@ describe('ChatService', () => {
 
       await service.delete(chat.id);
       expect(reapedRuns).toEqual([chat.id, team.id, chat.id]);
+    });
+
+    it('lets a finished card end its run after an archive that failed before filing it', async () => {
+      // The archive ends the run's processes before it writes `archivedAt`; a
+      // throw in between leaves the run unarchived, and its card's Done must
+      // still reap it.
+      const { service, runDao, reapedRuns, teardown } = setup();
+      const chat = await service.createChat({ agentKind: 'claude', cwd: dir });
+      vi.spyOn(runDao, 'updateWithoutActivity').mockRejectedValueOnce(
+        new Error('disk full'),
+      );
+
+      await expect(service.archive(chat.id)).rejects.toThrow('disk full');
+      expect((await runDao.getById(chat.id))?.archivedAt).toBeNull();
+      expect(reapedRuns).toEqual([chat.id]);
+
+      expect(teardown.hasEnded(chat.id)).toBe(false);
+      teardown.reapDetached(chat.id);
+      expect(reapedRuns).toEqual([chat.id, chat.id]);
+    });
+
+    it('keeps an archived run ended when archiving it AGAIN fails before its write', async () => {
+      // This call never filed the run, but the run is archived all the same:
+      // handing it back would let its card's Done reap a shelved run again.
+      const { service, runDao, reapedRuns, teardown } = setup();
+      const chat = await service.createChat({ agentKind: 'claude', cwd: dir });
+      await service.archive(chat.id);
+      vi.spyOn(runDao, 'updateWithoutActivity').mockRejectedValueOnce(
+        new Error('disk full'),
+      );
+
+      await expect(service.archive(chat.id)).rejects.toThrow('disk full');
+      expect((await runDao.getById(chat.id))?.archivedAt).not.toBeNull();
+      reapedRuns.length = 0;
+
+      expect(teardown.hasEnded(chat.id)).toBe(true);
+      teardown.reapDetached(chat.id);
+      expect(reapedRuns).toEqual([]);
+    });
+
+    it('still leaves the reap to an archive that failed after filing the run', async () => {
+      // Archived is archived: a later step failing (the pin) does not hand the
+      // run back to its card's Done, whose reap would be a second one.
+      const { service, runDao, reapedRuns, teardown } = setup();
+      const chat = await service.createChat({ agentKind: 'claude', cwd: dir });
+      vi.spyOn(runDao, 'repin').mockRejectedValueOnce(new Error('locked'));
+
+      await expect(service.archive(chat.id)).rejects.toThrow('locked');
+      expect((await runDao.getById(chat.id))?.archivedAt).not.toBeNull();
+
+      expect(teardown.hasEnded(chat.id)).toBe(true);
+      teardown.reapDetached(chat.id);
+      expect(reapedRuns).toEqual([chat.id]);
     });
 
     it('stops a RUNNING team run through the registry both engines share', async () => {

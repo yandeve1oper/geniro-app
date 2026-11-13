@@ -3,7 +3,16 @@ import {
   MikroORM,
   UnderscoreNamingStrategy,
 } from '@mikro-orm/sqlite';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest';
 
 import { CallTokenRegistry } from '../../../auth/call-token.registry';
 import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
@@ -247,6 +256,130 @@ describe('RunTeardownService (in-memory sqlite)', () => {
     expect(inboxCancels).toEqual([
       { runId: 'run-a', why: 'deleted', runStillThere: true },
     ]);
+  });
+
+  it('reaps a finished card’s run ONCE when an archive lands during its close', () => {
+    // An archive in between has queued the run's reap already, and the reaper
+    // takes a batch off its queue before scanning, so a second request would
+    // be a second full reap.
+    teardown.endProcesses('run-a');
+    teardown.reapDetached('run-a');
+
+    expect(processEnds).toEqual(['closeRun run-a', 'reap run-a']);
+  });
+
+  it('says a run is ended once it is archived or deleted, and reaps nothing more', () => {
+    expect(teardown.hasEnded('run-a')).toBe(false);
+    teardown.endProcesses('run-a');
+    processEnds.length = 0;
+
+    expect(teardown.hasEnded('run-a')).toBe(true);
+    teardown.reapDetached('run-a');
+
+    expect(processEnds).toEqual([]);
+  });
+
+  it('hands a run back to its card’s Done when a delete fails before the run is gone', async () => {
+    await seedRun('run-a');
+    const failing = vi
+      .spyOn(wallTurnDao, 'hardDeleteIncludingSoftDeleted')
+      .mockRejectedValueOnce(new Error('disk full'));
+    onTestFinished(() => failing.mockRestore());
+
+    await expect(
+      teardown.purge(orm.em.fork(), 'run-a', undefined),
+    ).rejects.toThrow('disk full');
+    expect(commands.isEnding('run-a')).toBe(false);
+    expect(monitors.isEnding('run-a')).toBe(false);
+    processEnds.length = 0;
+
+    expect(teardown.hasEnded('run-a')).toBe(false);
+    teardown.reapDetached('run-a');
+    expect(processEnds).toEqual(['reap run-a']);
+  });
+
+  it('keeps an ARCHIVED run ended when its delete fails before the row is gone', async () => {
+    // The delete from the archive: a failure here leaves it archived, not
+    // live, so its commands and monitors stay refused.
+    await runDao.create({
+      id: 'run-a',
+      agentKind: 'claude',
+      cwd: '/work',
+      archivedAt: new Date(),
+    });
+    const failing = vi
+      .spyOn(wallTurnDao, 'hardDeleteIncludingSoftDeleted')
+      .mockRejectedValueOnce(new Error('disk full'));
+    onTestFinished(() => failing.mockRestore());
+
+    await expect(
+      teardown.purge(orm.em.fork(), 'run-a', undefined),
+    ).rejects.toThrow('disk full');
+    expect(
+      (await runDao.getById('run-a', orm.em.fork()))?.archivedAt,
+    ).not.toBeNull();
+    expect(commands.isEnding('run-a')).toBe(true);
+    expect(monitors.isEnding('run-a')).toBe(true);
+    processEnds.length = 0;
+
+    expect(teardown.hasEnded('run-a')).toBe(true);
+    teardown.reapDetached('run-a');
+    expect(processEnds).toEqual([]);
+  });
+
+  it('keeps a run ended when a failed delete cannot read whether it is still live', async () => {
+    await seedRun('run-a');
+    const failing = vi
+      .spyOn(runDao, 'getById')
+      .mockRejectedValue(new Error('database is locked'));
+    onTestFinished(() => failing.mockRestore());
+
+    await expect(
+      teardown.purge(orm.em.fork(), 'run-a', undefined),
+    ).rejects.toThrow('database is locked');
+    // Both reads failed: the purge's own and the hand-back's.
+    expect(failing).toHaveBeenCalledTimes(2);
+    processEnds.length = 0;
+
+    expect(teardown.hasEnded('run-a')).toBe(true);
+    teardown.reapDetached('run-a');
+    expect(processEnds).toEqual([]);
+  });
+
+  it('keeps a deleted run ended when a step after its row is gone fails', async () => {
+    // Archived, so the purge goes on to remove its CLI transcripts: the step
+    // after the run row is gone.
+    await runDao.create({
+      id: 'run-a',
+      agentKind: 'claude',
+      cwd: '/work',
+      archivedAt: new Date(),
+    });
+    const failing = vi
+      .spyOn(SessionTranscriptsService.prototype, 'remove')
+      .mockRejectedValueOnce(new Error('transcript store locked'));
+    onTestFinished(() => failing.mockRestore());
+
+    await expect(
+      teardown.purge(orm.em.fork(), 'run-a', undefined),
+    ).rejects.toThrow('transcript store locked');
+    expect(await runDao.getById('run-a', orm.em.fork())).toBeNull();
+    processEnds.length = 0;
+
+    expect(teardown.hasEnded('run-a')).toBe(true);
+    teardown.reapDetached('run-a');
+    expect(processEnds).toEqual([]);
+  });
+
+  it('reaps a finished card’s run again once it is back from the archive', () => {
+    teardown.endProcesses('run-a');
+    teardown.resumeProcesses('run-a');
+    processEnds.length = 0;
+
+    expect(teardown.hasEnded('run-a')).toBe(false);
+    teardown.reapDetached('run-a');
+
+    expect(processEnds).toEqual(['reap run-a']);
   });
 
   it('ends the command actions the run has running — that run’s only', () => {

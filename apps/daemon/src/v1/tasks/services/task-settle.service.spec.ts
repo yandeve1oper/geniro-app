@@ -22,6 +22,8 @@ import { ItemDao } from '../../agents/dao/item.dao';
 import { RunDao } from '../../agents/dao/run.dao';
 import type { AgentAdapterRegistry } from '../../agents/services/agent-adapter.registry';
 import { AgentEventBus } from '../../agents/services/agent-events.bus';
+import type { AgentSessionRegistry } from '../../agents/services/agent-session.registry';
+import type { RunTeardownService } from '../../agents/services/run-teardown.service';
 import { ProjectDao } from '../../projects/dao/project.dao';
 import { Project } from '../../projects/entity/project.entity';
 import {
@@ -87,6 +89,13 @@ describe('TaskSettleService (in-memory sqlite)', () => {
   let changes: TaskChangedEvent[];
   let projectChanges: string[];
   let projectId: string;
+  /** The kept CLI processes: what a finished card's run must end. */
+  let sessions: { closeFinishedRun: ReturnType<typeof vi.fn> };
+  /** What the run's agents left running detached. */
+  let teardown: {
+    hasEnded: ReturnType<typeof vi.fn>;
+    reapDetached: ReturnType<typeof vi.fn>;
+  };
 
   beforeAll(async () => {
     orm = await MikroORM.init(
@@ -134,6 +143,11 @@ describe('TaskSettleService (in-memory sqlite)', () => {
     projectEvents
       .allChanges()
       .subscribe((event) => projectChanges.push(event.projectId));
+    sessions = { closeFinishedRun: vi.fn().mockResolvedValue(undefined) };
+    teardown = {
+      hasEnded: vi.fn().mockReturnValue(false),
+      reapDetached: vi.fn(),
+    };
     service = new TaskSettleService(
       em,
       bus,
@@ -144,6 +158,9 @@ describe('TaskSettleService (in-memory sqlite)', () => {
       itemDao,
       projectEvents,
       adapters,
+      sessions as unknown as AgentSessionRegistry,
+      taskEvents,
+      teardown as unknown as RunTeardownService,
     );
     const project = await projectDao.create({
       name: 'Board',
@@ -151,6 +168,13 @@ describe('TaskSettleService (in-memory sqlite)', () => {
     });
     projectId = project.id;
   });
+
+  /** Long enough for `endFinishedWork` to have read the card and the run. */
+  const flushSettle = async (): Promise<void> => {
+    for (let tick = 0; tick < 5; tick += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
 
   /** A card already in `in_progress` with a live run working it. */
   const working = async (runId = 'run-1') => {
@@ -1214,6 +1238,147 @@ describe('TaskSettleService (in-memory sqlite)', () => {
       status: 'done',
       reason: 'work-finished',
     });
+  });
+
+  it('ends the run’s processes at once when the card’s work is finished', async () => {
+    // Its worktree is collected next: nothing may go on running in it.
+    const task = await working();
+    service.onModuleInit();
+    await settleRun('run-1', 'completed');
+    expect(sessions.closeFinishedRun).not.toHaveBeenCalled();
+
+    await tasks.moveStatus(task.id, { from: 'in_progress', to: 'done' });
+
+    await vi.waitFor(() =>
+      expect(sessions.closeFinishedRun).toHaveBeenCalledWith('run-1'),
+    );
+  });
+
+  it('reaps what a finished card’s agents left running, once its CLIs have gone', async () => {
+    // A dev server or watcher the agent detached is not in the CLI's process
+    // group, so the graceful close does not reach it. Run during the close, the
+    // reap would signal a CLI still finishing on its own.
+    const task = await working();
+    let closed = (): void => {};
+    sessions.closeFinishedRun.mockReturnValue(
+      new Promise<void>((resolve) => {
+        closed = resolve;
+      }),
+    );
+    service.onModuleInit();
+    await settleRun('run-1', 'completed');
+
+    await tasks.moveStatus(task.id, { from: 'in_progress', to: 'done' });
+    await vi.waitFor(() =>
+      expect(sessions.closeFinishedRun).toHaveBeenCalled(),
+    );
+    expect(teardown.reapDetached).not.toHaveBeenCalled();
+
+    closed();
+    await vi.waitFor(() =>
+      expect(teardown.reapDetached).toHaveBeenCalledWith('run-1'),
+    );
+  });
+
+  it('leaves live work alone: a monitor holds the card, and its run ends only once it stops', async () => {
+    // `RunLiveWork` withholds `work-finished` while a monitor runs, so this
+    // card does not stop one at Done; it ends with the finish it held back.
+    const task = await working();
+    service.onModuleInit();
+    await tasks.moveStatus(task.id, { from: 'in_progress', to: 'done' });
+    live.hold('run-1', 'monitor');
+
+    await settleRun('run-1', 'completed');
+    expect(sessions.closeFinishedRun).not.toHaveBeenCalled();
+    expect(teardown.reapDetached).not.toHaveBeenCalled();
+
+    live.release('run-1');
+    await vi.waitFor(() =>
+      expect(teardown.reapDetached).toHaveBeenCalledWith('run-1'),
+    );
+    expect(changes.at(-1)).toMatchObject({
+      taskId: task.id,
+      reason: 'work-finished',
+    });
+  });
+
+  it('leaves a finished card’s run alone once it is archived — its teardown reaps it once', async () => {
+    const task = await working();
+    service.onModuleInit();
+    await settleRun('run-1', 'completed');
+    const run = await runDao.getById('run-1');
+    run!.archivedAt = new Date();
+    await em.flush();
+
+    await tasks.moveStatus(task.id, { from: 'in_progress', to: 'done' });
+    await flushSettle();
+
+    expect(sessions.closeFinishedRun).not.toHaveBeenCalled();
+    expect(teardown.reapDetached).not.toHaveBeenCalled();
+  });
+
+  it('closes nothing when the teardown says an archive or delete already ended the run', async () => {
+    const task = await working();
+    teardown.hasEnded.mockReturnValue(true);
+    service.onModuleInit();
+    await settleRun('run-1', 'completed');
+
+    await tasks.moveStatus(task.id, { from: 'in_progress', to: 'done' });
+    await vi.waitFor(() =>
+      expect(teardown.hasEnded).toHaveBeenCalledWith('run-1'),
+    );
+    await flushSettle();
+
+    expect(sessions.closeFinishedRun).not.toHaveBeenCalled();
+    expect(teardown.reapDetached).not.toHaveBeenCalled();
+  });
+
+  it('ends nothing when the card is picked back up between the event and its handling', async () => {
+    // A Run press or a Follow up landing after `work-finished` was announced:
+    // the close would land on the turn the user just started, and a close with
+    // a turn in flight signals it at once.
+    const task = await working();
+    await settleRun('run-1', 'completed');
+    await tasks.moveStatus(task.id, { from: 'in_progress', to: 'done' });
+    service.onModuleInit();
+    const announce = async (): Promise<void> => {
+      taskEvents.publishTaskChanged({
+        taskId: task.id,
+        projectId,
+        status: 'done',
+        reason: 'work-finished',
+      });
+      await flushSettle();
+    };
+
+    // A start in flight for the card.
+    expect(tasks.claimStart(task.id)).toBe(true);
+    await announce();
+    tasks.releaseStart(task.id);
+    // Live work started since the event.
+    live.hold('run-1', 'monitor');
+    await announce();
+    live.release('run-1');
+    // Its run working again.
+    const run = await runDao.getById('run-1');
+    run!.status = 'running';
+    await em.flush();
+    await announce();
+    // Its card back in progress (a Follow up's move, before its run is).
+    run!.status = 'completed';
+    await em.flush();
+    await tasks.moveStatus(task.id, { from: 'done', to: 'in_progress' });
+    await announce();
+
+    expect(sessions.closeFinishedRun).not.toHaveBeenCalled();
+    expect(teardown.reapDetached).not.toHaveBeenCalled();
+
+    // Done again with its run settled: finished after all.
+    await tasks.moveStatus(task.id, { from: 'in_progress', to: 'done' });
+    await vi.waitFor(() =>
+      expect(teardown.reapDetached).toHaveBeenCalledWith('run-1'),
+    );
+    expect(sessions.closeFinishedRun).toHaveBeenCalledTimes(1);
   });
 
   it('releases a card whose run was deleted, keeping the report that is the card’s own', async () => {

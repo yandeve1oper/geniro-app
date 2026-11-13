@@ -92,6 +92,16 @@ export class RunTeardownService {
   ) {}
 
   /**
+   * Runs {@link endProcesses} ended that have not come back
+   * ({@link resumeProcesses}). Set before the archive or delete completes,
+   * which closes the race with a finished card's close in flight: their reap
+   * is queued already, and a second request would be a second full reap. In
+   * memory only: a deleted run's id is kept for the daemon's life, since a
+   * card's end may still be in flight after the purge.
+   */
+  private readonly ended = new Set<string>();
+
+  /**
    * End every process the run holds, for a run being archived or deleted.
    *
    * EVERY CLI of it — a team run keeps one per member and per conversation
@@ -104,6 +114,7 @@ export class RunTeardownService {
    * the user allowed in its browser are forgotten.
    */
   endProcesses(runId: string): void {
+    this.ended.add(runId);
     this.commands.abortRun(runId);
     this.monitors?.abortRun(runId);
     this.browserBridge?.rejectRun(runId, 'The chat was archived or deleted.');
@@ -112,8 +123,48 @@ export class RunTeardownService {
     this.reaper.reapInBackground(runId);
   }
 
+  /** Whether an archive or delete has ended this run ({@link ended}). */
+  hasEnded(runId: string): boolean {
+    return this.ended.has(runId);
+  }
+
+  /**
+   * The second half of {@link endProcesses} alone — what the run's agents left
+   * running detached — for a caller that closed the CLIs itself and waited for
+   * them (a finished card's graceful close). Nothing for a run an archive or
+   * delete ended meanwhile: that reap is the run's one.
+   */
+  reapDetached(runId: string): void {
+    if (this.ended.has(runId)) {
+      return;
+    }
+    this.reaper.reapInBackground(runId);
+  }
+
+  /**
+   * {@link resumeProcesses} for an archive or delete that failed, only when the
+   * run is still live: read from its own row on a fresh fork, not from how far
+   * the failed call got. A read that fails keeps it ended.
+   */
+  async resumeIfLive(runId: string, em: EntityManager): Promise<void> {
+    let live: boolean;
+    try {
+      const run = await this.runDao.getById(runId, em.fork());
+      live = run !== null && run.archivedAt == null;
+    } catch (err) {
+      this.logger.warn(
+        `run ${runId}: could not read whether it is still live after a failed archive or delete; it stays ended: ${String(err)}`,
+      );
+      return;
+    }
+    if (live) {
+      this.resumeProcesses(runId);
+    }
+  }
+
   /** A run back from the archive: its command actions and monitors run again. */
   resumeProcesses(runId: string): void {
+    this.ended.delete(runId);
     this.commands.allowRun(runId);
     this.monitors?.allowRun(runId);
   }
@@ -146,89 +197,94 @@ export class RunTeardownService {
     // this would strand a CLI, and every MCP server it started, belonging to a
     // run that no longer exists and that nothing can ever reach again.
     this.endProcesses(runId);
-    // A command action ended above still writes its closing row; one landing
-    // after the rows below are gone would belong to no run.
-    await this.commands.settled(runId, COMMAND_SETTLE_MS);
-    await this.monitors?.settled(runId, COMMAND_SETTLE_MS);
+    try {
+      // A command action ended above still writes its closing row; one landing
+      // after the rows below are gone would belong to no run.
+      await this.commands.settled(runId, COMMAND_SETTLE_MS);
+      await this.monitors?.settled(runId, COMMAND_SETTLE_MS);
 
-    // The in-memory planes. Cleared next — pure bookkeeping, and a failure
-    // here must not leave the durable rows half-deleted.
-    this.callTokens.revokeRun(runId);
-    this.partials.forgetRun(runId);
-    // Dropped only AFTER the caller's work has settled (above), so nothing can
-    // still be reserving against a tail we are discarding.
-    this.seqs.forget(runId);
+      // The in-memory planes. Cleared next — pure bookkeeping, and a failure
+      // here must not leave the durable rows half-deleted.
+      this.callTokens.revokeRun(runId);
+      this.partials.forgetRun(runId);
+      // Dropped only AFTER the caller's work has settled (above), so nothing can
+      // still be reserving against a tail we are discarding.
+      this.seqs.forget(runId);
 
-    // The transcript is the one table here measured in tens of thousands of
-    // rows per run, each carrying a payload, so `ItemDao` purges it natively
-    // rather than hydrating every row first (its override of this method). The
-    // three below hold small rows with no payload and keep the base
-    // unit-of-work path, which also evicts the run row the caller has just
-    // read into this same EntityManager.
-    // An ARCHIVED run's own CLI conversations go with it — the transcripts the
-    // CLI keeps in its own store, which outlive every row below. Only an
-    // archived one: that is the run the user deletes permanently, from the
-    // archive or by its retention sweep, while the other callers of this purge
-    // (a task start that failed, a team builder's chat) are tidying up
-    // after the app rather than deleting a conversation the user named. Read
-    // HERE, before the `node_state` rows naming the sessions are destroyed;
-    // deleted at the end, once every process is closed and the run is gone.
-    const run = await this.runDao.getById(runId, em);
-    const transcripts =
-      run?.archivedAt != null
-        ? {
-            createdAt: run.createdAt,
-            targets: await this.transcripts.collect(run, em),
-          }
-        : null;
+      // The transcript is the one table here measured in tens of thousands of
+      // rows per run, each carrying a payload, so `ItemDao` purges it natively
+      // rather than hydrating every row first (its override of this method). The
+      // three below hold small rows with no payload and keep the base
+      // unit-of-work path, which also evicts the run row the caller has just
+      // read into this same EntityManager.
+      // An ARCHIVED run's own CLI conversations go with it — the transcripts the
+      // CLI keeps in its own store, which outlive every row below. Only an
+      // archived one: that is the run the user deletes permanently, from the
+      // archive or by its retention sweep, while the other callers of this purge
+      // (a task start that failed, a team builder's chat) are tidying up
+      // after the app rather than deleting a conversation the user named. Read
+      // HERE, before the `node_state` rows naming the sessions are destroyed;
+      // deleted at the end, once every process is closed and the run is gone.
+      const run = await this.runDao.getById(runId, em);
+      const transcripts =
+        run?.archivedAt != null
+          ? {
+              createdAt: run.createdAt,
+              targets: await this.transcripts.collect(run, em),
+            }
+          : null;
 
-    // The files a phone uploaded into this run's messages. An upload is
-    // reachable only through the text naming its path, so it is read out of
-    // the user's own messages BEFORE they are destroyed and removed with the
-    // rest below (`ChatUploadStoreService.removeReferenced`). A narrow read of
-    // those few rows' payloads — never the transcript, which the purge below
-    // deliberately does not hydrate. The raw payload is scanned rather than
-    // parsed: the path survives JSON encoding intact.
-    const uploadTexts = await this.itemDao.userMessagePayloads(runId, em);
+      // The files a phone uploaded into this run's messages. An upload is
+      // reachable only through the text naming its path, so it is read out of
+      // the user's own messages BEFORE they are destroyed and removed with the
+      // rest below (`ChatUploadStoreService.removeReferenced`). A narrow read of
+      // those few rows' payloads — never the transcript, which the purge below
+      // deliberately does not hydrate. The raw payload is scanned rather than
+      // parsed: the path survives JSON encoding intact.
+      const uploadTexts = await this.itemDao.userMessagePayloads(runId, em);
 
-    // Before the rows go: it names the thread to each sender of what waited.
-    await this.threadInbox.cancelFor(runId, 'deleted');
+      // Before the rows go: it names the thread to each sender of what waited.
+      await this.threadInbox.cancelFor(runId, 'deleted');
 
-    const items = await this.itemDao.hardDeleteIncludingSoftDeleted(
-      { runId },
-      em,
-    );
-    const nodeStates = await this.nodeStateDao.hardDeleteIncludingSoftDeleted(
-      { runId },
-      em,
-    );
-    const callContexts =
-      await this.callContextDao.hardDeleteIncludingSoftDeleted({ runId }, em);
-    // The run's wall-measured turns go with it: they are run-scoped, a part of
-    // its agents' worked time, unlike the usage ledgers that outlive a delete.
-    await this.wallTurns.hardDeleteIncludingSoftDeleted({ runId }, em);
-    await this.runDao.hardDeleteIncludingSoftDeleted({ id: runId }, em);
-    this.attachments.removeRun(runId);
-    this.artifacts.removeRun(runId);
-    await this.uploads.removeReferenced(uploadTexts);
-
-    if (transcripts !== null) {
-      await this.transcripts.remove(
-        runId,
-        transcripts.createdAt,
-        transcripts.targets,
+      const items = await this.itemDao.hardDeleteIncludingSoftDeleted(
+        { runId },
         em,
       );
+      const nodeStates = await this.nodeStateDao.hardDeleteIncludingSoftDeleted(
+        { runId },
+        em,
+      );
+      const callContexts =
+        await this.callContextDao.hardDeleteIncludingSoftDeleted({ runId }, em);
+      // The run's wall-measured turns go with it: they are run-scoped, a part of
+      // its agents' worked time, unlike the usage ledgers that outlive a delete.
+      await this.wallTurns.hardDeleteIncludingSoftDeleted({ runId }, em);
+      await this.runDao.hardDeleteIncludingSoftDeleted({ id: runId }, em);
+      this.attachments.removeRun(runId);
+      this.artifacts.removeRun(runId);
+      await this.uploads.removeReferenced(uploadTexts);
+
+      if (transcripts !== null) {
+        await this.transcripts.remove(
+          runId,
+          transcripts.createdAt,
+          transcripts.targets,
+          em,
+        );
+      }
+
+      // Announced last, once the run genuinely no longer exists: modules above
+      // this one hold per-run state and drop it on this signal.
+      this.bus.publishRunDeleted(runId);
+
+      this.logger.log(
+        `deleted run ${runId}: ${items} item(s), ${nodeStates} node state(s), ${callContexts} call context(s), attachments and artifacts dropped`,
+      );
+      return { deleted: true };
+    } catch (err) {
+      await this.resumeIfLive(runId, em);
+      throw err;
     }
-
-    // Announced last, once the run genuinely no longer exists: modules above
-    // this one hold per-run state and drop it on this signal.
-    this.bus.publishRunDeleted(runId);
-
-    this.logger.log(
-      `deleted run ${runId}: ${items} item(s), ${nodeStates} node state(s), ${callContexts} call context(s), attachments and artifacts dropped`,
-    );
-    return { deleted: true };
   }
 
   /**
