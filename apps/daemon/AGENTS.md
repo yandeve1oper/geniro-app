@@ -461,6 +461,7 @@ geniro's render and card tools (`report_findings`, `show_chart`, `show_metrics`,
 - claude sessions are read off disk through `mapClaudeMessage`. Compare folders canonicalized.
 - cursor sessions are listed under a throwaway profile and imported as a COPY. History is read at creation.
 - Prepare the import before the run row exists; the happy path writes no system row.
+- An imported chat settles `completed`, announced as `restored` with `noTerminalItem`, so it earns no unread mark. A claude history drops an `<ide_*>` text block whole unless it is the last block of the content array (what the user typed; string content is never filtered), and reads each detached launch from `toolUseResult` (`CLAUDE_DETACHED_LAUNCH_KEYS`) as a `shell_open` that does not count against the history cap. `CliSessionsService.importHistory` closes every command still open (`closeImportedShells`) without reading the process table: it was started outside Geniro.
 
 ### Agent instructions
 

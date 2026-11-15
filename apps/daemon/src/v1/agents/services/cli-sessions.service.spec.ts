@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AgentKind } from '../../runs/runs.types';
 import type {
   AdapterConfig,
+  AgentEvent,
   AgentSessionHistory,
   AgentSessionListing,
   AgentSessionsInput,
@@ -254,6 +255,45 @@ describe('CliSessionsService.importHistory', () => {
     expect(events).toEqual([]);
     expect(notice).toContain('not shown here');
     warn.mockRestore();
+  });
+});
+
+describe('CliSessionsService.importHistory — detached commands', () => {
+  it('closes a historical command whose ending the session never recorded, last', async () => {
+    // A command started outside Geniro is not Geniro's to track: left open it
+    // read `running · detached` for the life of the thread.
+    const launch: AgentEvent[] = [
+      {
+        type: 'tool_call',
+        id: 'call-1',
+        name: 'Bash',
+        input: { command: 'sleep 300' },
+      },
+      {
+        type: 'tool_result',
+        id: 'call-1',
+        name: null,
+        result: 'running as b1',
+        isError: false,
+      },
+      { type: 'shell_open', toolCallId: 'call-1', workId: 'b1' },
+    ];
+    const { service } = setup({
+      readSessionHistory: () =>
+        Promise.resolve({ events: launch, droppedBefore: 0 }),
+    });
+
+    const { events } = await service.importHistory(
+      AgentKind.Claude,
+      's1',
+      '/w',
+      null,
+    );
+
+    expect(events).toEqual([
+      ...launch,
+      { type: 'shell_info', toolCallId: 'call-1', workId: 'b1' },
+    ]);
   });
 });
 

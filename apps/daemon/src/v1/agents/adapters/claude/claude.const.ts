@@ -2306,3 +2306,17 @@ export const CLAUDE_RELOAD_COMMANDS_REQUEST_ID = 'geniro-reload-commands';
 
 export const CLAUDE_MODEL_MISMATCH_MESSAGE =
   'Claude reported model %served for this turn; requested %requested.';
+
+/**
+ * The tools whose stored result names a DETACHED command, each with the
+ * `toolUseResult` key that names it (a session JSONL holds no `system/task_*`
+ * frames). Measured across 3,000 sessions on CLI 2.1.29x: 2,077 Bash, 423
+ * Monitor. Keyed by tool because `TaskUpdate`, the CLI's own checklist, answers
+ * with a `taskId` too.
+ */
+export const CLAUDE_DETACHED_LAUNCH_KEYS: ReadonlyMap<string, string> = new Map(
+  [
+    ['Bash', 'backgroundTaskId'],
+    ['Monitor', 'taskId'],
+  ],
+);

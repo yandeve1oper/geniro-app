@@ -100,6 +100,7 @@ import { RunDao } from '../dao/run.dao';
 import type { WallTurnDao } from '../dao/wall-turn.dao';
 import { hostCardQuestions, hostMcpServerName } from '../utils/host-question';
 import { serializePendingQuestion } from '../utils/pending-question';
+import { NO_ATTENTION_MEMORY, readAttention } from '../utils/run-attention';
 import {
   CHAT_WALL_CLOCK_ROW_KINDS,
   type WallClockRow,
@@ -1792,6 +1793,37 @@ describe('ChatService', () => {
       expect(nodeDao.savedFor).toEqual([
         { runId: run.id, memberId: SINGLE_AGENT_NODE, sessionId: 'sess-1' },
       ]);
+    });
+
+    it('settles the imported thread as COMPLETED — on the row, the answer and every open window', async () => {
+      // The conversation's last turn ended in the terminal, so `pending` with 0
+      // turns was describing a first turn that does not exist.
+      const { service, runDao, statuses } = setup();
+      const run = await service.createChat({
+        agentKind: 'claude',
+        cwd: dir,
+        resumeSessionId: 'sess-1',
+      });
+
+      expect(run.status).toBe('completed');
+      expect(runDao.runs.get(run.id)?.status).toBe('completed');
+      const announced = statuses.filter((event) => event.runId === run.id);
+      expect(announced.map((event) => event.status)).toEqual(['completed']);
+    });
+
+    it('does not mark the imported thread UNREAD', async () => {
+      // The user picked this conversation a moment ago: the settle is announced
+      // as a hand-back, which the attention rule refuses.
+      const { service, statuses } = setup();
+      const run = await service.createChat({
+        agentKind: 'claude',
+        cwd: dir,
+        resumeSessionId: 'sess-1',
+      });
+
+      const settle = statuses.find((event) => event.runId === run.id);
+      expect(settle).toBeDefined();
+      expect(readAttention(settle!, NO_ATTENTION_MEMORY).earns).toBe(false);
     });
 
     it('touches none of it for an ordinary new chat', async () => {

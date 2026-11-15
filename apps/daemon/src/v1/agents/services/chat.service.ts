@@ -2445,6 +2445,16 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
     await this.memory.countIndexShows(indexIds);
     if (input.resumeSessionId !== undefined) {
       await this.adoptSession(em, run.id, input, cwd, configDir);
+      // The conversation's last turn ended in the user's terminal, so `pending`
+      // would promise a first turn that does not exist. Announced, since a
+      // window can adopt this run off an earlier broadcast before the POST
+      // answers; as `restored` because the user picked it a moment ago, which
+      // is no news; `noTerminalItem` because no terminal row stands behind it.
+      await this.setRunStatus(em, run.id, 'completed', {
+        restored: true,
+        noTerminalItem: true,
+      });
+      run.status = 'completed';
     }
     return this.toRunWire(run, (await this.wireReads([run], em)).of(run.id));
   }

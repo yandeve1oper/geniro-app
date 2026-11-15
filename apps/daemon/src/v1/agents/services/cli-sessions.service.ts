@@ -8,6 +8,7 @@ import type { AgentCommandOptions } from '../adapters/adapter.types';
 import type { AgentAdapter } from '../adapters/agent-adapter';
 import type { AgentSessionListingWire } from '../chat.types';
 import { childProcessHandle } from '../utils/child-handle';
+import { closeImportedShells } from '../utils/imported-shells';
 import {
   isPlainSessionId,
   SESSION_ID_INVALID_MESSAGE,
@@ -251,7 +252,7 @@ export class CliSessionsService {
       };
     }
     return {
-      events: history.events,
+      events: closeImportedShells(history.events),
       notice:
         history.droppedBefore > 0
           ? `Only the most recent part of this conversation was brought across. The agent still has all of it.`
