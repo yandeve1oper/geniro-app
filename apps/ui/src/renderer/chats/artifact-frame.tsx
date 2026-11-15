@@ -1,6 +1,8 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 
 import { EXTERNAL_LINK_SCHEMES } from '../../shared/link-schemes';
+import { closeTopEscapeLayer } from '../components/ui/escape-layers';
+import { ImageViewer } from '../components/ui/image-viewer';
 import { cn } from '../components/ui/utils';
 import { useLatestCallback } from '../components/use-latest-callback';
 import { useThemeAppearance } from '../theme/apply-theme';
@@ -16,12 +18,34 @@ import {
  * The message `source` tags, and the messages either side sends.
  *
  * TWIN PARSER: apps/daemon/src/v1/agents/utils/artifact-page.ts — the page half of
- * this channel. The frame sends `ready`, `height` and `link`; the host sends `theme`.
- * There is no generated type for a `postMessage` payload, so the two files are the
- * whole contract.
+ * this channel. The frame sends `ready`, `height`, `link`, `picture` and `escape`;
+ * the host sends `theme`. There is no generated type for a `postMessage` payload, so
+ * the two files are the whole contract.
  */
 const HOST_SOURCE = 'geniro-host';
 const FRAME_SOURCE = 'geniro-artifact';
+
+/**
+ * One of the page's own pictures, which a click on a link to it opens in the image
+ * viewer.
+ *
+ * TWIN PARSER: `ARTIFACT_PICTURE_SOURCE` in
+ * apps/daemon/src/v1/agents/utils/artifact-page.ts.
+ */
+const PICTURE_SOURCE =
+  /^data:image\/(?:png|jpeg|webp|gif|avif);base64,[A-Za-z0-9+/=]+$/;
+
+interface FramePicture {
+  src: string;
+  alt: string;
+}
+
+function pictureToShow(src: unknown, alt: unknown): FramePicture | null {
+  if (typeof src !== 'string' || !PICTURE_SOURCE.test(src)) {
+    return null;
+  }
+  return { src, alt: typeof alt === 'string' ? alt : '' };
+}
 
 /**
  * The address a page's link asks to open, as the URL parser reads it, or null when
@@ -69,7 +93,12 @@ const MAX_INLINE_HEIGHT = 520;
  *
  * A link in the page never navigates the frame. The page posts the link to the
  * host, which opens a web or mail address in the system browser. No window is
- * created for the page, so the sandbox grants no popups.
+ * created for the page, so the sandbox grants no popups. A link to one of the
+ * page's own pictures arrives as `picture` and opens in the app's image viewer.
+ *
+ * An Escape pressed inside the frame never reaches this document, so the page
+ * posts the ones it did not act on as `escape`, which closes the overlay on top —
+ * the full-screen view the frame sits in, when it does.
  *
  * It is a `src` rather than an `srcdoc` because a srcdoc document inherits the
  * embedder's CSP — see {@link ARTIFACT_PAGE_CSP} in the daemon's
@@ -94,6 +123,7 @@ export function ArtifactFrame({
   const urlFor = useContext(ArtifactUrlContext);
   const frame = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(INITIAL_HEIGHT);
+  const [picture, setPicture] = useState<FramePicture | null>(null);
   // Re-sent on a theme change: the page holds whatever it was last given, so
   // without this an artifact stays in the palette it was opened under.
   const appearance = useThemeAppearance();
@@ -131,6 +161,8 @@ export function ArtifactFrame({
         type?: unknown;
         height?: unknown;
         href?: unknown;
+        src?: unknown;
+        alt?: unknown;
       };
       if (message.source !== FRAME_SOURCE) {
         return;
@@ -143,6 +175,23 @@ export function ArtifactFrame({
         const link = linkToOpen(message.href);
         if (link !== null) {
           openLink(link);
+        }
+        return;
+      }
+      const userIsInFrame = document.activeElement === frame.current;
+      if (message.type === 'picture') {
+        if (!userIsInFrame) {
+          return;
+        }
+        const shown = pictureToShow(message.src, message.alt);
+        if (shown !== null) {
+          setPicture(shown);
+        }
+        return;
+      }
+      if (message.type === 'escape') {
+        if (userIsInFrame) {
+          closeTopEscapeLayer();
         }
         return;
       }
@@ -171,21 +220,34 @@ export function ArtifactFrame({
   }
 
   return (
-    <iframe
-      ref={frame}
-      // Keyed by the exact version so a republish loads the new page rather
-      // than leaving React to reuse the element with a stale document.
-      key={`${artifact.artifactId}:${artifact.version}`}
-      src={urlFor(artifact)}
-      title={artifact.title}
-      sandbox="allow-scripts"
-      referrerPolicy="no-referrer"
-      onLoad={postTheme}
-      className={cn(
-        'w-full rounded-lg border border-border bg-transparent',
-        className,
+    <>
+      <iframe
+        ref={frame}
+        // Keyed by the exact version so a republish loads the new page rather
+        // than leaving React to reuse the element with a stale document.
+        key={`${artifact.artifactId}:${artifact.version}`}
+        src={urlFor(artifact)}
+        title={artifact.title}
+        sandbox="allow-scripts"
+        referrerPolicy="no-referrer"
+        onLoad={postTheme}
+        className={cn(
+          'w-full rounded-lg border border-border bg-transparent',
+          className,
+        )}
+        style={
+          fill ? undefined : { height: Math.min(height, MAX_INLINE_HEIGHT) }
+        }
+      />
+      {picture !== null && (
+        <ImageViewer
+          open
+          onClose={() => setPicture(null)}
+          src={picture.src}
+          alt={picture.alt}
+          title={picture.alt || artifact.title}
+        />
       )}
-      style={fill ? undefined : { height: Math.min(height, MAX_INLINE_HEIGHT) }}
-    />
+    </>
   );
 }

@@ -124,18 +124,35 @@ export function withInlineImages(
  * The message `source` tags on this channel.
  *
  * TWIN PARSER: apps/ui/src/renderer/chats/artifact-frame.tsx — the host half of
- * the same channel. The frame sends `ready`, `height` and `link`; the host sends
- * `theme`. There is no generated type for a `postMessage` payload, so these two
- * files are the whole contract; a message or field added to one must be added to
- * the other.
+ * the same channel. The frame sends `ready`, `height`, `link`, `picture` and
+ * `escape`; the host sends `theme`. There is no generated type for a
+ * `postMessage` payload, so these two files are the whole contract; a message or
+ * field added to one must be added to the other.
  */
 export const ARTIFACT_HOST_SOURCE = 'geniro-host';
 export const ARTIFACT_FRAME_SOURCE = 'geniro-artifact';
 
 /**
+ * A link target that is one of the page's own pictures, as the store inlines it
+ * (`withInlineImages`) and the page runtime repoints a click-to-enlarge link to.
+ *
+ * TWIN PARSER: `PICTURE_SOURCE` in apps/ui/src/renderer/chats/artifact-frame.tsx.
+ */
+export const ARTIFACT_PICTURE_SOURCE =
+  '^data:image/(?:png|jpeg|webp|gif|avif);base64,[A-Za-z0-9+/=]+$';
+
+/**
+ * How long after an Escape the wrapper watches the page for a reaction before
+ * it hands the key to the host. Long enough for a page's own handler, run in
+ * the same task, to close what it opened.
+ */
+export const ARTIFACT_ESCAPE_SETTLE_MS = 50;
+
+/**
  * geniro's own script inside the page — the only code here the agent did not
- * write, and it does four things: it applies the theme, reports the height, relays
- * link clicks, and announces itself to the host once it runs.
+ * write, and it does five things: it applies the theme, reports the height, relays
+ * link clicks, hands over an Escape the page ignored, and announces itself to the
+ * host once it runs.
  *
  * It APPLIES the theme: the host posts the resolved values of its own tokens
  * and this writes them onto `documentElement`, so a page that reached for
@@ -155,17 +172,31 @@ export const ARTIFACT_FRAME_SOURCE = 'geniro-artifact';
  *
  * And it RELAYS a link click to the host, which opens it on a click it saw. The
  * sandbox grants the page no popups, so this is the only way a link leaves the
- * frame.
+ * frame. A link to one of the page's own pictures ({@link ARTIFACT_PICTURE_SOURCE})
+ * is sent as `picture` instead, which the host opens in its image viewer: no
+ * browser opens a `data:` address, so as a link it went nowhere.
+ *
+ * And it HANDS the host an Escape the page did not act on. A key pressed while
+ * focus is inside the frame never reaches the host's document, so without this
+ * Escape could not close the full-screen view once the page was clicked. A page
+ * that acts on Escape itself (closing its own lightbox) either cancels the event
+ * or changes its DOM within {@link ARTIFACT_ESCAPE_SETTLE_MS}; either keeps the
+ * key in the page.
  *
  * It accepts a message only from its own parent (`event.source === parent`).
  * Nothing secret travels either way — colours out, a pixel height back — so
  * this is about a stray message from another frame confusing the page, not
  * about secrecy.
  */
-const ARTIFACT_WRAPPER_SCRIPT = `
+export const ARTIFACT_WRAPPER_SCRIPT = `
 (function () {
   var root = document.documentElement;
   var last = -1;
+  var picture = new RegExp(${JSON.stringify(ARTIFACT_PICTURE_SOURCE)});
+  function post(message) {
+    message.source = ${JSON.stringify(ARTIFACT_FRAME_SOURCE)};
+    parent.postMessage(message, '*');
+  }
   function report() {
     var body = document.body;
     var height = Math.max(
@@ -175,10 +206,7 @@ const ARTIFACT_WRAPPER_SCRIPT = `
     );
     if (height === last) return;
     last = height;
-    parent.postMessage(
-      { source: ${JSON.stringify(ARTIFACT_FRAME_SOURCE)}, type: 'height', height: height },
-      '*'
-    );
+    post({ type: 'height', height: height });
   }
   window.addEventListener('message', function (event) {
     if (event.source !== parent) return;
@@ -208,10 +236,38 @@ const ARTIFACT_WRAPPER_SCRIPT = `
     var href = (anchor.getAttribute('href') || '').trim();
     if (href.charAt(0) === '#') return;
     event.preventDefault();
-    parent.postMessage(
-      { source: ${JSON.stringify(ARTIFACT_FRAME_SOURCE)}, type: 'link', href: href },
-      '*'
-    );
+    if (picture.test(href)) {
+      var shown = anchor.querySelector('img');
+      post({ type: 'picture', src: href, alt: shown ? shown.getAttribute('alt') || '' : '' });
+      return;
+    }
+    post({ type: 'link', href: href });
+  }, true);
+  window.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || typeof MutationObserver !== 'function') return;
+    var changed = false;
+    // A lightbox already closed still rewrites its class on Escape: an unchanged value is no reaction.
+    var observer = new MutationObserver(function (records) {
+      for (var i = 0; i < records.length; i++) {
+        var record = records[i];
+        if (
+          record.type !== 'attributes' ||
+          record.oldValue !== record.target.getAttribute(record.attributeName)
+        ) {
+          changed = true;
+        }
+      }
+    });
+    observer.observe(root, {
+      attributes: true,
+      attributeOldValue: true,
+      childList: true,
+      subtree: true
+    });
+    setTimeout(function () {
+      observer.disconnect();
+      if (!changed && !event.defaultPrevented) post({ type: 'escape' });
+    }, ${ARTIFACT_ESCAPE_SETTLE_MS});
   }, true);
   if (typeof ResizeObserver === 'function') {
     var observe = function () {
@@ -221,10 +277,7 @@ const ARTIFACT_WRAPPER_SCRIPT = `
     if (document.body) observe();
     else window.addEventListener('DOMContentLoaded', observe);
   }
-  parent.postMessage(
-    { source: ${JSON.stringify(ARTIFACT_FRAME_SOURCE)}, type: 'ready' },
-    '*'
-  );
+  post({ type: 'ready' });
 })();
 `.trim();
 

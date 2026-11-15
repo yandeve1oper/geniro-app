@@ -16,12 +16,23 @@ function closeTopLayer(event: KeyboardEvent): void {
   if (event.key !== 'Escape' || event.defaultPrevented) {
     return;
   }
+  if (closeTopEscapeLayer()) {
+    event.preventDefault();
+  }
+}
+
+/**
+ * Close the overlay on top, as an Escape the document saw would. For an Escape
+ * pressed where the document cannot see it — inside an artifact's frame, which
+ * hands it over by message. Answers whether there was one to close.
+ */
+export function closeTopEscapeLayer(): boolean {
   const top = layers[layers.length - 1];
   if (top === undefined) {
-    return;
+    return false;
   }
-  event.preventDefault();
   top.close();
+  return true;
 }
 
 /** Put an overlay on top of the Escape stack; answers the call that takes it off. */

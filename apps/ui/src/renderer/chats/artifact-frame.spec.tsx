@@ -3,6 +3,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { stubResizeObserver } from '../__tests__/stub-resize-observer';
+import { pushEscapeLayer } from '../components/ui/escape-layers';
 import { ArtifactFrame } from './artifact-frame';
 import {
   BrowserPaneContext,
@@ -16,6 +18,8 @@ import {
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+stubResizeObserver();
 
 const ARTIFACT: PublishedArtifact = {
   artifactId: 'plan',
@@ -299,5 +303,116 @@ describe('ArtifactFrame — a link the page asks the host to open', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     await postLink('https://example.com/a', window);
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+async function post(
+  data: Record<string, unknown>,
+  source: MessageEventSource | null = frame()?.contentWindow ?? null,
+): Promise<void> {
+  await act(async () => {
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'geniro-artifact', ...data },
+        source,
+      }),
+    );
+  });
+}
+
+function focusFrame(): void {
+  act(() => {
+    frame()?.focus();
+  });
+}
+
+const viewer = (): HTMLElement | null =>
+  document.body.querySelector<HTMLElement>('[role="dialog"]');
+
+describe('ArtifactFrame — a picture the page asks the host to show', () => {
+  const PICTURE = 'data:image/png;base64,iVBORw0KGgo=';
+
+  it('opens the picture in the image viewer, named by its alt text', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'picture', src: PICTURE, alt: 'Before' });
+    expect(viewer()?.querySelector('img')?.getAttribute('src')).toBe(PICTURE);
+    expect(viewer()?.textContent).toContain('Before');
+  });
+
+  it('names the page when the picture has no alt text', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'picture', src: PICTURE });
+    expect(viewer()?.textContent).toContain('Migration plan');
+  });
+
+  it('closes the viewer on Escape, which this document sees once the viewer has focus', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'picture', src: PICTURE, alt: 'Before' });
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
+    expect(viewer()).toBeNull();
+  });
+
+  it('shows nothing for a source that is not one of the page’s own pictures', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'picture', src: 'https://example.com/a.png' });
+    await post({ type: 'picture', src: 'data:text/html;base64,PHA+' });
+    await post({ type: 'picture', src: 'data:image/svg+xml;base64,PHN2Zz4=' });
+    await post({ type: 'picture', src: 42 });
+    expect(viewer()).toBeNull();
+  });
+
+  it('ignores a picture posted from anything that is not its own frame', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'picture', src: PICTURE }, window);
+    expect(viewer()).toBeNull();
+  });
+
+  it('ignores a picture its own frame posts while the user is not in that frame', async () => {
+    await render();
+    await post({ type: 'picture', src: PICTURE, alt: 'Before' });
+    expect(viewer()).toBeNull();
+  });
+});
+
+describe('ArtifactFrame — an Escape the page hands over', () => {
+  let close: ReturnType<typeof vi.fn<() => void>>;
+  let release: () => void;
+
+  beforeEach(() => {
+    close = vi.fn<() => void>();
+    release = pushEscapeLayer({ close });
+  });
+
+  afterEach(() => {
+    release();
+  });
+
+  it('closes the overlay on top, as an Escape pressed in this document would', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'escape' });
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores an Escape posted from anything that is not its own frame', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'escape' }, window);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('ignores an Escape its own frame posts while the user is not in that frame', async () => {
+    await render();
+    await post({ type: 'escape' });
+    expect(close).not.toHaveBeenCalled();
   });
 });

@@ -243,7 +243,7 @@ pnpm commit             # conventional commit via commitizen
    - `ARTIFACT_CDN_HOSTS` in `apps/ui/src/main/network-lockdown.ts` is a twin of the CSP: Chromium resolves those hosts by exact name and nothing else.
    - The route sends `Referrer-Policy: no-referrer`, because the page URL carries its key.
    - Do not add the Tailwind Play CDN (`cdn.tailwindcss.com`); pages use the v4 browser build from jsDelivr.
-   - The frame's sandbox is `allow-scripts` alone. Links it posts are opened in the user's browser without confirmation (user decision), and main cancels any frame navigation off the artifact route.
+   - The frame's sandbox is `allow-scripts` alone. Links it posts are opened in the user's browser without confirmation (user decision), except a link to one of the page's own inlined pictures, which opens in the app's image viewer; main cancels any frame navigation off the artifact route.
 4. **The public model price catalog**: the daemon's `ModelPriceCatalog` GETs `MODEL_PRICE_CATALOG_URL` (`https://models.dev/api.json`, a constant) with no credential or user data.
    - At most one refresh per ~12 h, never blocking boot. The last good copy is kept at `<userData>/model-prices.json`; every failure is logged and swallowed.
    - An unlisted model has no price ("not measured", never $0). Tests set `fetchModelPrices: false`.

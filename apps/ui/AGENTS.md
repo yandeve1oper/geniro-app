@@ -213,7 +213,7 @@ One home for each concern:
 **Artifacts** (`published-artifact.ts`, `artifact-frame.tsx`):
 
 - The frame's sandbox is the root `AGENTS.md`'s (_Constraints_, the artifact page's outbound call). The page is served by the daemon, never put in `srcdoc`, and loaded with `referrerPolicy="no-referrer"`.
-- Only theme tokens and height cross the frame, by `postMessage`, filtered on `event.source`.
+- Only theme tokens go into the frame; out of it come its height, a link, a link to one of its own `data:` pictures (shown in `ImageViewer`) and an Escape the page did not act on (`closeTopEscapeLayer`, since a key pressed in the frame never reaches the renderer's document). All by `postMessage`, filtered on `event.source`; the picture and the Escape only while the frame holds focus (`document.activeElement`), so a page cannot act on the app unprompted.
 - Key the frame by `${artifactId}:${version}`.
 - A `show_artifact` row is never claimed into a call card (`UNCLAIMABLE_KINDS`): a callee's page is drawn in the main flow, and the newest-card sweep spans the whole run.
 - The panel list comes from `GET /v1/chats/:runId/artifacts` and answers empty on a run mismatch.
