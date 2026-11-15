@@ -299,6 +299,25 @@ export function useMemoryCleanup(
     });
   };
 
+  const tickRows = (picked: readonly MemoryReviewRow[]): void => {
+    setSelected((before) => {
+      const after = new Set(before);
+      for (const row of picked) {
+        after.add(row.entry.id);
+      }
+      return after;
+    });
+    setWarned((before) => {
+      const after = new Set(before);
+      for (const row of picked) {
+        if (row.warning !== null) {
+          after.add(row.entry.id);
+        }
+      }
+      return after;
+    });
+  };
+
   const tickShown = (): void => {
     if (api === null || tab === 'checks') {
       return;
@@ -468,6 +487,7 @@ export function useMemoryCleanup(
       tickSkipped === null ? null : Math.max(0, tickSkipped - warned.size),
     ticking,
     toggle,
+    tickRows,
     tickShown,
     untickAll: clearPicks,
     forget,

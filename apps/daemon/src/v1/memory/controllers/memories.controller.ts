@@ -20,6 +20,8 @@ import {
   MemoryFindingListDto,
   MemoryForgetBatchListDto,
   MemoryForgetBatchResultDto,
+  MemoryIndexPreviewDto,
+  MemoryIndexPreviewQueryDto,
   MemoryKeepResultDto,
   MemoryListDto,
   MemoryListQueryDto,
@@ -40,6 +42,7 @@ import type {
   MemoryForgetAll,
   MemoryForgetBatchList,
   MemoryForgetBatchResult,
+  MemoryIndexPreview,
   MemoryKeepResult,
   MemoryList,
   MemoryMergeResult,
@@ -96,6 +99,18 @@ export class MemoriesController {
   @ZodResponse({ status: 201, type: ForgetAllMemoriesDto })
   forgetAll(): Promise<MemoryForgetAll> {
     return this.memory.forgetAll();
+  }
+
+  @Get('index-preview')
+  @ApiOperation({ operationId: 'previewMemoryIndex' })
+  @ZodResponse({ status: 200, type: MemoryIndexPreviewDto })
+  indexPreview(
+    @Query() query: MemoryIndexPreviewQueryDto,
+  ): Promise<MemoryIndexPreview> {
+    return this.memory.indexPreview({
+      projectId: query.projectId ?? null,
+      teamSlug: query.teamSlug ?? null,
+    });
   }
 
   @Get('review/summary')
@@ -187,6 +202,24 @@ export class MemoriesController {
   @ZodResponse({ status: 201, type: MemoryKeepResultDto })
   unkeep(@Param('memoryId') memoryId: string): Promise<MemoryKeepResult> {
     return this.setKept(memoryId, false);
+  }
+
+  @Post(':memoryId/index')
+  @ApiOperation({ operationId: 'indexMemory' })
+  @ZodResponse({ status: 201, type: MemoryEntryDto })
+  async index(@Param('memoryId') memoryId: string): Promise<MemoryEntry> {
+    return savedEntryOrThrow(
+      await this.memory.setIndexed({ kind: 'user' }, memoryId, true),
+    );
+  }
+
+  @Post(':memoryId/search-only')
+  @ApiOperation({ operationId: 'searchOnlyMemory' })
+  @ZodResponse({ status: 201, type: MemoryEntryDto })
+  async searchOnly(@Param('memoryId') memoryId: string): Promise<MemoryEntry> {
+    return savedEntryOrThrow(
+      await this.memory.setIndexed({ kind: 'user' }, memoryId, false),
+    );
   }
 
   @Get(':memoryId')

@@ -28,6 +28,7 @@ const ENTRY: MemoryEntry = {
   updatedAt: '2026-10-02T00:00:00.000Z',
   lastUsedAt: null,
   approvedAt: null,
+  indexed: false,
 };
 
 describe('readMemoryReadArgs', () => {

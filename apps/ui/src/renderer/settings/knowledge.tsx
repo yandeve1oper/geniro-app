@@ -65,7 +65,7 @@ export function Knowledge(): React.JSX.Element {
         <SettingsPanelRow
           label="Agent writes"
           htmlFor="settings-knowledge-agent-writes"
-          description="Whether an agent's change is used at once or waits for you.">
+          description="Saved at once: agents find an agent's document by search right away; it stays out of every chat's index until you load it there. Wait for my review: a new document or change waits for you first.">
           <Select
             id="settings-knowledge-agent-writes"
             aria-label="Agent writes"

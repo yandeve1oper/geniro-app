@@ -127,7 +127,7 @@ describe('Knowledge settings', () => {
       'Agents find and read documents, whatever their CLI. Off, they get no knowledge tools and no index — the documents stay here to edit.',
     );
     expect(container.textContent).toContain(
-      "Whether an agent's change is used at once or waits for you.",
+      "Saved at once: agents find an agent's document by search right away; it stays out of every chat's index until you load it there.",
     );
   });
 });

@@ -7357,6 +7357,12 @@ export interface MemoryEntry {
      * @memberof MemoryEntry
      */
     approvedAt: string | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof MemoryEntry
+     */
+    indexed: boolean;
 }
 
 
@@ -8000,12 +8006,27 @@ export interface MemoryImportTriageRequestDto {
     configDir?: string;
     /**
      * 
+     * @type {string}
+     * @memberof MemoryImportTriageRequestDto
+     */
+    purpose?: MemoryImportTriageRequestDtoPurposeEnum;
+    /**
+     * 
      * @type {Array<MemoryImportTriageRequestDtoNotesInner>}
      * @memberof MemoryImportTriageRequestDto
      */
     notes: Array<MemoryImportTriageRequestDtoNotesInner>;
 }
 
+
+/**
+ * @export
+ */
+export const MemoryImportTriageRequestDtoPurposeEnum = {
+    Import: 'import',
+    Cleanup: 'cleanup'
+} as const;
+export type MemoryImportTriageRequestDtoPurposeEnum = typeof MemoryImportTriageRequestDtoPurposeEnum[keyof typeof MemoryImportTriageRequestDtoPurposeEnum];
 
 /**
  * 
@@ -8037,6 +8058,31 @@ export interface MemoryImportTriageRequestDtoNotesInner {
      * @memberof MemoryImportTriageRequestDtoNotesInner
      */
     folder: string | null;
+}
+/**
+ * 
+ * @export
+ * @interface MemoryIndexPreviewDto
+ */
+export interface MemoryIndexPreviewDto {
+    /**
+     * 
+     * @type {number}
+     * @memberof MemoryIndexPreviewDto
+     */
+    listed: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof MemoryIndexPreviewDto
+     */
+    eligible: number;
+    /**
+     * 
+     * @type {Array<string>}
+     * @memberof MemoryIndexPreviewDto
+     */
+    ids: Array<string>;
 }
 /**
  * 
@@ -8549,6 +8595,19 @@ export interface MemoryReviewSummaryDtoAutoForget {
      * @memberof MemoryReviewSummaryDtoAutoForget
      */
     warned: number;
+}
+/**
+ * 
+ * @export
+ * @interface MemoryTriageAgentsDto
+ */
+export interface MemoryTriageAgentsDto {
+    /**
+     * 
+     * @type {Array<AgentKind>}
+     * @memberof MemoryTriageAgentsDto
+     */
+    agents: Array<AgentKind>;
 }
 /**
  * 

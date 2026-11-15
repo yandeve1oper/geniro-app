@@ -77,3 +77,20 @@ export const TeamNote: Story = {
     teamName: 'Review crew',
   },
 };
+
+export const SearchOnly: Story = {
+  args: {
+    entry: memoryEntry({ source: AGENT_SOURCE }),
+    onIndexed: () => undefined,
+  },
+};
+
+export const LoadedAgentNote: Story = {
+  args: {
+    entry: memoryEntry({
+      source: AGENT_SOURCE,
+      approvedAt: '2026-10-21T09:00:00.000Z',
+    }),
+    onIndexed: () => undefined,
+  },
+};

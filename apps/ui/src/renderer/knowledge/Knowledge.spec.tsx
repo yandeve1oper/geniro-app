@@ -26,6 +26,8 @@ const knowledgeApi = vi.hoisted(() => ({
   restoreKnowledgeRevision: vi.fn(),
   archiveKnowledge: vi.fn(),
   restoreKnowledge: vi.fn(),
+  indexKnowledge: vi.fn(),
+  searchOnlyKnowledge: vi.fn(),
   deleteKnowledge: vi.fn(),
   exportKnowledge: vi.fn(),
 }));
@@ -544,16 +546,32 @@ describe('Knowledge — the page’s own actions', () => {
     expect(panel?.closest('.bottom-full')).toBeNull();
   });
 
-  it('says an agent’s document is unreviewed, and offers no Approve on the page', async () => {
+  it('marks an agent’s document Search only by its title, offers no Approve, and loads it into every chat from its More menu', async () => {
     knowledgeApi.readKnowledge.mockResolvedValue(
       aKnowledgeDocument({ approvedAt: null }),
     );
+    knowledgeApi.indexKnowledge.mockResolvedValue(aKnowledgeHead());
     const el = await openCutting();
 
-    expect(el.textContent).toContain('you have not reviewed it');
+    expect(el.querySelector('h2')?.textContent).toContain('Search only');
     expect(
       [...el.querySelectorAll('button')].map((node) => node.textContent),
     ).not.toContain('Approve');
+    await press(el, 'More');
+    expect(menuLabels()).not.toContain('Search only');
+    await pressMenuItem('Load into every chat');
+
+    expect(knowledgeApi.indexKnowledge).toHaveBeenCalledWith({ id: 'd1' });
+  });
+
+  it('keeps an indexed document to search only from its More menu', async () => {
+    knowledgeApi.searchOnlyKnowledge.mockResolvedValue(aKnowledgeHead());
+    const el = await openCutting();
+
+    await press(el, 'More');
+    await pressMenuItem('Search only');
+
+    expect(knowledgeApi.searchOnlyKnowledge).toHaveBeenCalledWith({ id: 'd1' });
   });
 
   it('draws an unreviewed document as its source, so nothing in it hides', async () => {
@@ -568,10 +586,12 @@ describe('Knowledge — the page’s own actions', () => {
     ).toContain(hidden);
   });
 
-  it('leaves an approved document without the unreviewed note', async () => {
+  it('leaves an indexed document without the search-only note', async () => {
     const el = await openCutting();
 
-    expect(el.textContent).not.toContain('you have not reviewed it');
+    expect(el.querySelector('h2')?.textContent).not.toContain('Search only');
+    await press(el, 'More');
+    expect(menuLabels()).not.toContain('Load into every chat');
   });
 
   it('archives the open document from its More menu', async () => {

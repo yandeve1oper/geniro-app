@@ -6,8 +6,8 @@ import { cn } from './ui/utils';
 export interface TabStripTab<T extends string> {
   id: T;
   label: string;
-  /** A figure drawn after the label (a count), or null for none. */
-  count?: number | null;
+  /** A figure drawn after the label (a count, or one like "200+"), or null for none. */
+  count?: number | string | null;
   /** Drawn before the tab, beside it rather than inside it (a colour menu's trigger). */
   leading?: React.ReactNode;
   /** Drawn in place of the tab while set (a rename field). */
@@ -51,6 +51,7 @@ export function TabStrip<T extends string>({
   onDoubleClick?: (id: T) => void;
 }): React.JSX.Element {
   const refs = useRef(new Map<T, HTMLButtonElement>());
+  const stripRef = useRef<HTMLDivElement | null>(null);
   const [underline, setUnderline] = useState<{
     left: number;
     width: number;
@@ -70,6 +71,20 @@ export function TabStrip<T extends string>({
         : { left, width },
     );
   }, [value, tabs]);
+
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    const active = refs.current.get(value);
+    if (strip === null || active === undefined) {
+      return;
+    }
+    const right = active.offsetLeft + active.offsetWidth;
+    if (active.offsetLeft < strip.scrollLeft) {
+      strip.scrollLeft = active.offsetLeft;
+    } else if (right > strip.scrollLeft + strip.clientWidth) {
+      strip.scrollLeft = right - strip.clientWidth;
+    }
+  }, [value]);
 
   const focusTab = (index: number): void => {
     const tab = tabs[(index + tabs.length) % tabs.length];
@@ -103,6 +118,7 @@ export function TabStrip<T extends string>({
 
   return (
     <div
+      ref={stripRef}
       data-slot="tab-strip"
       className={cn(
         'relative flex overflow-x-auto [scrollbar-width:none]',

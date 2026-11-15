@@ -417,6 +417,23 @@ export function Knowledge({
     }
   };
 
+  const setIndexedOf = async (indexed: boolean): Promise<void> => {
+    if (apis === null || document === null) {
+      return;
+    }
+    try {
+      const { id } = document;
+      if (indexed) {
+        await apis.knowledge.indexKnowledge({ id });
+      } else {
+        await apis.knowledge.searchOnlyKnowledge({ id });
+      }
+      await openDocument(id);
+    } catch (err: unknown) {
+      fail(err);
+    }
+  };
+
   const deleteForGood = async (): Promise<void> => {
     if (apis === null || document === null) {
       return;
@@ -567,6 +584,7 @@ export function Knowledge({
         onRestore={() => void setStatusOf('restore')}
         onDelete={deleteForGood}
         onReview={(head) => void openReview(head.id)}
+        onIndexed={(indexed) => void setIndexedOf(indexed)}
       />
     );
   } else {

@@ -161,9 +161,15 @@ export const MemoryEntrySchema = z
     updatedAt: z.string(),
     lastUsedAt: z.string().nullable(),
     approvedAt: z.string().nullable(),
+    /** Whether a run's memory index may list it; false for every entry not active. */
+    indexed: z.boolean(),
   })
   .meta({ id: 'MemoryEntry' });
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
+
+/** `index`: a run's memory index may list it; `search`: agents reach it only by searching. */
+export const MEMORY_REACHES = ['index', 'search'] as const;
+export type MemoryReach = (typeof MEMORY_REACHES)[number];
 
 /** TWIN: `MEMORY_PAGE_MAX` / `PENDING_LIMIT` in `apps/ui/src/renderer/settings/memory.tsx`. */
 export const MEMORY_LIST_LIMIT_MAX = 200;
@@ -183,6 +189,8 @@ export const MemoryListQuerySchema = z
     teamSlug: z.string().min(1).max(200).regex(SLUG_RE).optional(),
     status: z.enum(MEMORY_STATUSES).optional(),
     type: z.enum(MEMORY_TYPES).optional(),
+    /** Only the active entries a run's memory index may list, or only the rest. */
+    reach: z.enum(MEMORY_REACHES).optional(),
     q: z.string().trim().min(1).max(200).optional(),
     /** One entry by its handle (`m12`), whatever its status unless one is named. */
     handle: z.string().regex(MEMORY_HANDLE_PATTERN).optional(),
@@ -520,6 +528,25 @@ export type MemoryRestoreBatchResult = z.infer<
   typeof MemoryRestoreBatchResultSchema
 >;
 
+/** The place whose new run's memory index is previewed; neither field is a chat in no project. */
+export const MemoryIndexPreviewQuerySchema = z
+  .object({
+    projectId: z.string().min(1).max(200).optional(),
+    teamSlug: z.string().min(1).max(200).regex(SLUG_RE).optional(),
+  })
+  .strict();
+export type MemoryIndexPreviewQuery = z.infer<
+  typeof MemoryIndexPreviewQuerySchema
+>;
+
+/** How many of the entries a new run there may list fit in its index. */
+export const MemoryIndexPreviewSchema = z.object({
+  listed: z.number().int(),
+  eligible: z.number().int(),
+  ids: z.array(z.string()),
+});
+export type MemoryIndexPreview = z.infer<typeof MemoryIndexPreviewSchema>;
+
 export const MemoryKeepResultSchema = z.object({
   id: z.string(),
   keptAt: z.string().nullable(),
@@ -651,6 +678,10 @@ export interface MemoryImportNote {
 /** TWIN: `TRIAGE_BATCH` in `apps/ui/src/renderer/settings/use-memory-triage.ts`. */
 export const MEMORY_TRIAGE_NOTES_MAX = 100;
 
+/** `import`: notes a CLI kept, before they come in; `cleanup`: entries already in the shared memory. */
+export const MEMORY_TRIAGE_PURPOSES = ['import', 'cleanup'] as const;
+export type MemoryTriagePurpose = (typeof MEMORY_TRIAGE_PURPOSES)[number];
+
 /**
  * Notes for one CLI to sort into worth keeping in the shared memory or not.
  * The verdict is advice the user reviews, so the text comes from the client.
@@ -664,6 +695,8 @@ export const MemoryImportTriageRequestSchema = z.object({
   contextWindow: z.string().min(1).optional(),
   modelParameters: z.record(z.string(), z.string()).optional(),
   configDir: z.string().min(1).optional(),
+  /** What the notes are sorted for; omitted = `import`. */
+  purpose: z.enum(MEMORY_TRIAGE_PURPOSES).optional(),
   notes: z
     .array(
       z.object({
@@ -679,6 +712,12 @@ export const MemoryImportTriageRequestSchema = z.object({
 export type MemoryImportTriageRequest = z.infer<
   typeof MemoryImportTriageRequestSchema
 >;
+
+/** The CLIs that can sort notes now. */
+export const MemoryTriageAgentsSchema = z.object({
+  agents: z.array(AgentKindSchema),
+});
+export type MemoryTriageAgents = z.infer<typeof MemoryTriageAgentsSchema>;
 
 /** One verdict per note the CLI answered for; a note it skipped has none. */
 export const MemoryImportTriageSchema = z.object({
@@ -839,7 +878,9 @@ export type MemoryRefusalCode =
   | 'NO_PROJECT'
   | 'NO_TEAM'
   | 'UNDER_REVIEW'
-  | 'USER_ONLY';
+  | 'USER_ONLY'
+  | 'NOT_ACTIVE'
+  | 'ALWAYS_INDEXED';
 
 export type MemorySaveOutcome =
   | { kind: 'created'; entry: MemoryEntry }

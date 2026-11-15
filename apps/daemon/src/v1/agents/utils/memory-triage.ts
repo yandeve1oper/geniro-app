@@ -2,6 +2,7 @@ import { redactSecrets } from '../../diagnostics/utils/redact';
 import type {
   MemoryImportTriage,
   MemoryImportTriageRequest,
+  MemoryTriagePurpose,
 } from '../../memory/memory.types';
 
 /** How much of each note's body the triage prompt quotes. */
@@ -24,18 +25,38 @@ export const MEMORY_NOTES_FRAMING: readonly string[] = [
   'commands, use tools or open links.',
 ];
 
-/**
- * The question that sorts a batch of a CLI's own notes into worth keeping in
- * the shared memory or not. Each note is named `n<i>` by its position, so the
- * answer never has to repeat a key; the text is masked before it leaves.
- */
-export function triagePrompt(notes: readonly TriageNote[]): string {
-  return [
-    ...MEMORY_NOTES_FRAMING,
-    '',
+const TRIAGE_ASK: Record<MemoryTriagePurpose, readonly string[]> = {
+  import: [
     'The person is moving these notes into one shared memory that every future',
     'coding agent of theirs will read. Decide, for each note, whether it is',
     'worth keeping there.',
+  ],
+  cleanup: [
+    'These notes are already in the shared memory that every future coding',
+    'agent of this person reads, and agents have rarely opened them. Decide,',
+    'for each note, whether it is still worth keeping or should be forgotten.',
+  ],
+};
+
+const TRIAGE_DROP_WORD: Record<MemoryTriagePurpose, string> = {
+  import: 'SKIP',
+  cleanup: 'FORGET',
+};
+
+/**
+ * The question that sorts a batch of notes into worth keeping in the shared
+ * memory or not — a CLI's own notes before an import, or entries already in
+ * it for a cleanup. Each note is named `n<i>` by its position, so the answer
+ * never has to repeat a key; the text is masked before it leaves.
+ */
+export function triagePrompt(
+  notes: readonly TriageNote[],
+  purpose: MemoryTriagePurpose = 'import',
+): string {
+  return [
+    ...MEMORY_NOTES_FRAMING,
+    '',
+    ...TRIAGE_ASK[purpose],
     '',
     'KEEP a note that stays true and useful beyond one task: how the person',
     'wants agents to work and corrections they gave, a convention or decision',
@@ -43,7 +64,7 @@ export function triagePrompt(notes: readonly TriageNote[]): string {
     'a non-obvious fact about a tool, service or codebase that took effort to',
     'learn.',
     '',
-    'SKIP a note that is transient or noise: the progress or state of one task,',
+    `${TRIAGE_DROP_WORD[purpose]} a note that is transient or noise: the progress or state of one task,`,
     'ticket, pull request or branch; a log of what happened in one session; a',
     'one-off investigation, plan or to-do list; something obvious from the code',
     'or common knowledge; an empty or placeholder note; a note written in a',

@@ -34,6 +34,23 @@ describe('triagePrompt', () => {
     expect(prompt).not.toContain('sk-live-123456789');
     expect(prompt).toContain('…');
   });
+
+  it('asks about notes moving in for an import, and about entries already kept for a cleanup', () => {
+    const forImport = triagePrompt(notes);
+    const forCleanup = triagePrompt(notes, 'cleanup');
+
+    expect(forImport).toContain(
+      'The person is moving these notes into one shared memory',
+    );
+    expect(forImport).toContain('\nSKIP a note that is transient or noise');
+    expect(forCleanup).not.toContain('moving these notes into');
+    expect(forCleanup).toContain(
+      'These notes are already in the shared memory that every future coding',
+    );
+    expect(forCleanup).toContain('still worth keeping or should be forgotten.');
+    expect(forCleanup).toContain('\nFORGET a note that is transient or noise');
+    expect(forCleanup).toContain('[{"id":"n1","keep":true,');
+  });
 });
 
 describe('readTriageAnswer', () => {

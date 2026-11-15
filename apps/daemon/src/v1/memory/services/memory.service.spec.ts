@@ -1598,6 +1598,162 @@ describe('MemoryService', () => {
       expect(await titles({ handle: 'M2', status: 'active' })).toEqual([]);
     });
 
+    it('splits the active entries by reach: what a run’s index may list, and what only a search finds', async () => {
+      await seedRows([
+        { title: 'Mine', sourceActor: 'user' },
+        { title: 'Imported', sourceActor: 'import' },
+        { title: 'Approved', sourceActor: 'agent', approvedAt: at(1) },
+        { title: 'Saved at once', sourceActor: 'agent' },
+        { title: 'Analysis note', sourceActor: 'analysis' },
+        { title: 'Waiting', sourceActor: 'agent', status: 'pending' },
+      ]);
+      const listed = async (reach: 'index' | 'search') =>
+        (await db.service.list({ status: 'active', reach })).memories
+          .map((e) => `${e.title}:${e.indexed}`)
+          .sort();
+
+      expect(await listed('index')).toEqual([
+        'Approved:true',
+        'Imported:true',
+        'Mine:true',
+      ]);
+      expect(await listed('search')).toEqual([
+        'Analysis note:false',
+        'Saved at once:false',
+      ]);
+      expect(
+        (await db.service.list({ status: 'pending' })).memories.map(
+          (e) => e.indexed,
+        ),
+      ).toEqual([false]);
+    });
+
+    it('moves an agent’s active entry into the index and back to search only, announcing each move', async () => {
+      await seedRows([{ title: 'Saved at once', sourceActor: 'agent' }]);
+      const [entry] = (await db.service.list({ status: 'active' })).memories;
+      const announced: string[] = [];
+      db.events.allChanges().subscribe((event) => announced.push(event.change));
+
+      const indexed = await db.service.setIndexed(USER, entry!.id, true);
+      const searchOnly = await db.service.setIndexed(USER, entry!.id, false);
+
+      expect(indexed).toMatchObject({
+        kind: 'changed',
+        entry: { indexed: true, approvedAt: expect.any(String), rev: 2 },
+      });
+      expect(searchOnly).toMatchObject({
+        kind: 'changed',
+        entry: { indexed: false, approvedAt: null, rev: 3 },
+      });
+      expect(announced).toEqual(['approved', 'updated']);
+      expect(
+        (await db.service.list({ status: 'active', reach: 'search' })).memories,
+      ).toHaveLength(1);
+    });
+
+    it('leaves an entry already where it is asked to go untouched and unannounced', async () => {
+      await seedRows([
+        { title: 'Approved', sourceActor: 'agent', approvedAt: at(1) },
+        { title: 'Saved at once', sourceActor: 'agent' },
+      ]);
+      const listed = (await db.service.list({ status: 'active' })).memories;
+      const byTitle = new Map(listed.map((e) => [e.title, e]));
+      const announced: string[] = [];
+      db.events.allChanges().subscribe((event) => announced.push(event.change));
+
+      const again = await db.service.setIndexed(
+        USER,
+        byTitle.get('Approved')!.id,
+        true,
+      );
+      const stillSearch = await db.service.setIndexed(
+        USER,
+        byTitle.get('Saved at once')!.id,
+        false,
+      );
+
+      expect(again).toMatchObject({
+        kind: 'changed',
+        entry: {
+          rev: byTitle.get('Approved')!.rev,
+          approvedAt: byTitle.get('Approved')!.approvedAt,
+        },
+      });
+      expect(stillSearch).toMatchObject({
+        kind: 'changed',
+        entry: { rev: byTitle.get('Saved at once')!.rev, indexed: false },
+      });
+      expect(announced).toEqual([]);
+    });
+
+    it('refuses to take the user’s own or an imported entry out of the index, to move a waiting or forgotten one, and an agent’s move', async () => {
+      await seedRows([
+        { title: 'Mine', sourceActor: 'user' },
+        { title: 'Imported', sourceActor: 'import' },
+        { title: 'Waiting', sourceActor: 'agent', status: 'pending' },
+        { title: 'Gone', sourceActor: 'agent', status: 'forgotten' },
+      ]);
+      const ids = new Map(
+        (await db.service.list({ handle: undefined, limit: 10 })).memories
+          .concat((await db.service.list({ status: 'forgotten' })).memories)
+          .map((e) => [e.title, e.id]),
+      );
+
+      expect(
+        await db.service.setIndexed(USER, ids.get('Mine')!, false),
+      ).toMatchObject({
+        kind: 'refused',
+        code: 'ALWAYS_INDEXED',
+      });
+      expect(
+        await db.service.setIndexed(USER, ids.get('Imported')!, false),
+      ).toMatchObject({ kind: 'refused', code: 'ALWAYS_INDEXED' });
+      expect(
+        await db.service.setIndexed(USER, ids.get('Waiting')!, true),
+      ).toMatchObject({ kind: 'refused', code: 'NOT_ACTIVE' });
+      expect(
+        await db.service.setIndexed(USER, ids.get('Gone')!, true),
+      ).toMatchObject({
+        kind: 'refused',
+        code: 'NOT_ACTIVE',
+      });
+      expect(
+        await db.service.setIndexed(AGENT, ids.get('Mine')!, true),
+      ).toMatchObject({
+        kind: 'refused',
+        code: 'USER_ONLY',
+      });
+    });
+
+    it('previews a place’s index as a run’s snapshot cuts it: how many fit of all it may list', async () => {
+      await seedRows([
+        ...Array.from({ length: 60 }, (_, n) => ({
+          title: `Rule number ${n} about how this project is built and tested`,
+        })),
+        { title: 'Search only', sourceActor: 'agent' },
+        { title: 'Theirs', projectId: 'p1' },
+      ]);
+
+      const global = await db.service.indexPreview({
+        projectId: null,
+        teamSlug: null,
+      });
+      const inProject = await db.service.indexPreview({
+        projectId: 'p1',
+        teamSlug: null,
+      });
+
+      expect(global.eligible).toBe(60);
+      expect(global.listed).toBeGreaterThan(0);
+      expect(global.listed).toBeLessThan(60);
+      expect(global.ids).toHaveLength(global.listed);
+      expect(inProject.eligible).toBe(61);
+      expect(inProject.ids[0]).toBe(
+        (await db.service.list({ scope: 'project', projectId: 'p1' }))
+          .memories[0]!.id,
+      );
+    });
+
     it('lists one team’s entries only with scope: team', async () => {
       await seedRows([
         { title: 'Global fact' },

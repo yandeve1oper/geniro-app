@@ -134,7 +134,10 @@ describe('useMemoryTriage', () => {
 
     expect(
       Object.keys(triage.mock.calls[0]![0].memoryImportTriageRequestDto).sort(),
-    ).toEqual(['agentKind', 'notes']);
+    ).toEqual(['agentKind', 'notes', 'purpose']);
+    expect(triage.mock.calls[0]![0].memoryImportTriageRequestDto.purpose).toBe(
+      'import',
+    );
   });
 
   it('asks again only about notes it has no verdict for', async () => {

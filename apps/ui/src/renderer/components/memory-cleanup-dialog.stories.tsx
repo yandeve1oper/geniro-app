@@ -10,6 +10,7 @@ import {
   type MemoryCleanupFilters,
   type MemoryCleanupTab,
 } from './memory-cleanup-dialog';
+import { type MemorySort, MemorySortPanel } from './memory-sort-panel';
 
 const FILTERS: MemoryCleanupFilters = {
   sort: 'leastUsed',
@@ -295,6 +296,43 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const LeastUsed: Story = {};
+
+const SORT: MemorySort = {
+  verdicts: new Map(),
+  running: false,
+  done: 0,
+  total: 0,
+  error: null,
+  start: () => undefined,
+  cancel: () => undefined,
+};
+
+export const SortedWithAi: Story = {
+  args: {
+    verdicts: new Map(
+      COLD.map((row, n) => [
+        row.entry.id,
+        n % 2 === 0
+          ? { keep: false, reason: 'the state of one sprint' }
+          : { keep: true, reason: 'a lasting convention with its reason' },
+      ]),
+    ),
+    sortPanel: (
+      <MemorySortPanel
+        slot="memory-cleanup-sort"
+        sort={SORT}
+        description="An agent reads the entries listed below and says which still hold and which to forget, with a reason for each. It only proposes: nothing is forgotten until you press Forget. Runs on your agent’s account."
+        settings={
+          <span className="text-xs text-muted-foreground">Claude · Sonnet</span>
+        }
+        startLabel="All listed entries sorted"
+        startDisabled
+        sorted
+        onStart={() => undefined}
+      />
+    ),
+  },
+};
 
 export const Picked: Story = {
   args: {

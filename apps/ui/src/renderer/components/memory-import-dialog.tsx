@@ -17,11 +17,15 @@ import {
   projectIdOfScope,
   scopeSelectValue,
 } from './memory-form';
+import {
+  type MemorySort,
+  MemorySortPanel,
+  type MemorySortVerdict,
+} from './memory-sort-panel';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { Input } from './ui/input';
 import { OptionIndicator } from './ui/option-list';
-import { ProgressBar } from './ui/progress-bar';
 import { Select, type SelectGroup } from './ui/select';
 import { Spinner } from './ui/spinner';
 import { cn } from './ui/utils';
@@ -33,21 +37,10 @@ export interface MemoryImportChoice {
   projectId: string | null;
 }
 
-export interface MemoryImportVerdict {
-  keep: boolean;
-  reason: string;
-}
+export type MemoryImportVerdict = MemorySortVerdict;
 
 /** The AI sort the dialog drives; its verdicts are keyed by row key. */
-export interface MemoryImportTriage {
-  verdicts: ReadonlyMap<string, MemoryImportVerdict>;
-  running: boolean;
-  done: number;
-  total: number;
-  error: string | null;
-  start: (rows: readonly MemoryImportRow[]) => void;
-  cancel: () => void;
-}
+export type MemoryImportTriage = MemorySort;
 
 export const IMPORT_PAGE_SIZE = 30;
 
@@ -377,83 +370,39 @@ function TriagePanel({
 }): React.JSX.Element {
   const judged = kept + skipped;
   return (
-    <section
-      data-slot="memory-import-triage"
-      aria-label="Sort with AI"
-      className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/40 p-3">
-      <div className="flex min-w-0 items-start gap-2">
-        <Sparkles
-          aria-hidden="true"
-          className="mt-0.5 size-4 shrink-0 text-primary"
-        />
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-sm font-medium">Sort with AI</span>
-          <span className="text-xs text-muted-foreground">
-            An agent reads each ticked note and unticks task status, session
-            logs and one-off details. You review the result before anything is
-            imported. Runs on your agent’s account.
-          </span>
-        </div>
-      </div>
-      {triage.running ? (
-        <div className="flex min-w-0 items-center gap-3 pl-6">
-          <ProgressBar
-            label="Sorting notes"
-            fraction={triage.total === 0 ? null : triage.done / triage.total}
-            className="flex-1"
-          />
+    <MemorySortPanel
+      slot="memory-import-triage"
+      sort={triage}
+      description="An agent reads each ticked note and unticks task status, session logs and one-off details. You review the result before anything is imported. Runs on your agent’s account."
+      settings={settings}
+      startLabel={
+        pending === 0 ? 'All ticked notes sorted' : `Sort ${noteCount(pending)}`
+      }
+      startDisabled={disabled || pending === 0}
+      sorted={judged > 0}
+      onStart={onStart}
+      summary={
+        judged > 0 ? (
           <span
-            role="status"
-            className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            {triage.done.toLocaleString('en-US')} /{' '}
-            {triage.total.toLocaleString('en-US')}
+            data-slot="memory-import-triage-summary"
+            className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+            <button
+              type="button"
+              className="cursor-pointer rounded-sm text-xs text-success underline-offset-2 hover:underline"
+              onClick={() => onShow('keep')}>
+              {kept.toLocaleString('en-US')} worth keeping
+            </button>
+            ·
+            <button
+              type="button"
+              className="cursor-pointer rounded-sm text-xs underline-offset-2 hover:underline"
+              onClick={() => onShow('skip')}>
+              {skipped.toLocaleString('en-US')} left out
+            </button>
           </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={triage.cancel}>
-            Stop
-          </Button>
-        </div>
-      ) : (
-        <div className="flex min-w-0 flex-wrap items-center gap-2 pl-6">
-          {settings}
-          <Button
-            type="button"
-            size="sm"
-            variant={judged > 0 ? 'outline' : 'default'}
-            disabled={disabled || pending === 0}
-            onClick={onStart}>
-            {pending === 0
-              ? 'All ticked notes sorted'
-              : `Sort ${noteCount(pending)}`}
-          </Button>
-          {judged > 0 ? (
-            <span
-              data-slot="memory-import-triage-summary"
-              className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-              <button
-                type="button"
-                className="cursor-pointer rounded-sm text-xs text-success underline-offset-2 hover:underline"
-                onClick={() => onShow('keep')}>
-                {kept.toLocaleString('en-US')} worth keeping
-              </button>
-              ·
-              <button
-                type="button"
-                className="cursor-pointer rounded-sm text-xs underline-offset-2 hover:underline"
-                onClick={() => onShow('skip')}>
-                {skipped.toLocaleString('en-US')} left out
-              </button>
-            </span>
-          ) : null}
-        </div>
-      )}
-      {triage.error === null ? null : (
-        <ErrorText className="pl-6 text-xs">{triage.error}</ErrorText>
-      )}
-    </section>
+        ) : null
+      }
+    />
   );
 }
 

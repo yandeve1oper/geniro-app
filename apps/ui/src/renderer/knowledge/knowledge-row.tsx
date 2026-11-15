@@ -36,7 +36,7 @@ export function KnowledgeRow({
           <Badge variant="muted">Archived</Badge>
         ) : null}
         {document.status === 'active' && document.approvedAt === null ? (
-          <Badge variant="warning">Unreviewed</Badge>
+          <Badge variant="outline">Search only</Badge>
         ) : null}
       </span>
       <span className="text-sm text-muted-foreground break-words">

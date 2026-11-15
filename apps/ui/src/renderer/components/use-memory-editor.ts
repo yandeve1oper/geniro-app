@@ -18,13 +18,24 @@ export type MemoryEditing =
       vouched: string[];
     };
 
-/** Whether only the user's approval admits this entry to the memory index. */
+/** Whether the entry waits on the user's approval before any agent sees it. */
 export function awaitsApproval(entry: MemoryEntry): boolean {
-  const byAgent =
-    entry.source.actor === 'agent' || entry.source.actor === 'analysis';
+  return entry.status === 'pending';
+}
+
+/**
+ * Whether the user may move the entry between every new chat's index and
+ * search only: any active entry into the index, and an agent's back out.
+ * The user's own and imported entries are always indexed.
+ */
+export function movableReach(entry: MemoryEntry): boolean {
+  if (entry.status !== 'active') {
+    return false;
+  }
   return (
-    entry.status === 'pending' ||
-    (entry.status === 'active' && byAgent && entry.approvedAt === null)
+    !entry.indexed ||
+    entry.source.actor === 'agent' ||
+    entry.source.actor === 'analysis'
   );
 }
 
@@ -64,6 +75,8 @@ export interface MemoryEditor {
     entry: MemoryEntry,
     status: 'active' | 'forgotten',
   ) => Promise<void>;
+  /** Move one active entry into every new chat's index, or to search only, then re-read. */
+  setIndexed: (entry: MemoryEntry, indexed: boolean) => Promise<void>;
   /**
    * Save the open form: create or update at the read rev. A near-duplicate
    * refusal keeps the form open, vouching past exactly the handles it named
@@ -80,7 +93,10 @@ export interface MemoryEditor {
  * the entry (a team's tab pins it to that team); `onSaved` re-reads the list.
  */
 export function useMemoryEditor(
-  api: Pick<MemoriesApi, 'createMemory' | 'updateMemory'> | null,
+  api: Pick<
+    MemoriesApi,
+    'createMemory' | 'updateMemory' | 'indexMemory' | 'searchOnlyMemory'
+  > | null,
   {
     onSaved,
     onStatusError,
@@ -97,6 +113,22 @@ export function useMemoryEditor(
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const write = async (
+    entry: MemoryEntry,
+    call: (memoryId: string) => Promise<unknown>,
+  ): Promise<void> => {
+    setBusy(entry.id);
+    onStatusError(null);
+    try {
+      await call(entry.id);
+    } catch (err: unknown) {
+      onStatusError(describeDaemonError(err));
+    } finally {
+      setBusy(null);
+      onSaved();
+    }
+  };
+
   const setStatus = async (
     entry: MemoryEntry,
     status: 'active' | 'forgotten',
@@ -104,19 +136,23 @@ export function useMemoryEditor(
     if (api === null) {
       return;
     }
-    setBusy(entry.id);
-    onStatusError(null);
-    try {
-      await api.updateMemory({
-        memoryId: entry.id,
-        updateMemoryDto: { status },
-      });
-    } catch (err: unknown) {
-      onStatusError(describeDaemonError(err));
-    } finally {
-      setBusy(null);
-      onSaved();
+    await write(entry, (memoryId) =>
+      api.updateMemory({ memoryId, updateMemoryDto: { status } }),
+    );
+  };
+
+  const setIndexed = async (
+    entry: MemoryEntry,
+    indexed: boolean,
+  ): Promise<void> => {
+    if (api === null) {
+      return;
     }
+    await write(entry, (memoryId) =>
+      indexed
+        ? api.indexMemory({ memoryId })
+        : api.searchOnlyMemory({ memoryId }),
+    );
   };
 
   const close = (): void => {
@@ -169,6 +205,7 @@ export function useMemoryEditor(
     saving,
     busy,
     setStatus,
+    setIndexed,
     submit,
     close,
   };

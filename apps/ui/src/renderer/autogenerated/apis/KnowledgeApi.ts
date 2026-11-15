@@ -52,6 +52,10 @@ export interface KnowledgeApiExportKnowledgeRequest {
     place?: string;
 }
 
+export interface KnowledgeApiIndexKnowledgeRequest {
+    id: string;
+}
+
 export interface KnowledgeApiListKnowledgeRequest {
     place?: string;
     status?: ListKnowledgeStatusEnum;
@@ -90,6 +94,10 @@ export interface KnowledgeApiRestoreKnowledgeRevisionRequest {
 export interface KnowledgeApiSearchKnowledgeForRunRequest {
     runId: string;
     q?: string;
+}
+
+export interface KnowledgeApiSearchOnlyKnowledgeRequest {
+    id: string;
 }
 
 export interface KnowledgeApiSetKnowledgeConfigRequest {
@@ -330,6 +338,51 @@ export class KnowledgeApi extends runtime.BaseAPI {
      */
     async exportKnowledge(requestParameters: KnowledgeApiExportKnowledgeRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<KnowledgeExportDto> {
         const response = await this.exportKnowledgeRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
+    async indexKnowledgeRaw(requestParameters: KnowledgeApiIndexKnowledgeRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<KnowledgeHead>> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling indexKnowledge().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/knowledge/{id}/index`;
+        urlPath = urlPath.replace(`{${"id"}}`, encodeURIComponent(String(requestParameters['id'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async indexKnowledge(requestParameters: KnowledgeApiIndexKnowledgeRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<KnowledgeHead> {
+        const response = await this.indexKnowledgeRaw(requestParameters, initOverrides);
         return await response.value();
     }
 
@@ -761,6 +814,51 @@ export class KnowledgeApi extends runtime.BaseAPI {
      */
     async searchKnowledgeForRun(requestParameters: KnowledgeApiSearchKnowledgeForRunRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<KnowledgeRunSearchDto> {
         const response = await this.searchKnowledgeForRunRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
+    async searchOnlyKnowledgeRaw(requestParameters: KnowledgeApiSearchOnlyKnowledgeRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<KnowledgeHead>> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling searchOnlyKnowledge().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/knowledge/{id}/search-only`;
+        urlPath = urlPath.replace(`{${"id"}}`, encodeURIComponent(String(requestParameters['id'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async searchOnlyKnowledge(requestParameters: KnowledgeApiSearchOnlyKnowledgeRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<KnowledgeHead> {
+        const response = await this.searchOnlyKnowledgeRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

@@ -16,6 +16,8 @@ import {
   MemoryImportResultSchema,
   MemoryImportTriageRequestSchema,
   MemoryImportTriageSchema,
+  MemoryIndexPreviewQuerySchema,
+  MemoryIndexPreviewSchema,
   MemoryKeepResultSchema,
   MemoryListQuerySchema,
   MemoryListSchema,
@@ -33,6 +35,7 @@ import {
   MemoryReviewQuerySchema,
   MemoryReviewSummaryQuerySchema,
   MemoryReviewSummarySchema,
+  MemoryTriageAgentsSchema,
 } from '../memory.types';
 
 export class MemoryReviewSummaryQueryDto extends createZodDto(
@@ -58,6 +61,18 @@ export class MemoryEntryDto extends createZodDto(
 ) {}
 
 export class ForgetAllMemoriesDto extends createZodDto(MemoryForgetAllSchema) {}
+
+export class MemoryTriageAgentsDto extends createZodDto(
+  MemoryTriageAgentsSchema,
+) {}
+
+export class MemoryIndexPreviewQueryDto extends createZodDto(
+  MemoryIndexPreviewQuerySchema,
+) {}
+
+export class MemoryIndexPreviewDto extends createZodDto(
+  MemoryIndexPreviewSchema,
+) {}
 
 export class MemoryExportDto extends createZodDto(MemoryExportSchema) {}
 

@@ -15,7 +15,7 @@ export const MEMORY_TEAMS: readonly { slug: string; name: string }[] = [
 ];
 
 export function memoryEntry(over: Partial<MemoryEntry> = {}): MemoryEntry {
-  return {
+  const entry: Omit<MemoryEntry, 'indexed'> = {
     id: 'memory-1',
     handle: 'm1',
     title: 'A sent invoice is never edited',
@@ -37,6 +37,15 @@ export function memoryEntry(over: Partial<MemoryEntry> = {}): MemoryEntry {
     lastUsedAt: null,
     approvedAt: null,
     ...over,
+  };
+  return {
+    ...entry,
+    indexed:
+      over.indexed ??
+      (entry.status === 'active' &&
+        (entry.source.actor === 'user' ||
+          entry.source.actor === 'import' ||
+          entry.approvedAt !== null)),
   };
 }
 

@@ -204,11 +204,38 @@ export class KnowledgeController {
     return this.statusOrThrow(id, 'active');
   }
 
+  @Post(':id/index')
+  @HttpCode(200)
+  @ApiOperation({ operationId: 'indexKnowledge' })
+  @ZodResponse({ status: 200, type: KnowledgeHeadDetailDto })
+  async index(@Param('id') id: string): Promise<KnowledgeHeadDto> {
+    return this.indexedOrThrow(id, true);
+  }
+
+  @Post(':id/search-only')
+  @HttpCode(200)
+  @ApiOperation({ operationId: 'searchOnlyKnowledge' })
+  @ZodResponse({ status: 200, type: KnowledgeHeadDetailDto })
+  async searchOnly(@Param('id') id: string): Promise<KnowledgeHeadDto> {
+    return this.indexedOrThrow(id, false);
+  }
+
   @Get(':id/revisions')
   @ApiOperation({ operationId: 'listKnowledgeRevisions' })
   @ZodResponse({ status: 200, type: KnowledgeRevisionListDto })
   revisions(@Param('id') id: string): Promise<KnowledgeRevisionList> {
     return this.knowledge.revisions(id);
+  }
+
+  private async indexedOrThrow(
+    id: string,
+    indexed: boolean,
+  ): Promise<KnowledgeHeadDto> {
+    const outcome = await this.knowledge.setIndexed(id, indexed);
+    if (outcome.kind === 'refused') {
+      throw refusalError(outcome);
+    }
+    return outcome.head;
   }
 
   private async statusOrThrow(

@@ -14,6 +14,7 @@ import { Memory } from '../entity/memory.entity';
 import {
   MEMORY_COLD_DAYS,
   memoryHandle,
+  type MemoryReach,
   type MemoryReviewSort,
   type MemoryReviewTab,
   type MemoryReviewWarnings,
@@ -106,6 +107,7 @@ export interface MemoryMatchScope {
 /** One page of the user's list, newest edit first. */
 export interface MemoryPageFilter extends MemoryMatchScope {
   type?: MemoryType;
+  reach?: MemoryReach;
   handle?: number;
   /** A ready-made FTS5 query. */
   match?: string;
@@ -195,10 +197,15 @@ export class MemoryDao extends BaseDao<Memory> {
     filter: MemoryPageFilter,
     em: EntityManager = this.em,
   ): Promise<Memory[]> {
-    const { type, handle, match, before } = filter;
+    const { type, reach, handle, match, before } = filter;
     let query = this.scoped(filter, em).select('m.id');
     if (type !== undefined) {
       query = query.where('m.type', '=', type);
+    }
+    if (reach !== undefined) {
+      query = query.where((eb) =>
+        reach === 'index' ? reachExpression(eb) : eb.not(reachExpression(eb)),
+      );
     }
     if (handle !== undefined) {
       query = query.where('m.handle', '=', handle);
@@ -1087,6 +1094,25 @@ function warnedExpression<DB extends { m: MemoryRow }>(
     ref('m.source_actor', '=', 'user'),
     ref('m.states_rule', 'is', null),
     ref('m.states_rule', '=', 1),
+  ]);
+}
+
+/**
+ * An active entry a run's memory index may list: the user's own, an import's
+ * or one the user approved.
+ *
+ * TWIN: `indexable` in `apps/daemon/src/v1/memory/services/memory.service.ts`.
+ */
+function reachExpression<DB extends { m: MemoryRow }>(
+  eb: ExpressionBuilder<DB, 'm'>,
+): ExpressionWrapper<{ m: MemoryRow }, 'm', SqlBool> {
+  const ref = eb as unknown as ExpressionBuilder<{ m: MemoryRow }, 'm'>;
+  return ref.and([
+    ref('m.status', '=', 'active'),
+    ref.or([
+      ref('m.source_actor', 'in', ['user', 'import']),
+      ref('m.approved_at', 'is not', null),
+    ]),
   ]);
 }
 

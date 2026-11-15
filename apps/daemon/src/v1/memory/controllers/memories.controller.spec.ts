@@ -52,6 +52,7 @@ const ENTRY: MemoryEntry = {
   updatedAt: '2026-10-01T00:00:00.000Z',
   lastUsedAt: null,
   approvedAt: null,
+  indexed: true,
 };
 
 const PAGE: MemoryReviewPage = { rows: [], total: 0, younger: 0, next: null };

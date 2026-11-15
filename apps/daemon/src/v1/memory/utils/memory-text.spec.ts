@@ -32,6 +32,7 @@ function entry(handle: number, title: string): MemoryEntry {
     updatedAt: NOW.toISOString(),
     lastUsedAt: null,
     approvedAt: null,
+    indexed: true,
   };
 }
 

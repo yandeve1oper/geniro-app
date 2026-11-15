@@ -632,6 +632,41 @@ export class KnowledgeService {
     });
   }
 
+  /**
+   * Put an active document into every new run's knowledge index, or keep it
+   * to search only. The index lists only documents the user wrote or took in.
+   */
+  setIndexed(
+    id: string,
+    indexed: boolean,
+  ): Promise<{ kind: 'changed'; head: KnowledgeHeadDto } | KnowledgeRefusal> {
+    return this.serialize(async () => {
+      const em = this.em.fork();
+      const row = await this.documents.getById(id, em);
+      if (!row) {
+        return refused('NOT_FOUND', `no document ${id}`);
+      }
+      if (row.status !== 'active') {
+        return refused(
+          'NOT_EDITABLE',
+          row.status === 'proposed'
+            ? 'approve or reject the proposal instead'
+            : 'restore the document first',
+        );
+      }
+      if ((row.approvedAt !== null) !== indexed) {
+        row.approvedAt = indexed ? new Date() : null;
+        const current = await this.revisionRows.appliedAt(row.id, row.rev, em);
+        if (current) {
+          current.approvedAt = row.approvedAt;
+        }
+        await em.flush();
+        this.publish(row, indexed ? 'approved' : 'updated');
+      }
+      return { kind: 'changed', head: await this.toHeadDto(row, em) };
+    });
+  }
+
   /** Permanently delete an archived document and its revisions. */
   remove(id: string): Promise<KnowledgeRefusal | null> {
     return this.serialize(async () => {

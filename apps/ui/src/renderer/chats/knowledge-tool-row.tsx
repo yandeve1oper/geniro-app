@@ -627,7 +627,7 @@ function KnowledgePeekPanel({
               </span>
               {level === null ? null : <Badge variant="muted">{level}</Badge>}
               {reviewed === false ? (
-                <Badge variant="warning">unreviewed</Badge>
+                <Badge variant="outline">search only</Badge>
               ) : null}
               {head?.status === 'archived' ? (
                 <Badge variant="muted">archived</Badge>

@@ -754,12 +754,21 @@ describe('knowledge settings', () => {
 
     expect(readSettings().knowledge).toEqual({
       enabled: false,
-      agentWrites: 'review',
+      agentWrites: 'direct',
     });
   });
 
-  it('a file from before the setting reads it on, with agent writes waiting for review', () => {
+  it('a file from before the setting reads it on, with agent writes saved at once', () => {
     writeRaw({});
+
+    expect(readSettings().knowledge).toEqual({
+      enabled: true,
+      agentWrites: 'direct',
+    });
+  });
+
+  it('keeps an agent-writes choice the file already holds', () => {
+    writeRaw({ knowledge: { enabled: true, agentWrites: 'review' } });
 
     expect(readSettings().knowledge).toEqual({
       enabled: true,

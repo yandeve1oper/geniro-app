@@ -32,6 +32,7 @@ import type {
   MemoryImportResultDto,
   MemoryImportTriageDto,
   MemoryImportTriageRequestDto,
+  MemoryIndexPreviewDto,
   MemoryKeepResultDto,
   MemoryListDto,
   MemoryMergeResultDto,
@@ -43,6 +44,7 @@ import type {
   MemoryReviewPageDto,
   MemoryReviewPairsDto,
   MemoryReviewSummaryDto,
+  MemoryTriageAgentsDto,
   MergeMemoriesDto,
   UpdateMemoryDto,
 } from '../models/index';
@@ -67,6 +69,10 @@ export interface MemoriesApiImportMemoriesRequest {
     importMemoriesDto: ImportMemoriesDto;
 }
 
+export interface MemoriesApiIndexMemoryRequest {
+    memoryId: string;
+}
+
 export interface MemoriesApiKeepMemoryRequest {
     memoryId: string;
 }
@@ -77,6 +83,7 @@ export interface MemoriesApiListMemoriesRequest {
     teamSlug?: string;
     status?: ListMemoriesStatusEnum;
     type?: ListMemoriesTypeEnum;
+    reach?: ListMemoriesReachEnum;
     q?: string;
     handle?: string;
     limit?: number;
@@ -129,6 +136,11 @@ export interface MemoriesApiPreviewMemoryImportRequest {
     memoryImportPreviewRequestDto: MemoryImportPreviewRequestDto;
 }
 
+export interface MemoriesApiPreviewMemoryIndexRequest {
+    projectId?: string;
+    teamSlug?: string;
+}
+
 export interface MemoriesApiPurgeMemoryRequest {
     memoryId: string;
 }
@@ -139,6 +151,10 @@ export interface MemoriesApiReadMemoryRequest {
 
 export interface MemoriesApiRestoreMemoryBatchRequest {
     batchId: string;
+}
+
+export interface MemoriesApiSearchOnlyMemoryRequest {
+    memoryId: string;
 }
 
 export interface MemoriesApiSetMemoryConfigRequest {
@@ -473,6 +489,51 @@ export class MemoriesApi extends runtime.BaseAPI {
     /**
      * 
      */
+    async indexMemoryRaw(requestParameters: MemoriesApiIndexMemoryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<MemoryEntry>> {
+        if (requestParameters['memoryId'] == null) {
+            throw new runtime.RequiredError(
+                'memoryId',
+                'Required parameter "memoryId" was null or undefined when calling indexMemory().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/memories/{memoryId}/index`;
+        urlPath = urlPath.replace(`{${"memoryId"}}`, encodeURIComponent(String(requestParameters['memoryId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async indexMemory(requestParameters: MemoriesApiIndexMemoryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<MemoryEntry> {
+        const response = await this.indexMemoryRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
     async keepMemoryRaw(requestParameters: MemoriesApiKeepMemoryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<MemoryKeepResultDto>> {
         if (requestParameters['memoryId'] == null) {
             throw new runtime.RequiredError(
@@ -539,6 +600,10 @@ export class MemoriesApi extends runtime.BaseAPI {
 
         if (requestParameters['type'] != null) {
             queryParameters['type'] = requestParameters['type'];
+        }
+
+        if (requestParameters['reach'] != null) {
+            queryParameters['reach'] = requestParameters['reach'];
         }
 
         if (requestParameters['q'] != null) {
@@ -876,6 +941,43 @@ export class MemoriesApi extends runtime.BaseAPI {
     /**
      * 
      */
+    async listMemoryTriageAgentsRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<MemoryTriageAgentsDto>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/memories/import/triage/agents`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async listMemoryTriageAgents(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<MemoryTriageAgentsDto> {
+        const response = await this.listMemoryTriageAgentsRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
     async memoryReviewSummaryRaw(requestParameters: MemoriesApiMemoryReviewSummaryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<MemoryReviewSummaryDto>> {
         const queryParameters: any = {};
 
@@ -1011,6 +1113,51 @@ export class MemoriesApi extends runtime.BaseAPI {
     /**
      * 
      */
+    async previewMemoryIndexRaw(requestParameters: MemoriesApiPreviewMemoryIndexRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<MemoryIndexPreviewDto>> {
+        const queryParameters: any = {};
+
+        if (requestParameters['projectId'] != null) {
+            queryParameters['projectId'] = requestParameters['projectId'];
+        }
+
+        if (requestParameters['teamSlug'] != null) {
+            queryParameters['teamSlug'] = requestParameters['teamSlug'];
+        }
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/memories/index-preview`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async previewMemoryIndex(requestParameters: MemoriesApiPreviewMemoryIndexRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<MemoryIndexPreviewDto> {
+        const response = await this.previewMemoryIndexRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
     async purgeMemoryRaw(requestParameters: MemoriesApiPurgeMemoryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<MemoryPurgeResultDto>> {
         if (requestParameters['memoryId'] == null) {
             throw new runtime.RequiredError(
@@ -1140,6 +1287,51 @@ export class MemoriesApi extends runtime.BaseAPI {
      */
     async restoreMemoryBatch(requestParameters: MemoriesApiRestoreMemoryBatchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<MemoryRestoreBatchResultDto> {
         const response = await this.restoreMemoryBatchRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
+    async searchOnlyMemoryRaw(requestParameters: MemoriesApiSearchOnlyMemoryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<MemoryEntry>> {
+        if (requestParameters['memoryId'] == null) {
+            throw new runtime.RequiredError(
+                'memoryId',
+                'Required parameter "memoryId" was null or undefined when calling searchOnlyMemory().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/memories/{memoryId}/search-only`;
+        urlPath = urlPath.replace(`{${"memoryId"}}`, encodeURIComponent(String(requestParameters['memoryId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async searchOnlyMemory(requestParameters: MemoriesApiSearchOnlyMemoryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<MemoryEntry> {
+        const response = await this.searchOnlyMemoryRaw(requestParameters, initOverrides);
         return await response.value();
     }
 
@@ -1368,6 +1560,14 @@ export const ListMemoriesTypeEnum = {
     Reference: 'reference'
 } as const;
 export type ListMemoriesTypeEnum = typeof ListMemoriesTypeEnum[keyof typeof ListMemoriesTypeEnum];
+/**
+ * @export
+ */
+export const ListMemoriesReachEnum = {
+    Index: 'index',
+    Search: 'search'
+} as const;
+export type ListMemoriesReachEnum = typeof ListMemoriesReachEnum[keyof typeof ListMemoriesReachEnum];
 /**
  * @export
  */

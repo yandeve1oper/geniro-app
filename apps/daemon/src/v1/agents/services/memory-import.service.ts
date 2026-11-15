@@ -17,6 +17,7 @@ import {
   type MemoryImportRow,
   type MemoryImportTriage,
   type MemoryImportTriageRequest,
+  type MemoryTriageAgents,
   type MemoryType,
 } from '../../memory/memory.types';
 import { MemoryService } from '../../memory/services/memory.service';
@@ -116,6 +117,11 @@ export class MemoryImportService {
     return { rows, sources, triageAgents: this.asks.agents() };
   }
 
+  /** The CLIs a sort may ask, for a picker opened before any preview. */
+  triageAgents(): MemoryTriageAgents {
+    return { agents: this.asks.agents() };
+  }
+
   /**
    * Ask one CLI which of these notes are worth keeping. Advice only: nothing
    * is written, and the user still ticks what lands.
@@ -123,10 +129,14 @@ export class MemoryImportService {
   async triage(
     request: MemoryImportTriageRequest,
   ): Promise<MemoryImportTriage> {
-    const answer = await this.asks.ask(request, triagePrompt(request.notes), {
-      code: 'MEMORY_TRIAGE_UNAVAILABLE',
-      task: 'sort notes',
-    });
+    const answer = await this.asks.ask(
+      request,
+      triagePrompt(request.notes, request.purpose),
+      {
+        code: 'MEMORY_TRIAGE_UNAVAILABLE',
+        task: 'sort notes',
+      },
+    );
     const verdicts =
       answer === null ? null : readTriageAnswer(answer, request.notes);
     if (verdicts === null) {

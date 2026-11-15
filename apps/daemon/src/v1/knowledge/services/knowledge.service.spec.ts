@@ -10,6 +10,7 @@ import { Run } from '../../runs/entity/run.entity';
 import { knowledgeDb } from '../__tests__/knowledge-db';
 import { KnowledgeRevision } from '../entity/knowledge-revision.entity';
 import {
+  DEFAULT_KNOWLEDGE_CONFIG,
   KNOWLEDGE_INDEX_MAX_BYTES,
   KNOWLEDGE_REVISIONS_KEPT,
   KNOWLEDGE_TITLE_MAX_CHARS,
@@ -980,6 +981,81 @@ describe('KnowledgeService', () => {
       expect((await service.runSnapshot(facts)).knowledgeIndex).toContain(
         '- unreviewed — Unreviewed.',
       );
+    });
+
+    it('puts an agent’s saved document into the run index on the user’s press, and back to search only', async () => {
+      service.setConfig({ enabled: true, agentWrites: 'direct' });
+      const facts = { taskId: null, cwd: null, projectId: null };
+      const saved = applied(
+        await service.save(
+          AGENT,
+          { title: 'Saved at once', whenToRead: 'W.', body: 'B', reason: 'r' },
+          NOWHERE,
+        ),
+      );
+
+      const indexed = await service.setIndexed(saved.id, true);
+      const listedThen = (await service.runSnapshot(facts)).knowledgeIndex;
+      const searchOnly = await service.setIndexed(saved.id, false);
+
+      expect(indexed).toMatchObject({
+        kind: 'changed',
+        head: { approvedAt: expect.any(String), rev: saved.rev },
+      });
+      expect(listedThen).toContain('- saved-at-once — Saved at once.');
+      expect(searchOnly).toMatchObject({
+        kind: 'changed',
+        head: { approvedAt: null },
+      });
+      expect((await service.runSnapshot(facts)).knowledgeIndex).toBeNull();
+    });
+
+    it('saves agent writes at once until Electron pushes a setting', () => {
+      expect(DEFAULT_KNOWLEDGE_CONFIG).toEqual({
+        enabled: true,
+        agentWrites: 'direct',
+      });
+    });
+
+    it('keeps a version restored after the user loaded it in the index', async () => {
+      service.setConfig({ enabled: true, agentWrites: 'direct' });
+      const saved = applied(
+        await service.save(
+          AGENT,
+          { title: 'Loaded', whenToRead: 'W.', body: 'B', reason: 'r' },
+          NOWHERE,
+        ),
+      );
+      await service.setIndexed(saved.id, true);
+      const [current] = (await service.revisions(saved.id)).revisions;
+
+      const restored = applied(
+        await service.restoreRevision(current!.id, saved.rev),
+      );
+
+      expect(restored.approvedAt).not.toBeNull();
+    });
+
+    it('refuses to move a proposed or archived document in or out of the index', async () => {
+      const proposed = await service.save(
+        AGENT,
+        { title: 'Proposed', whenToRead: 'W.', body: 'B', reason: 'r' },
+        NOWHERE,
+      );
+      const archived = applied(await service.create(doc()));
+      await service.setStatus(archived.id, 'archived');
+
+      expect(proposed.kind).toBe('proposed');
+      expect(
+        await service.setIndexed(
+          proposed.kind === 'proposed' ? proposed.document.id : '',
+          true,
+        ),
+      ).toMatchObject({ kind: 'refused', code: 'NOT_EDITABLE' });
+      expect(await service.setIndexed(archived.id, false)).toMatchObject({
+        kind: 'refused',
+        code: 'NOT_EDITABLE',
+      });
     });
 
     it('keeps a restored version unreviewed unless the user took its text', async () => {

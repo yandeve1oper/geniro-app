@@ -531,6 +531,7 @@ describe('MemoryImportService', () => {
     } as unknown as AgentAdapter);
 
     expect((await preview()).triageAgents).toEqual(['claude', 'codex']);
+    expect(imports.triageAgents()).toEqual({ agents: ['claude', 'codex'] });
     await expect(
       imports.triage({
         agentKind: AgentKind.CursorAgent,

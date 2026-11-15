@@ -44,6 +44,7 @@ import {
   type MemoryHit,
   type MemoryImportNote,
   type MemoryImportResult,
+  type MemoryIndexPreview,
   type MemoryKeepResult,
   type MemoryList,
   type MemoryListQuery,
@@ -319,7 +320,10 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     const shared = { ...none, nativeMemoryOff: this.config.nativeMemoryOff };
     try {
       const entries = await this.listVisible(await this.scopeFor(facts));
-      const index = memoryIndexOf(entries.filter(indexable), new Date());
+      const index = memoryIndexOf(
+        entries.filter((entry) => entry.indexed),
+        new Date(),
+      );
       return { ...shared, memoryIndex: index.text, indexIds: index.ids };
     } catch (error) {
       this.logger.warn(
@@ -489,6 +493,65 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
   }
 
   /**
+   * Move an active entry into every new run's memory index, or keep an agent's
+   * one to search only. The user's own and imported entries are always
+   * indexed, so they cannot be taken out.
+   */
+  setIndexed(
+    actor: MemoryActor,
+    id: string,
+    indexed: boolean,
+  ): Promise<MemoryStatusOutcome> {
+    return this.serialize(async () => {
+      if (isAgent(actor)) {
+        return refused(
+          'USER_ONLY',
+          'only the user moves an entry in or out of the index',
+        );
+      }
+      const em = this.em.fork();
+      const row = await this.memories.getById(id, em);
+      if (!row) {
+        return refused('NOT_FOUND', `no memory ${id}`);
+      }
+      if (row.status !== 'active') {
+        return refused(
+          'NOT_ACTIVE',
+          row.status === 'pending'
+            ? 'approve the entry first'
+            : 'restore the entry first',
+        );
+      }
+      if (!indexed && alwaysIndexed(row)) {
+        return refused(
+          'ALWAYS_INDEXED',
+          'an entry you wrote or imported is always in the index — forget it to take it out',
+        );
+      }
+      if (indexable(row) === indexed) {
+        return { kind: 'changed', entry: toEntry(row) };
+      }
+      row.approvedAt = indexed ? new Date() : null;
+      row.rev += 1;
+      await em.flush();
+      this.publish(row, indexed ? 'approved' : 'updated');
+      return { kind: 'changed', entry: toEntry(row) };
+    });
+  }
+
+  /**
+   * How many of the entries a new run in `place` may list fit in its memory
+   * index, cut exactly as {@link runSnapshot} cuts it.
+   */
+  async indexPreview(place: RunPlace): Promise<MemoryIndexPreview> {
+    const eligible = (await this.listVisible(place)).filter(
+      (entry) => entry.indexed,
+    );
+    const { ids } = memoryIndexOf(eligible, new Date());
+    return { listed: ids.length, eligible: eligible.length, ids };
+  }
+
+  /**
    * Every active entry a run in `place` may see, its team's first, then its
    * project's, then global, each group most recently used first — what a run's
    * memory index is cut from.
@@ -538,6 +601,7 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
                 ? { exactly: { projectId: null, teamSlug: query.teamSlug } }
                 : { any: true },
         type: query.type,
+        reach: query.reach,
         match,
         before:
           query.beforeUpdatedAt !== undefined && query.beforeId !== undefined
@@ -1308,17 +1372,21 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
 }
 
 /**
- * Whether an entry may sit in a run's instructions: the user's own, an
+ * Whether an active entry may sit in a run's instructions: the user's own, an
  * import's, or one the user approved. An agent's unreviewed entry is reached
  * only through `memory_search`, a tool result framed as data — one an agent
  * was steered into saving must not speak in every later run's instructions.
+ *
+ * TWIN: `reachExpression` in `apps/daemon/src/v1/memory/dao/memory.dao.ts`.
  */
-function indexable(entry: MemoryEntry): boolean {
+function indexable(row: Memory): boolean {
   return (
-    entry.source.actor === 'user' ||
-    entry.source.actor === 'import' ||
-    entry.approvedAt !== null
+    row.status === 'active' && (alwaysIndexed(row) || row.approvedAt !== null)
   );
+}
+
+function alwaysIndexed(row: Memory): boolean {
+  return row.sourceActor === 'user' || row.sourceActor === 'import';
 }
 
 /**
@@ -1450,6 +1518,7 @@ export function toEntry(row: Memory): MemoryEntry {
     updatedAt: row.updatedAt.toISOString(),
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
     approvedAt: row.approvedAt?.toISOString() ?? null,
+    indexed: indexable(row),
   };
 }
 

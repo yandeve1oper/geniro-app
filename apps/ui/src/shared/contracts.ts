@@ -398,7 +398,7 @@ export interface KnowledgeSettings {
 
 export const DEFAULT_KNOWLEDGE: KnowledgeSettings = {
   enabled: true,
-  agentWrites: 'review',
+  agentWrites: 'direct',
 };
 
 export interface ResourceAlertSettings {

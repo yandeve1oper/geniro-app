@@ -32,6 +32,7 @@ const HIT: MemoryHit = {
   updatedAt: '2026-10-01T00:00:00.000Z',
   lastUsedAt: null,
   approvedAt: null,
+  indexed: false,
 };
 
 describe('readMemorySearchArgs', () => {

@@ -89,10 +89,10 @@ export const KnowledgeConfigSchema = z
   .meta({ id: 'KnowledgeConfig' });
 export type KnowledgeConfig = z.infer<typeof KnowledgeConfigSchema>;
 
-/** Until Electron's first push: on, and agents propose. */
+/** Until Electron's first push: on, and agent writes are saved at once. */
 export const DEFAULT_KNOWLEDGE_CONFIG: KnowledgeConfig = {
   enabled: true,
-  agentWrites: 'review',
+  agentWrites: 'direct',
 };
 
 /** Who is writing; provenance comes from here, never from a tool's arguments. */

@@ -29,6 +29,7 @@ function storyEntry(handle: string): MemoryEntry {
     updatedAt: '2026-10-28T10:00:00.000Z',
     lastUsedAt: null,
     approvedAt: null,
+    indexed: false,
   };
 }
 

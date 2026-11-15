@@ -9,15 +9,18 @@ import { ConfirmActionButton } from './confirm-action-button';
 import { EmptyState } from './empty-state';
 import { ErrorText } from './error-text';
 import { MemoryRow } from './memory-row';
+import type { MemorySortVerdict } from './memory-sort-panel';
+import { tabId, tabPanelId, TabStrip } from './tab-strip';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { OptionIndicator } from './ui/option-list';
-import { SegmentedControl } from './ui/segmented-control';
 import { Select, type SelectGroup } from './ui/select';
 import { Spinner } from './ui/spinner';
 
 export type MemoryCleanupTab = 'cold' | 'checks' | 'kept' | 'forgotten';
+
+const CLEANUP_TABS_ID = 'memory-cleanup';
 
 export const MEMORY_CLEANUP_SORTS = [
   'leastUsed',
@@ -210,6 +213,28 @@ function Reasons({
   );
 }
 
+function SortVerdict({
+  verdict,
+}: {
+  verdict: MemorySortVerdict | undefined;
+}): React.JSX.Element | null {
+  if (verdict === undefined) {
+    return null;
+  }
+  return (
+    <div
+      data-slot="memory-cleanup-verdict"
+      className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <Badge variant={verdict.keep ? 'success' : 'warning'}>
+        {verdict.keep ? 'AI: keep' : 'AI: forget'}
+      </Badge>
+      {verdict.reason === '' ? null : (
+        <span className="min-w-0 break-words">{verdict.reason}</span>
+      )}
+    </div>
+  );
+}
+
 /**
  * The cleanup list over the shared memory: the least used entries to forget
  * in batches, the duplicates and contradictions a check found, the kept ones,
@@ -254,6 +279,8 @@ export function MemoryCleanupDialog({
   projectName,
   teamName,
   checkPanel = null,
+  sortPanel = null,
+  verdicts,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -296,15 +323,11 @@ export function MemoryCleanupDialog({
   projectName: (projectId: string | null) => string | null;
   teamName: (slug: string | null) => string | null;
   checkPanel?: React.ReactNode;
+  /** Least used: the Sort with AI box, absent on a paired device. */
+  sortPanel?: React.ReactNode;
+  /** Least used: what the AI sort said of each entry, by entry id. */
+  verdicts?: ReadonlyMap<string, MemorySortVerdict>;
 }): React.JSX.Element {
-  const tabLabel = (label: string, n: number | null) =>
-    n === null ? (
-      label
-    ) : (
-      <span className="flex flex-col items-center leading-tight sm:flex-row sm:gap-1">
-        <span>{label}</span> <span>({n.toLocaleString('en-US')})</span>
-      </span>
-    );
   const set = (patch: Partial<MemoryCleanupFilters>) =>
     onFilters({ ...filters, ...patch });
   const picked = selected.size;
@@ -320,6 +343,7 @@ export function MemoryCleanupDialog({
           projectName={projectName(entry.projectId)}
           teamName={teamName(entry.teamSlug)}
           busy={busy}
+          showStatus={false}
           leading={
             tab === 'cold' ? (
               <button
@@ -336,6 +360,9 @@ export function MemoryCleanupDialog({
             <>
               <UsageLine row={item} />
               <Reasons row={item} tab={tab} />
+              {tab === 'cold' ? (
+                <SortVerdict verdict={verdicts?.get(entry.id)} />
+              ) : null}
             </>
           }
           onForget={
@@ -347,36 +374,33 @@ export function MemoryCleanupDialog({
           )}
           onRestore={tab === 'forgotten' ? () => onRestore(entry) : undefined}
           actions={
-            tab === 'cold' ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() => onKeep(entry)}>
-                Keep
-              </Button>
-            ) : tab === 'kept' ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() => onUnkeep(entry)}>
-                Stop keeping
-              </Button>
-            ) : onPurge ? (
-              <ConfirmActionButton
-                disabled={busy}
-                question={`Delete ${entry.handle} permanently?`}
-                description="Its text, its forget reason and any finding that quotes it are erased for good. This cannot be undone. Its number is not reused and its usage figures stay. Past chats keep what they showed."
-                confirmLabel="Delete permanently"
-                busyLabel="Deleting…"
-                confirmVariant="destructive"
-                onConfirm={() => onPurge(entry)}>
-                Delete permanently…
-              </ConfirmActionButton>
-            ) : undefined
+            tab === 'cold'
+              ? [{ value: 'keep', label: 'Keep', run: () => onKeep(entry) }]
+              : tab === 'kept'
+                ? [
+                    {
+                      value: 'unkeep',
+                      label: 'Stop keeping',
+                      run: () => onUnkeep(entry),
+                    },
+                  ]
+                : onPurge
+                  ? [
+                      {
+                        value: 'purge',
+                        label: 'Delete permanently…',
+                        tone: 'destructive',
+                        run: () => onPurge(entry),
+                        confirm: {
+                          question: `Delete ${entry.handle} permanently?`,
+                          description:
+                            'Its text, its forget reason and any finding that quotes it are erased for good. This cannot be undone. Its number is not reused and its usage figures stay. Past chats keep what they showed.',
+                          confirmLabel: 'Delete permanently',
+                          busyLabel: 'Deleting…',
+                        },
+                      },
+                    ]
+                  : []
           }
         />
       </li>
@@ -419,204 +443,216 @@ export function MemoryCleanupDialog({
       title="Clean up memory"
       className="max-w-3xl">
       <div data-slot="memory-cleanup" className="flex min-w-0 flex-col gap-3">
-        <SegmentedControl
-          ariaLabel="Review"
+        <TabStrip
+          label="Review"
+          idPrefix={CLEANUP_TABS_ID}
           value={tab}
           onSelect={onTab}
-          options={[
-            { id: 'cold', label: tabLabel('Least used', counts.cold) },
-            { id: 'checks', label: tabLabel('Conflicts', counts.checks) },
-            { id: 'kept', label: tabLabel('Kept', counts.kept) },
-            { id: 'forgotten', label: tabLabel('Forgotten', counts.forgotten) },
+          className="border-b border-border"
+          tabs={[
+            { id: 'cold', label: 'Least used', count: counts.cold },
+            { id: 'checks', label: 'Conflicts', count: counts.checks },
+            { id: 'kept', label: 'Kept', count: counts.kept },
+            { id: 'forgotten', label: 'Forgotten', count: counts.forgotten },
           ]}
         />
-        {notice === null ? null : (
-          <div
-            role="status"
-            data-slot="memory-cleanup-notice"
-            className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-border bg-muted/60 px-3 py-2 text-sm">
-            <span className="min-w-0">{notice.text}</span>
-            {notice.batchId === null ? null : (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => onUndo(notice.batchId ?? '')}>
-                Undo
-              </Button>
-            )}
-          </div>
-        )}
-        {tab === 'cold' ? (
-          <div
-            data-slot="memory-cleanup-filters"
-            className="flex min-w-0 flex-wrap items-center gap-1">
-            <Select
-              variant="ghost"
-              aria-label="Sort"
-              groups={[{ label: 'Sort', items: SORT_ITEMS }]}
-              value={filters.sort}
-              onValueChange={(value) =>
-                set({
-                  sort:
-                    MEMORY_CLEANUP_SORTS.find((sort) => sort === value) ??
-                    'leastUsed',
-                })
-              }
-            />
-            <Select
-              variant="ghost"
-              aria-label="Age"
-              groups={[{ label: 'Age', items: AGE_ITEMS }]}
-              value={String(filters.minAgeDays)}
-              onValueChange={(value) => set({ minAgeDays: Number(value) })}
-            />
-            <Select
-              variant="ghost"
-              flexible
-              aria-label="Review scope"
-              groups={scopeGroups}
-              value={filters.scope}
-              onValueChange={(scope) => set({ scope })}
-            />
-            <Select
-              variant="ghost"
-              aria-label="Review type"
-              groups={[{ label: 'Type', items: TYPE_ITEMS }]}
-              value={filters.type}
-              onValueChange={(type) => set({ type })}
-            />
-            <Select
-              variant="ghost"
-              aria-label="Warnings"
-              groups={[{ label: 'Warnings', items: WARNING_ITEMS }]}
-              value={filters.warnings}
-              onValueChange={(value) =>
-                set({
-                  warnings:
-                    MEMORY_CLEANUP_WARNINGS.find(
-                      (warnings) => warnings === value,
-                    ) ?? 'any',
-                })
-              }
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              aria-pressed={filters.referenceGone}
-              onClick={() => set({ referenceGone: !filters.referenceGone })}>
-              <OptionIndicator arity="many" chosen={filters.referenceGone} />
-              Reference gone
-            </Button>
-          </div>
-        ) : null}
-        {tab === 'forgotten' && batches.length > 0 ? (
-          <section
-            aria-label="Recent cleanups"
-            data-slot="memory-cleanup-batches"
-            className="flex min-w-0 flex-col gap-1 rounded-lg border border-border p-3">
-            <span className="text-sm font-medium">Recent cleanups</span>
-            <ul className="m-0 flex list-none flex-col gap-1 p-0">
-              {batches.map((batch) => (
-                <li
-                  key={batch.batchId}
-                  className="flex min-w-0 items-center justify-between gap-2 text-sm">
-                  <span className="min-w-0 text-muted-foreground">
-                    {batchLabel(batch)}
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onUndo(batch.batchId)}>
-                    Undo
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-        {tab === 'checks' ? checkPanel : null}
-        {error === null || tab === 'checks' ? null : (
-          <ErrorText>{error}</ErrorText>
-        )}
-        {tab === 'cold' && countedSince !== null ? (
-          <p className="m-0 text-xs text-muted-foreground">
-            Counted over every entry; reads counted since{' '}
-            {dayLabel(countedSince)}
-            {counting ? ', earlier chats still being counted' : ''}.
-          </p>
-        ) : null}
-        {tab === 'checks' ? null : loading && rows.length === 0 ? (
-          <p
-            role="status"
-            className="m-0 flex items-center gap-2 text-sm text-muted-foreground">
-            <Spinner />
-            Loading…
-          </p>
-        ) : rows.length === 0 ? (
-          error === null ? (
-            <EmptyState data-slot="memory-cleanup-empty">{empty()}</EmptyState>
-          ) : null
-        ) : (
-          <>
-            <ul className="m-0 flex list-none flex-col gap-1 divide-y divide-border p-0">
-              {rows.map(row)}
-            </ul>
-            {next !== null ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="self-start"
-                disabled={loading}
-                onClick={onLoadMore}>
-                Show more ({(total - rows.length).toLocaleString('en-US')} left)
-              </Button>
-            ) : null}
-          </>
-        )}
-        {tab === 'cold' && total > 0 ? (
-          <div className="sticky -bottom-4 -mx-5 -mb-4 flex flex-wrap items-center justify-between gap-2 border-t border-border bg-card px-5 py-3">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={ticking}
-                onClick={onTickShown}>
-                Tick shown
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={picked === 0}
-                onClick={onUntickAll}>
-                Untick all
-              </Button>
-              <span
-                data-slot="memory-cleanup-picked"
-                className="text-xs text-muted-foreground">
-                {picked.toLocaleString('en-US')} selected
-                {tickSkipped !== null && tickSkipped > 0
-                  ? ` · Tick shown skipped ${entries(tickSkipped)} with a warning`
-                  : ''}
-              </span>
+        <div
+          role="tabpanel"
+          id={tabPanelId(CLEANUP_TABS_ID, tab)}
+          aria-labelledby={tabId(CLEANUP_TABS_ID, tab)}
+          className="flex min-w-0 flex-col gap-3">
+          {notice === null ? null : (
+            <div
+              role="status"
+              data-slot="memory-cleanup-notice"
+              className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-border bg-muted/60 px-3 py-2 text-sm">
+              <span className="min-w-0">{notice.text}</span>
+              {notice.batchId === null ? null : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onUndo(notice.batchId ?? '')}>
+                  Undo
+                </Button>
+              )}
             </div>
-            <ConfirmActionButton
-              variant="default"
-              disabled={picked === 0}
-              question={`Forget ${entries(picked)}?`}
-              description={forgetDescription(picked, warnedSelected)}
-              confirmLabel={`Forget ${picked.toLocaleString('en-US')}`}
-              busyLabel="Forgetting…"
-              onConfirm={() => onForget([...selected])}>
-              Forget {picked.toLocaleString('en-US')}…
-            </ConfirmActionButton>
-          </div>
-        ) : null}
+          )}
+          {tab === 'cold' ? (
+            <div
+              data-slot="memory-cleanup-filters"
+              className="flex min-w-0 flex-wrap items-center gap-1">
+              <Select
+                variant="ghost"
+                aria-label="Sort"
+                groups={[{ label: 'Sort', items: SORT_ITEMS }]}
+                value={filters.sort}
+                onValueChange={(value) =>
+                  set({
+                    sort:
+                      MEMORY_CLEANUP_SORTS.find((sort) => sort === value) ??
+                      'leastUsed',
+                  })
+                }
+              />
+              <Select
+                variant="ghost"
+                aria-label="Age"
+                groups={[{ label: 'Age', items: AGE_ITEMS }]}
+                value={String(filters.minAgeDays)}
+                onValueChange={(value) => set({ minAgeDays: Number(value) })}
+              />
+              <Select
+                variant="ghost"
+                flexible
+                aria-label="Review scope"
+                groups={scopeGroups}
+                value={filters.scope}
+                onValueChange={(scope) => set({ scope })}
+              />
+              <Select
+                variant="ghost"
+                aria-label="Review type"
+                groups={[{ label: 'Type', items: TYPE_ITEMS }]}
+                value={filters.type}
+                onValueChange={(type) => set({ type })}
+              />
+              <Select
+                variant="ghost"
+                aria-label="Warnings"
+                groups={[{ label: 'Warnings', items: WARNING_ITEMS }]}
+                value={filters.warnings}
+                onValueChange={(value) =>
+                  set({
+                    warnings:
+                      MEMORY_CLEANUP_WARNINGS.find(
+                        (warnings) => warnings === value,
+                      ) ?? 'any',
+                  })
+                }
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                aria-pressed={filters.referenceGone}
+                onClick={() => set({ referenceGone: !filters.referenceGone })}>
+                <OptionIndicator arity="many" chosen={filters.referenceGone} />
+                Reference gone
+              </Button>
+            </div>
+          ) : null}
+          {tab === 'cold' ? sortPanel : null}
+          {tab === 'forgotten' && batches.length > 0 ? (
+            <section
+              aria-label="Recent cleanups"
+              data-slot="memory-cleanup-batches"
+              className="flex min-w-0 flex-col gap-1 rounded-lg border border-border p-3">
+              <span className="text-sm font-medium">Recent cleanups</span>
+              <ul className="m-0 flex list-none flex-col gap-1 p-0">
+                {batches.map((batch) => (
+                  <li
+                    key={batch.batchId}
+                    className="flex min-w-0 items-center justify-between gap-2 text-sm">
+                    <span className="min-w-0 text-muted-foreground">
+                      {batchLabel(batch)}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onUndo(batch.batchId)}>
+                      Undo
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {tab === 'checks' ? checkPanel : null}
+          {error === null || tab === 'checks' ? null : (
+            <ErrorText>{error}</ErrorText>
+          )}
+          {tab === 'cold' && countedSince !== null ? (
+            <p className="m-0 text-xs text-muted-foreground">
+              Counted over every entry; reads counted since{' '}
+              {dayLabel(countedSince)}
+              {counting ? ', earlier chats still being counted' : ''}.
+            </p>
+          ) : null}
+          {tab === 'checks' ? null : loading && rows.length === 0 ? (
+            <p
+              role="status"
+              className="m-0 flex items-center gap-2 text-sm text-muted-foreground">
+              <Spinner />
+              Loading…
+            </p>
+          ) : rows.length === 0 ? (
+            error === null ? (
+              <EmptyState data-slot="memory-cleanup-empty">
+                {empty()}
+              </EmptyState>
+            ) : null
+          ) : (
+            <>
+              <ul className="m-0 flex list-none flex-col gap-1 divide-y divide-border p-0">
+                {rows.map(row)}
+              </ul>
+              {next !== null ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="self-start"
+                  disabled={loading}
+                  onClick={onLoadMore}>
+                  Show more ({(total - rows.length).toLocaleString('en-US')}{' '}
+                  left)
+                </Button>
+              ) : null}
+            </>
+          )}
+          {tab === 'cold' && total > 0 ? (
+            <div className="sticky -bottom-4 -mx-5 -mb-4 flex flex-wrap items-center justify-between gap-2 border-t border-border bg-card px-5 py-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={ticking}
+                  onClick={onTickShown}>
+                  Tick shown
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={picked === 0}
+                  onClick={onUntickAll}>
+                  Untick all
+                </Button>
+                <span
+                  data-slot="memory-cleanup-picked"
+                  className="text-xs text-muted-foreground">
+                  {picked.toLocaleString('en-US')} selected
+                  {tickSkipped !== null && tickSkipped > 0
+                    ? ` · Tick shown skipped ${entries(tickSkipped)} with a warning`
+                    : ''}
+                </span>
+              </div>
+              <ConfirmActionButton
+                variant="default"
+                disabled={picked === 0}
+                question={`Forget ${entries(picked)}?`}
+                description={forgetDescription(picked, warnedSelected)}
+                confirmLabel={`Forget ${picked.toLocaleString('en-US')}`}
+                busyLabel="Forgetting…"
+                onConfirm={() => onForget([...selected])}>
+                Forget {picked.toLocaleString('en-US')}…
+              </ConfirmActionButton>
+            </div>
+          ) : null}
+        </div>
       </div>
     </Dialog>
   );

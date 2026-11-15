@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ZodResponse } from 'nestjs-zod';
 
@@ -10,11 +10,13 @@ import {
   MemoryImportResultDto,
   MemoryImportTriageDto,
   MemoryImportTriageRequestDto,
+  MemoryTriageAgentsDto,
 } from '../../memory/dto/memories.dto';
 import type {
   MemoryImportPreview,
   MemoryImportResult,
   MemoryImportTriage,
+  MemoryTriageAgents,
 } from '../../memory/memory.types';
 import { MemoryImportService } from '../services/memory-import.service';
 
@@ -46,6 +48,13 @@ export class MemoryImportController {
     @Body() body: MemoryImportTriageRequestDto,
   ): Promise<MemoryImportTriage> {
     return this.imports.triage(body);
+  }
+
+  @Get('triage/agents')
+  @ApiOperation({ operationId: 'listMemoryTriageAgents' })
+  @ZodResponse({ status: 200, type: MemoryTriageAgentsDto })
+  triageAgents(): MemoryTriageAgents {
+    return this.imports.triageAgents();
   }
 
   @Post()

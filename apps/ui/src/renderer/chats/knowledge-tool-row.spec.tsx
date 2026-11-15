@@ -446,13 +446,13 @@ describe('the panel of documents a call named', () => {
     expect(commit).toContain('Commit format');
     expect(commit).toContain('Writing a commit.');
     expect(commit).toContain('global');
-    expect(commit).not.toContain('unreviewed');
+    expect(commit).not.toContain('search only');
     const checklist =
       container.querySelector('[data-knowledge-doc="release-checklist"]')
         ?.textContent ?? '';
     expect(checklist).toContain('Release checklist');
     expect(checklist).toContain('project');
-    expect(checklist).toContain('unreviewed');
+    expect(checklist).toContain('search only');
   });
 
   it('opens Knowledge on a document only from its own link, never on a press of the row', async () => {
@@ -577,7 +577,7 @@ describe('the documents a panel reads as they stand now', () => {
     expect(checklist).toContain('Release checklist v2');
     expect(checklist).toContain('Before a release cut.');
     expect(checklist).not.toContain('Cutting a release.');
-    expect(checklist).toContain('unreviewed');
+    expect(checklist).toContain('search only');
     expect(checklist).toContain('archived');
   });
 
@@ -905,7 +905,7 @@ describe('the documents a panel reads as they stand now', () => {
     const checklist = docOf('release-checklist');
     expect(checklist).toContain('Release checklist');
     expect(checklist).toContain('Cutting a release.');
-    expect(checklist).toContain('unreviewed');
+    expect(checklist).toContain('search only');
     expect(linksToKnowledge()).toHaveLength(2);
   });
 
