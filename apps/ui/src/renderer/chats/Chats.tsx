@@ -199,6 +199,7 @@ import {
   conversationWorkByCall,
   conversationWorkOf,
 } from './conversation-work';
+import type { ConversationWorkSource } from './conversation-work-chips';
 import { anySubagentRunning, useDurableTranscript } from './durable-transcript';
 import { FastActionBar } from './fast-action-bar';
 import { FolderSelect } from './folder-select';
@@ -451,10 +452,7 @@ import { useWorktreeOrigin } from './use-worktree-origin';
 import { type WaitReading, waitReadings, waitsOnUser } from './waiting';
 import { WaitingMessagesStrip } from './waiting-messages-strip';
 import { type WorkingAgentRow, workingAgentRows } from './working-agents';
-import {
-  type ConversationWorkSource,
-  WorkingAgentsCard,
-} from './working-agents-card';
+import { WorkingAgentsCard } from './working-agents-card';
 
 /**
  * A follow-up typed while the agent was still working. It carries its images
@@ -8486,9 +8484,16 @@ export function Chats({
       shellsByAgent,
       monitors: runState.monitors,
       tasksByAgent,
+      notes: teamNotes,
+      actions: chatActions.actions,
     });
     return {
       of: (callIds) => conversationWorkOf(byCall, callIds),
+      agentName: shelfAgentName,
+      phases: chatActions.phases,
+      onPressAction: chatActions.press,
+      onDismissAction: chatActions.dismiss,
+      onOpenNote: (seq) => setNotesView({ selected: seq }),
       onOpenShell: setOpenShell,
       onKillShell: handleKillShell,
       onStopMonitor: handleStopMonitor,
@@ -8499,6 +8504,9 @@ export function Chats({
     shellsByAgent,
     runState.monitors,
     tasksByAgent,
+    teamNotes,
+    chatActions,
+    shelfAgentName,
     handleKillShell,
     handleStopMonitor,
     openSubagentById,

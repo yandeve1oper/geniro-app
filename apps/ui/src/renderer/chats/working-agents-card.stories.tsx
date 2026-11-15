@@ -8,6 +8,7 @@ import {
 } from './conversation-work';
 import type { ShellRun } from './shell-activity';
 import { ThreadUiMemoryContext } from './thread-ui-memory';
+import type { ActionPressPhase } from './use-chat-actions';
 import type { WorkingAgentRow } from './working-agents';
 import { WorkingAgentsCard } from './working-agents-card';
 
@@ -272,7 +273,7 @@ const shell = (id: string, command: string, callId: string): ShellRun => ({
   callId,
 });
 
-const storyWork: Record<string, ConversationWork> = {
+const storyWork: Record<string, Partial<ConversationWork>> = {
   'call-1': {
     shells: [
       shell('sh-1', 'pnpm dev', 'call-1'),
@@ -332,7 +333,15 @@ const storyWork: Record<string, ConversationWork> = {
 export const WithOwnWork: Story = {
   args: {
     work: {
-      of: (callIds) => storyWork[callIds[0]!] ?? NO_CONVERSATION_WORK,
+      of: (callIds) => ({
+        ...NO_CONVERSATION_WORK,
+        ...storyWork[callIds[0]!],
+      }),
+      agentName: () => 'Senior Engineer',
+      phases: new Map<number, ActionPressPhase>(),
+      onPressAction: () => {},
+      onDismissAction: () => {},
+      onOpenNote: () => {},
       onOpenShell: () => {},
     },
   },

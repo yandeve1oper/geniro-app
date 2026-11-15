@@ -13,6 +13,11 @@ import {
   CallConversationContext,
   CallConversationPager,
 } from './call-conversation';
+import {
+  ConversationWorkBar,
+  type ConversationWorkSource,
+  hasConversationWork,
+} from './conversation-work-chips';
 import { useDurableTranscript } from './durable-transcript';
 import { mergeAnchorRows } from './history-anchors';
 import { callBlockOfConversation, indexCallBlocks } from './transcript-groups';
@@ -87,6 +92,7 @@ function ConversationBody({
   delegateState,
   collapseToolSteps,
   onShowInChat,
+  work,
 }: {
   row: WorkingAgentRow;
   runId: string;
@@ -97,6 +103,7 @@ function ConversationBody({
   delegateState?: Pick<RunStateDto, 'throughSeq' | 'delegates' | 'calls'>;
   collapseToolSteps: boolean;
   onShowInChat: (callId: string) => void;
+  work?: ConversationWorkSource;
 }): React.JSX.Element {
   const [rows, setRows] = useState<ChatItem[]>([]);
   const runIdRef = useRef<string | null>(runId);
@@ -138,6 +145,11 @@ function ConversationBody({
     () => callBlockOfConversation(indexCallBlocks(entries), row.callIds),
     [entries, row.callIds],
   );
+  const conversationWork = work?.of(row.callIds);
+  const ownWork =
+    conversationWork !== undefined && hasConversationWork(conversationWork)
+      ? conversationWork
+      : null;
   const pages = callConversations.stateOf(row.conversationId);
   const settled = pages?.loading === false;
 
@@ -216,15 +228,20 @@ function ConversationBody({
           )}
         </CallConversationContext.Provider>
       </div>
-      {block === undefined ? null : (
+      {block === undefined && ownWork === null ? null : (
         <div
           data-slot="call-conversation-footer"
           className="flex shrink-0 flex-col gap-2 border-t border-border/60 px-5 py-3">
-          <CallConversationFooter
-            block={block}
-            nodes={nodes}
-            className="border-t-0 pt-0"
-          />
+          {ownWork === null || work === undefined ? null : (
+            <ConversationWorkBar row={row} work={ownWork} source={work} />
+          )}
+          {block === undefined ? null : (
+            <CallConversationFooter
+              block={block}
+              nodes={nodes}
+              className="border-t-0 pt-0"
+            />
+          )}
         </div>
       )}
     </div>
@@ -251,6 +268,7 @@ export function CallConversationDialog({
   delegateState?: Pick<RunStateDto, 'throughSeq' | 'delegates' | 'calls'>;
   collapseToolSteps: boolean;
   onShowInChat: (callId: string) => void;
+  work?: ConversationWorkSource;
 }): React.JSX.Element {
   return (
     <Dialog
