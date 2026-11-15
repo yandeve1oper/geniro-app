@@ -14319,7 +14319,8 @@ describe('TeamExecutorService — a callee process outlives its turn', () => {
     // working state on. A wake writes none, so without the flag the open
     // thread kept Stop up and queued every message behind an ending that never
     // came.
-    const { service, claude, callBroker, runDao, itemlessSettles } = setup();
+    const { service, claude, callBroker, runDao, itemDao, itemlessSettles } =
+      setup();
     const run = await service.startRun({
       slug: 'bg',
       team: CALL_TEAM,
@@ -14349,6 +14350,227 @@ describe('TeamExecutorService — a callee process outlives its turn', () => {
 
     expect(runDao.runs.get(run.id)?.status).toBe('completed');
     expect(itemlessSettles).toEqual([run.id]);
+    expect(
+      itemDao.items.filter(
+        (row) =>
+          row.runId === run.id &&
+          row.kind === 'turn_complete' &&
+          row.memberId === null,
+      ),
+    ).toHaveLength(1);
+  });
+
+  const closingRows = (ctx: ReturnType<typeof setup>, runId: string) =>
+    ctx.itemDao.items
+      .filter(
+        (row) =>
+          row.runId === runId &&
+          row.kind === 'turn_complete' &&
+          row.memberId === null,
+      )
+      .map((row) => JSON.parse(String(row.payload)).stopReason as string);
+
+  describe('a woken run whose pass failed', () => {
+    const failedPass = async (ctx: ReturnType<typeof setup>) => {
+      const run = await ctx.service.startRun({
+        slug: 'bg',
+        team: CALL_TEAM,
+        cwd: dir,
+        prompt: 'go',
+      });
+      await drain();
+      ctx.claude.starts[0]!.emit({
+        type: 'error',
+        message: "You've hit your usage limit",
+      });
+      ctx.claude.starts[0]!.finish();
+      await drain();
+      expect(ctx.runDao.runs.get(run.id)?.status).toBe('failed');
+      return run;
+    };
+
+    const wakeForAsyncCall = async (
+      ctx: ReturnType<typeof setup>,
+      runId: string,
+    ) => {
+      void ctx.callBroker.callAgent(runId, 'a', {
+        title: 'one',
+        agent: 'callee',
+        message: 'build it',
+        mode: 'async',
+      });
+      await drain();
+      expect(ctx.runDao.runs.get(runId)?.status).toBe('running');
+      completeTurn(ctx.claude.starts[1]!, 'built it');
+      await drain();
+      const woken = ctx.claude.starts.slice(2);
+      expect(woken).toHaveLength(1);
+      return woken[0]!;
+    };
+
+    it('settles completed once the member that failed it has completed a turn', async () => {
+      const ctx = setup();
+      const run = await failedPass(ctx);
+
+      completeTurn(await wakeForAsyncCall(ctx, run.id), 'reported back');
+      await drain();
+
+      expect(ctx.nodeDao.row(run.id, 'a')?.status).toBe('completed');
+      expect(ctx.runDao.runs.get(run.id)?.status).toBe('completed');
+    });
+
+    it('closes the feed with one completed row when it settles completed', async () => {
+      const ctx = setup();
+      const run = await failedPass(ctx);
+
+      completeTurn(await wakeForAsyncCall(ctx, run.id), 'reported back');
+      await drain();
+
+      expect(closingRows(ctx, run.id)).toEqual([
+        'team_failed',
+        'team_completed',
+      ]);
+      const last = ctx.itemDao.items
+        .filter((row) => row.runId === run.id)
+        .at(-1);
+      expect(last?.kind).toBe('turn_complete');
+      expect(JSON.parse(String(last?.payload)).stopReason).toBe(
+        'team_completed',
+      );
+      expect(ctx.itemlessSettles).toEqual([]);
+    });
+
+    it('settles failed again when the woken turn of the member that failed it fails too', async () => {
+      const ctx = setup();
+      const run = await failedPass(ctx);
+
+      const woken = await wakeForAsyncCall(ctx, run.id);
+      woken.emit({ type: 'error', message: "You've hit your usage limit" });
+      woken.finish();
+      await drain();
+
+      expect(ctx.runDao.runs.get(run.id)?.status).toBe('failed');
+    });
+
+    it('settles failed again when the wake never gives the member that failed it a turn', async () => {
+      const ctx = setup();
+      const run = await failedPass(ctx);
+
+      const called = ctx.callBroker.callAgent(run.id, 'a', {
+        title: 'one',
+        agent: 'callee',
+        message: 'build it',
+      });
+      await drain();
+      expect(ctx.runDao.runs.get(run.id)?.status).toBe('running');
+      completeTurn(ctx.claude.starts[1]!, 'built it');
+      await expect(called).resolves.toMatchObject({ status: 'ok' });
+      await drain();
+
+      expect(ctx.claude.starts).toHaveLength(2);
+      expect(ctx.nodeDao.row(run.id, 'a')?.status).toBe('failed');
+      expect(ctx.runDao.runs.get(run.id)?.status).toBe('failed');
+      expect(closingRows(ctx, run.id)).toEqual(['team_failed']);
+      expect(ctx.itemlessSettles).toEqual([run.id]);
+    });
+  });
+
+  it('settles a woken run failed when the turn it woke a member for fails, though its pass completed', async () => {
+    const ctx = setup();
+    const run = await ctx.service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    completeTurn(ctx.claude.starts[0]!, 'done');
+    await drain();
+    expect(ctx.runDao.runs.get(run.id)?.status).toBe('completed');
+
+    void ctx.callBroker.callAgent(run.id, 'a', {
+      title: 'one',
+      agent: 'callee',
+      message: 'build it',
+      mode: 'async',
+    });
+    await drain();
+    completeTurn(ctx.claude.starts[1]!, 'built it');
+    await drain();
+    const woken = ctx.claude.starts.slice(2);
+    expect(woken).toHaveLength(1);
+    woken[0]!.emit({ type: 'error', message: 'the CLI died' });
+    woken[0]!.finish();
+    await drain();
+
+    expect(ctx.runDao.runs.get(run.id)?.status).toBe('failed');
+    expect(closingRows(ctx, run.id)).toEqual(['team_completed', 'team_failed']);
+  });
+
+  describe('a woken run whose pass completed', () => {
+    const completedPass = async (ctx: ReturnType<typeof setup>) => {
+      const run = await ctx.service.startRun({
+        slug: 'bg',
+        team: CALL_TEAM,
+        cwd: dir,
+        prompt: 'go',
+      });
+      await drain();
+      completeTurn(ctx.claude.starts[0]!, 'done');
+      await drain();
+      return run;
+    };
+
+    const asyncCall = (ctx: ReturnType<typeof setup>, runId: string) => {
+      void ctx.callBroker.callAgent(runId, 'a', {
+        title: 'one',
+        agent: 'callee',
+        message: 'build it',
+        mode: 'async',
+      });
+    };
+
+    it('stays failed when the pass could not write its own roll-up', async () => {
+      const ctx = setup();
+      const run = await ctx.service.startRun({
+        slug: 'bg',
+        team: CALL_TEAM,
+        cwd: dir,
+        prompt: 'go',
+      });
+      await drain();
+      ctx.runDao.failNextStatus = 'completed';
+      completeTurn(ctx.claude.starts[0]!, 'done');
+      await drain();
+      expect(ctx.runDao.runs.get(run.id)?.status).toBe('failed');
+
+      asyncCall(ctx, run.id);
+      await drain();
+      completeTurn(ctx.claude.starts[1]!, 'built it');
+      await drain();
+      completeTurn(ctx.claude.starts[2]!, 'reported back');
+      await drain();
+
+      expect(ctx.nodeDao.row(run.id, 'a')?.status).toBe('completed');
+      expect(ctx.runDao.runs.get(run.id)?.status).toBe('failed');
+      expect(closingRows(ctx, run.id)).toEqual([]);
+    });
+
+    it('settles completed though a transcript write failed during the wake', async () => {
+      const ctx = setup();
+      const run = await completedPass(ctx);
+
+      asyncCall(ctx, run.id);
+      await drain();
+      ctx.itemDao.failNextKind = 'message';
+      completeTurn(ctx.claude.starts[1]!, 'built it');
+      await drain();
+      expect(ctx.itemDao.failNextKind).toBeNull();
+      completeTurn(ctx.claude.starts[2]!, 'reported back');
+      await drain();
+
+      expect(ctx.runDao.runs.get(run.id)?.status).toBe('completed');
+    });
   });
 
   it('lets go of a woken run whose status could not be written back', async () => {
