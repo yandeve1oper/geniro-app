@@ -86,6 +86,7 @@ import { ComparisonBroker } from './services/comparison.broker';
 import { ConfigDirPinService } from './services/config-dir-pin.service';
 import { ContextWindowStore } from './services/context-window.store';
 import { ContextWindowsService } from './services/context-windows.service';
+import { DelegateSpendStore } from './services/delegate-spend.store';
 import { EffortsService } from './services/efforts.service';
 import { FindingsReportBroker } from './services/findings-report.broker';
 import { GalleryBroker } from './services/gallery.broker';
@@ -459,8 +460,9 @@ import { defaultSpawn } from './utils/spawn-cli';
     // is `@Optional()` and arrives empty here.
     ModelPriceCatalog,
     PartialStreamService,
-    // The live plane's durable half — `Run.unrecordedSpend`.
+    // The live plane's durable halves — `Run.unrecordedSpend` and `Run.delegateSpend`.
     UnrecordedSpendStore,
+    DelegateSpendStore,
     ProcessRegistry,
     AgentSessionRegistry,
     AgentActivityService,

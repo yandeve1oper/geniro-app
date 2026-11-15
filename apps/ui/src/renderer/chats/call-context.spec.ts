@@ -606,6 +606,43 @@ describe('the running part of a conversation’s cost', () => {
     expect(liveRunCost(plane)?.costUsd).toBe(12.75);
   });
 
+  it('never adds a delegate’s figures to the running cost — its owner’s spend already holds them', () => {
+    const delegateFigures = {
+      requests: 3,
+      inputTokens: 900,
+      outputTokens: 80,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
+      contextTokens: 1_200,
+      model: 'claude-sonnet-5-5',
+    };
+    const delegating = new Map<string, LiveState>([
+      [
+        partialOwnerKey('callee', 'call-1'),
+        {
+          ...costing(1.25),
+          delegates: {
+            toolu_1: { ...delegateFigures, costUsd: 4, estimatedCostUsd: 4 },
+          },
+        },
+      ],
+      [
+        partialOwnerKey('callee', 'call-2'),
+        {
+          ...costing(null),
+          delegates: {
+            toolu_2: { ...delegateFigures, costUsd: null, estimatedCostUsd: 2 },
+          },
+        },
+      ],
+    ]);
+    expect(
+      liveConversationCost(delegating, 'callee', ['call-1', 'call-2']),
+    ).toEqual({ costUsd: 1.25, estimatedCostUsd: null });
+    expect(liveNodeCost(delegating, 'callee')?.costUsd).toBe(1.25);
+    expect(liveRunCost(delegating)?.costUsd).toBe(1.25);
+  });
+
   it('adds the running part to a recorded spend', () => {
     // The reported undercount: a call hours into its turn stated the turns
     // that had FINISHED as the bill.

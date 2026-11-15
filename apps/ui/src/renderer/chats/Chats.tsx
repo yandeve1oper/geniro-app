@@ -1347,6 +1347,7 @@ export function Chats({
     items,
     anchors,
     callConversations,
+    delegateConversations,
     hasOlder,
     loadingOlder,
     loadingHistory,
@@ -9679,6 +9680,8 @@ export function Chats({
         threadId={activeRunId}
         runSettledAt={activeRunSettledAt}
         callConversations={callConversations}
+        delegateConversations={delegateConversations}
+        liveText={liveText}
         applyRecommendations={applyRecommendations}
         memberVerdicts={memberVerdicts}
         notSent={notSent}

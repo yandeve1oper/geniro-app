@@ -408,7 +408,12 @@ export class ItemDao extends BaseDao<Item> {
     window?: HistoryWindow,
     /** Only rows whose `inCall` is one of these — one conversation of a team run. */
     inCalls?: readonly string[],
+    /** Only one delegate's rows: those whose `parentToolUseId` is this launching call id. */
+    delegateId?: string,
   ): Promise<Item[]> {
+    if (delegateId !== undefined) {
+      return this.delegateRows(runId, afterSeq, delegateId, window, txEm);
+    }
     const conversation =
       inCalls === undefined ? {} : { inCall: { $in: [...inCalls] } };
     if (window) {
@@ -441,6 +446,45 @@ export class ItemDao extends BaseDao<Item> {
       // doesn't accumulate managed entities in the forked EM.
       { orderBy: { seq: 'asc' }, disableIdentityMap: true },
     );
+  }
+
+  /**
+   * One delegate's rows of a run, read as {@link nodePoolContextRows} reads its
+   * picks: the ids come from a Kysely read on the copied column or, on a run the
+   * boot sweep has not reached, the payload; the rows then load as entities. A
+   * window keeps its newest (or oldest) `limit` ids, returned in seq order.
+   */
+  private async delegateRows(
+    runId: string,
+    afterSeq: number,
+    delegateId: string,
+    window: HistoryWindow | undefined,
+    txEm?: EntityManager,
+  ): Promise<Item[]> {
+    const em = txEm ?? this.em.fork();
+    const stamped = await this.payloadRefsStamped(runId, em);
+    let picks = em
+      .getKysely<ChatTextDatabase>({ convertValues: false })
+      .selectFrom('items')
+      .select('id')
+      .where('run_id', '=', runId)
+      .where('deleted_at', 'is', null)
+      .where('seq', '>', afterSeq)
+      .where(
+        (eb) => payloadRef(eb, 'parent_tool_use_id', stamped),
+        '=',
+        delegateId,
+      );
+    if (window?.beforeSeq !== undefined) {
+      picks = picks.where('seq', '<', window.beforeSeq);
+    }
+    if (window !== undefined) {
+      picks = picks
+        .orderBy('seq', window.take === 'oldest' ? 'asc' : 'desc')
+        .limit(window.limit);
+    }
+    const ids = (await picks.execute()).map((row) => row.id);
+    return this.rowsWithIds(ids, em);
   }
 
   /** Recent work of the member's own conversation, not its callees' traffic. */
@@ -1571,6 +1615,43 @@ export class ItemDao extends BaseDao<Item> {
       .execute();
     return new Map(
       rows.map((row) => [String(row.delegate_id), Number(row.calls)]),
+    );
+  }
+
+  /**
+   * How many text messages each delegate of one run wrote, up to `maxSeq`: its
+   * assistant `message` rows, by `parentToolUseId`. Reasoning rows are a kind
+   * of their own and are not counted.
+   */
+  async delegateMessageCounts(
+    runId: string,
+    maxSeq: number,
+    txEm?: EntityManager,
+  ): Promise<Map<string, number>> {
+    const em = txEm ?? this.em.fork();
+    const stamped = await this.payloadRefsStamped(runId, em);
+    const rows = await em
+      .getKysely<ChatTextDatabase>({ convertValues: false })
+      .selectFrom((db) =>
+        db
+          .selectFrom('items')
+          .select((eb) =>
+            payloadRef(eb, 'parent_tool_use_id', stamped).as('delegate_id'),
+          )
+          .where('run_id', '=', runId)
+          .where('kind', '=', 'message')
+          .where('role', '=', 'assistant')
+          .where('deleted_at', 'is', null)
+          .where('seq', '<=', maxSeq)
+          .as('delegate_messages'),
+      )
+      .select((eb) => ['delegate_id', eb.fn.countAll<number>().as('messages')])
+      .where('delegate_id', 'is not', null)
+      .where('delegate_id', '!=', '')
+      .groupBy('delegate_id')
+      .execute();
+    return new Map(
+      rows.map((row) => [String(row.delegate_id), Number(row.messages)]),
     );
   }
 

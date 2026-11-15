@@ -13,6 +13,17 @@ import {
   CLAUDE_MCP_RECONNECTED_MESSAGE,
 } from './claude.const';
 import { ClaudeTurnDriver } from './claude-turn.driver';
+import {
+  BACKGROUND_AGENT,
+  BACKGROUND_CALL,
+  backgroundDelegateLines,
+  taskNotification,
+} from './utils/__tests__/claude-subagent-stream';
+import type { ClaudeListPrices } from './utils/claude-delegate-cost.utils';
+import {
+  ClaudeDelegateSettler,
+  type ClaudeDelegateTotals,
+} from './utils/claude-delegate-spend.utils';
 import { mapClaudeMessage } from './utils/claude-message.utils';
 import { ClaudeSessionCostLedger } from './utils/claude-usage.utils';
 
@@ -1246,5 +1257,70 @@ describe('what a running turn has cost so far', () => {
 
     expect(driver.onMessage(init)).toEqual([]);
     expect(driver.onMessage(assistant)).toEqual([]);
+  });
+});
+
+describe('a delegate’s end settles through the driver', () => {
+  const FLAT: ClaudeListPrices = (model) =>
+    model === 'claude-haiku-5-5'
+      ? {
+          input: 1,
+          output: 1,
+          cacheRead: 1,
+          cacheWrite: 1,
+          tiers: [],
+          contextTokens: null,
+        }
+      : null;
+
+  const transcript: ClaudeDelegateTotals = {
+    requests: 2,
+    inputTokens: 4,
+    outputTokens: 165,
+    cacheReadTokens: 35_605,
+    cacheCreationTokens: 39_793,
+    contextTokens: 39_883,
+    model: 'claude-haiku-5-5',
+  };
+
+  it('emits the delegate’s final figures on its stdin channel once its transcript is read', async () => {
+    const ledger = new ClaudeSessionCostLedger(FLAT);
+    for (const line of backgroundDelegateLines) {
+      mapClaudeMessage(line, ledger);
+    }
+    const driver = new ClaudeTurnDriver({
+      mapMessage: () => [],
+      buildApprovalResponse: () => undefined,
+      delegateSettler: new ClaudeDelegateSettler({
+        tracker: ledger.delegateSpend,
+        launchOfTask: (taskId, toolCallId) =>
+          ledger.launchOfTask(taskId, toolCallId),
+        priceNow: (sessionId, spend) =>
+          ledger.delegates.priceNow(sessionId, spend),
+        record: (sessionId, delegateId, spend) =>
+          ledger.delegates.record(sessionId, delegateId, spend),
+        readTranscript: () => Promise.resolve(transcript),
+      }),
+    });
+    const emitted: AgentEvent[] = [];
+    driver.onStdinReady({
+      write: () => true,
+      emit: (event) => emitted.push(event),
+    });
+
+    driver.onMessage(
+      taskNotification(BACKGROUND_AGENT, BACKGROUND_CALL, 'completed'),
+    );
+
+    await vi.waitFor(() => {
+      expect(emitted).toContainEqual(
+        expect.objectContaining({
+          type: 'delegate_progress',
+          delegateId: BACKGROUND_CALL,
+          final: true,
+          figures: expect.objectContaining({ requests: 2, outputTokens: 165 }),
+        }),
+      );
+    });
   });
 });

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { StopDetachedProcessesSchema } from '../chat.types';
 import type { RunDao } from '../dao/run.dao';
-import { listChatsQuerySchema } from '../dto/chat.dto';
+import { historyQuerySchema, listChatsQuerySchema } from '../dto/chat.dto';
 import type { AgentSessionRegistry } from '../services/agent-session.registry';
 import type { MonitorRegistry } from '../services/monitor.registry';
 import { RunProcessAttribution } from '../services/run-process-attribution.service';
@@ -324,6 +324,28 @@ describe('GET /v1/chats', () => {
       limit: 50,
       before: { createdAt: new Date('2026-10-01T10:00:00.000Z'), id: 'run-9' },
     });
+  });
+});
+
+describe('GET /v1/chats/:runId/items', () => {
+  it('hands the history service the one delegate the query names, and no other conversation', async () => {
+    const read = vi.fn(async () => ({ items: [], anchors: [] }));
+    const controller = Object.create(
+      ChatController.prototype,
+    ) as ChatController;
+    Object.assign(controller, { history: { read } });
+
+    await controller.getHistory(
+      'run-1',
+      historyQuerySchema.parse({ delegate: 'toolu_a', limit: '200' }),
+    );
+
+    expect(read).toHaveBeenCalledWith(
+      'run-1',
+      -1,
+      { limit: 200, beforeSeq: undefined, take: undefined, probe: false },
+      { delegate: 'toolu_a' },
+    );
   });
 });
 

@@ -7,6 +7,7 @@ import {
 import type {
   AgentEvent,
   BackgroundUnitOutcome,
+  DelegateFigures,
   ToolCallMetric,
   TurnImage,
 } from '../../adapter.types';
@@ -176,9 +177,36 @@ export function unitPhase(
 }
 
 /**
+ * A delegate's cumulative figures as its closing `subagent_info` states them.
+ * Codex reports no request count, so `requests` is null by definition.
+ */
+function cumulativeFiguresOf(figures: DelegateFigures) {
+  const kinds = [
+    figures.inputTokens,
+    figures.outputTokens,
+    figures.cacheReadTokens,
+    figures.cacheCreationTokens,
+  ];
+  return {
+    tokens: kinds.every((kind) => kind === null)
+      ? null
+      : kinds.reduce<number>((sum, kind) => sum + (kind ?? 0), 0),
+    inputTokens: figures.inputTokens,
+    outputTokens: figures.outputTokens,
+    cacheReadTokens: figures.cacheReadTokens,
+    cacheCreationTokens: figures.cacheCreationTokens,
+    estimatedCostUsd: figures.estimatedCostUsd,
+    requests: null,
+    contextTokens: figures.contextTokens,
+    cumulative: true as const,
+  };
+}
+
+/**
  * A delegate's `subagent_info`: whether it is running and how it ended, plus
  * whatever its launch said about it (the brief, its first line as a label, the
- * model). A fact left out is unknown, which the renderer merges past.
+ * model). A fact left out is unknown, which the renderer merges past. A closing
+ * row given the delegate's figures states them as its cumulative totals.
  */
 export function subagentState(
   id: string,
@@ -189,6 +217,7 @@ export function subagentState(
     prompt?: string | null;
     model?: string | null;
     childSessionId?: string;
+    figures?: DelegateFigures | null;
   },
 ): AgentEvent {
   return {
@@ -212,6 +241,7 @@ export function subagentState(
     ...(facts.childSessionId === undefined
       ? {}
       : { subagentSessionId: facts.childSessionId }),
+    ...(facts.figures == null ? {} : cumulativeFiguresOf(facts.figures)),
   };
 }
 

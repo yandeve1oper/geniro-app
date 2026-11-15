@@ -112,6 +112,24 @@ export interface SubagentDeclaration {
    * must render as "not shown" and never as a delegate that cost nothing.
    */
   costUsd: number | null;
+  /**
+   * What it cost at the model's list price, from the same tokens — the figure a
+   * model with no calibration of its own shows. Null when neither is known.
+   */
+  estimatedCostUsd: number | null;
+  /** Model requests the delegate made; null for a CLI that does not count them. */
+  requests: number | null;
+  /**
+   * The prompt side of its latest request, summed over the four kinds. Null when
+   * not stated.
+   */
+  contextTokens: number | null;
+  /**
+   * Whether the token figures above sum EVERY request the delegate made. A row
+   * without it carries the last request's figures only, which every row written
+   * before the daemon counted them does.
+   */
+  cumulative: boolean;
   stepsUnavailableReason: string | null;
   /**
    * Whether the CLI says this delegate is still working in the BACKGROUND —
@@ -213,6 +231,10 @@ export function readSubagentDeclaration(
     cacheReadTokens: num(record.cacheReadTokens),
     cacheCreationTokens: num(record.cacheCreationTokens),
     costUsd: num(record.costUsd),
+    estimatedCostUsd: num(record.estimatedCostUsd),
+    requests: num(record.requests),
+    contextTokens: num(record.contextTokens),
+    cumulative: record.cumulative === true,
     toolUses: num(record.toolUses),
     stepsUnavailableReason: str(record.stepsUnavailableReason),
     backgroundOpen:
@@ -278,6 +300,12 @@ export function mergeSubagentDeclarations(
     // lines that produce it: the breakdown arrives when the delegate returns,
     // the dollars only when the turn ends and the CLI says what it charged.
     costUsd: next.costUsd ?? base.costUsd,
+    estimatedCostUsd: next.estimatedCostUsd ?? base.estimatedCostUsd,
+    requests: next.requests ?? base.requests,
+    contextTokens: next.contextTokens ?? base.contextTokens,
+    // Sticky, unlike the figures above: a later row that does not say so must not
+    // turn sums back into the last request's figures.
+    cumulative: base.cumulative || next.cumulative,
     stepsUnavailableReason:
       next.stepsUnavailableReason ?? base.stepsUnavailableReason,
     // Same last-non-null rule, and it is what carries the pair: the `started`

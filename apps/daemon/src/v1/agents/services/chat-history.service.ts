@@ -186,10 +186,20 @@ export class ChatHistoryService {
     conversation: HistoryConversation | undefined,
   ): Promise<ChatHistoryWire> {
     const inCalls =
-      conversation === undefined
+      conversation === undefined || 'delegate' in conversation
         ? undefined
         : await this.conversationKeys(runId, conversation);
-    const items = await this.chats.getHistory(runId, afterSeq, window, inCalls);
+    const delegate =
+      conversation !== undefined && 'delegate' in conversation
+        ? conversation.delegate
+        : undefined;
+    const items = await this.chats.getHistory(
+      runId,
+      afterSeq,
+      window,
+      inCalls,
+      delegate,
+    );
     // A full page asked with a probe carries one row the client will drop; its
     // anchors would draw a card with no row of the window behind it.
     const kept =
@@ -442,7 +452,7 @@ export class ChatHistoryService {
   /** The `inCall` values one conversation's rows carry; undefined for every row of the run. */
   private async conversationKeys(
     runId: string,
-    conversation: HistoryConversation,
+    conversation: Exclude<HistoryConversation, { delegate: string }>,
   ): Promise<string[] | undefined> {
     if (!(await this.calls.holdsCalls(runId))) {
       return undefined;

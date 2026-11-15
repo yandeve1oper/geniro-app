@@ -38,6 +38,7 @@ import type {
   AgentTurnInput,
   AgentUsage,
   ApprovalResolution,
+  DelegateFigures,
   InstalledApprovalSupport,
   SessionCloseCause,
 } from '../../agents/adapters/adapter.types';
@@ -69,6 +70,7 @@ import type { NodeStateDao } from '../../agents/dao/node-state.dao';
 import type { RunDao } from '../../agents/dao/run.dao';
 import type { WallTurnDao } from '../../agents/dao/wall-turn.dao';
 import { FakeContextWindowStore } from '../../agents/services/__tests__/fake-context-window-store';
+import { FakeDelegateSpendStore } from '../../agents/services/__tests__/fake-delegate-spend-store';
 import { FakeUnrecordedSpendStore } from '../../agents/services/__tests__/fake-unrecorded-spend-store';
 import { ActionBroker } from '../../agents/services/action.broker';
 import { ActionCommandRegistry } from '../../agents/services/action-command.registry';
@@ -1404,6 +1406,7 @@ function setup(
     bus,
     new FakeContextWindowStore(opts.contextWindows).asStore(),
     spendStore.asStore(),
+    new FakeDelegateSpendStore().asStore(),
   );
   const deltas: RunDeltaEvent[] = [];
   bus.allDeltas().subscribe((delta) => deltas.push(delta));
@@ -1728,6 +1731,18 @@ function setup(
     pageStore,
   };
 }
+
+const DELEGATE_FIGURES: DelegateFigures = {
+  requests: 3,
+  inputTokens: 900,
+  outputTokens: 120,
+  cacheReadTokens: 40_000,
+  cacheCreationTokens: 0,
+  contextTokens: 41_000,
+  model: 'claude-haiku-5-5',
+  costUsd: null,
+  estimatedCostUsd: 0.02,
+};
 
 const LINEAR: Team = teamOf([member('a'), member('b', { name: 'Reviewer' })], {
   name: 'linear',
@@ -3232,6 +3247,31 @@ describe('TeamExecutorService', () => {
       partials.snapshot(run.id).find((event) => event.ownerKey === 'a')
         ?.spentCostUsd ?? null,
     ).toBeNull();
+  });
+
+  it('puts a member’s delegate figures on the live plane under the member’s own owner key', async () => {
+    const { service, claude, partials } = setup();
+    const run = await service.startRun({
+      slug: 'linear',
+      team: LINEAR,
+      cwd: dir,
+      prompt: 'task',
+    });
+    await drain();
+    const turn = claude.starts[0]!;
+
+    turn.emit({
+      type: 'delegate_progress',
+      delegateId: 'toolu_x',
+      figures: DELEGATE_FIGURES,
+      final: false,
+    });
+    await drain();
+
+    expect(
+      partials.snapshot(run.id).find((event) => event.ownerKey === 'a')
+        ?.delegates,
+    ).toEqual({ toolu_x: DELEGATE_FIGURES });
   });
 
   it('puts the card a member turn is writing on the live plane, so the transcript draws its loader', async () => {

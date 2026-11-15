@@ -3589,6 +3589,240 @@ describe('what a turn spends', () => {
     expect(usageOf(next)?.costUsd).toBeCloseTo(0.022, 10);
   });
 
+  describe('a delegate’s figures', () => {
+    const SUB_TWO = '01a0e3aa-0000-7000-8000-00000000bbbb';
+    const GRAND = '01a0e3aa-0000-7000-8000-00000000cccc';
+
+    const startThread = (session: CodexSession, id: string) =>
+      feed(session, {
+        method: 'thread/started',
+        params: { thread: { id, model: 'gpt-5.5' } },
+      });
+
+    const spawnCall = (id: string, receivers: string[]) => ({
+      method: 'item/completed',
+      params: {
+        threadId: THREAD,
+        turnId: TURN,
+        item: {
+          type: 'collabAgentToolCall',
+          id,
+          tool: 'spawnAgent',
+          status: 'completed',
+          receiverThreadIds: receivers,
+          agentsStates: Object.fromEntries(
+            receivers.map((receiver) => [receiver, { status: 'running' }]),
+          ),
+        },
+      },
+    });
+
+    const figuresOf = (events: AgentEvent[]) =>
+      events.flatMap((event) =>
+        event.type === 'delegate_progress' ? [event.figures] : [],
+      );
+
+    it('states a mapped sub-agent’s spend on its delegate’s card, live and without a request count', () => {
+      const session = pricedSession();
+      startThread(session, SUB);
+      feed(session, spawnCall('call_spawn', [SUB]));
+      const live = feed(session, {
+        method: 'thread/tokenUsage/updated',
+        params: reading(
+          SUB,
+          { input: 10_000, output: 100 },
+          { input: 10_000, output: 100 },
+        ),
+      });
+      expect(live).toContainEqual({
+        type: 'delegate_progress',
+        delegateId: 'call_spawn',
+        final: false,
+        figures: expect.objectContaining({
+          requests: null,
+          inputTokens: 10_000,
+          outputTokens: 100,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          contextTokens: 10_100,
+          model: 'gpt-5.5',
+          costUsd: null,
+        }),
+      });
+      // 10,000 × $4 + 100 × $20 per million, at the list price.
+      expect(figuresOf(live)[0]?.estimatedCostUsd).toBeCloseTo(0.042, 10);
+    });
+
+    it('holds a reading that lands before its spawn names the thread, and states it once the spawn does', () => {
+      const session = pricedSession();
+      startThread(session, SUB);
+      const early = feed(session, {
+        method: 'thread/tokenUsage/updated',
+        params: reading(
+          SUB,
+          { input: 10_000, output: 100 },
+          { input: 10_000, output: 100 },
+        ),
+      });
+      expect(figuresOf(early)).toEqual([]);
+      expect(feed(session, spawnCall('call_spawn', [SUB]))).toContainEqual({
+        type: 'delegate_progress',
+        delegateId: 'call_spawn',
+        final: false,
+        figures: expect.objectContaining({
+          inputTokens: 10_000,
+          outputTokens: 100,
+          requests: null,
+        }),
+      });
+    });
+
+    it('states a held reading as soon as a sub-agent launch names its thread', () => {
+      const session = pricedSession();
+      startThread(session, SUB);
+      feed(session, {
+        method: 'thread/tokenUsage/updated',
+        params: reading(
+          SUB,
+          { input: 10_000, output: 100 },
+          { input: 10_000, output: 100 },
+        ),
+      });
+      const launched = feed(session, {
+        method: 'item/started',
+        params: {
+          threadId: THREAD,
+          turnId: TURN,
+          item: {
+            type: 'subAgentActivity',
+            id: 'call_launch',
+            kind: 'started',
+            agentThreadId: SUB,
+            agentPath: '/root/review',
+          },
+        },
+      });
+      expect(launched).toContainEqual(
+        expect.objectContaining({
+          type: 'delegate_progress',
+          delegateId: 'call_launch',
+          final: false,
+          figures: expect.objectContaining({ inputTokens: 10_000 }),
+        }),
+      );
+    });
+
+    it('sums every thread of one spawn into the one delegate’s figures', () => {
+      const session = pricedSession();
+      startThread(session, SUB);
+      startThread(session, SUB_TWO);
+      feed(session, spawnCall('call_spawn', [SUB, SUB_TWO]));
+      feed(session, {
+        method: 'thread/tokenUsage/updated',
+        params: reading(
+          SUB,
+          { input: 10_000, output: 100 },
+          { input: 10_000, output: 100 },
+        ),
+      });
+      const second = feed(session, {
+        method: 'thread/tokenUsage/updated',
+        params: reading(
+          SUB_TWO,
+          { input: 4_000, output: 50 },
+          { input: 4_000, output: 50 },
+        ),
+      });
+      expect(figuresOf(second)).toEqual([
+        expect.objectContaining({
+          inputTokens: 14_000,
+          outputTokens: 150,
+          // The newest reading's request stands for the delegate.
+          contextTokens: 4_050,
+        }),
+      ]);
+    });
+
+    it('states no delegate figures for a thread codex never mapped to one', () => {
+      const session = pricedSession();
+      feed(session, spawnCall('call_spawn', [SUB]));
+      expect(
+        figuresOf(
+          feed(session, {
+            method: 'thread/tokenUsage/updated',
+            params: reading(
+              GRAND,
+              { input: 3_000, output: 10 },
+              { input: 3_000, output: 10 },
+            ),
+          }),
+        ),
+      ).toEqual([]);
+    });
+
+    it('closes with its final figures on the delegate and on its closing row, and states nothing after', () => {
+      const session = pricedSession();
+      startThread(session, SUB);
+      feed(session, spawnCall('call_spawn', [SUB]));
+      feed(session, {
+        method: 'thread/tokenUsage/updated',
+        params: reading(
+          SUB,
+          { input: 10_000, output: 100 },
+          { input: 10_000, output: 100 },
+        ),
+      });
+      const ending = feed(session, {
+        method: 'turn/completed',
+        params: {
+          threadId: SUB,
+          turn: { id: 'sub-turn', status: 'completed' },
+        },
+      });
+      expect(ending).toContainEqual({
+        type: 'delegate_progress',
+        delegateId: 'call_spawn',
+        final: true,
+        figures: expect.objectContaining({
+          requests: null,
+          inputTokens: 10_000,
+          outputTokens: 100,
+          contextTokens: 10_100,
+        }),
+      });
+      expect(figuresOf(ending)[0]?.estimatedCostUsd).toBeCloseTo(0.042, 10);
+      expect(ending).toContainEqual(
+        expect.objectContaining({
+          type: 'subagent_info',
+          id: 'call_spawn',
+          backgroundOpen: false,
+          backgroundOutcome: 'completed',
+          tokens: 10_100,
+          inputTokens: 10_000,
+          outputTokens: 100,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          costUsd: null,
+          requests: null,
+          contextTokens: 10_100,
+          cumulative: true,
+        }),
+      );
+      expect(
+        figuresOf(
+          feed(session, {
+            method: 'thread/tokenUsage/updated',
+            params: reading(
+              SUB,
+              { input: 12_000, output: 100 },
+              { input: 2_000, output: 0 },
+            ),
+          }),
+        ),
+      ).toEqual([]);
+    });
+  });
+
   it('hands the adapter what the thread reported about itself', () => {
     const facts: { threadId: string; patch: Record<string, unknown> }[] = [];
     const session = pricedSession(facts);

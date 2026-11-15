@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { DelegateFigures } from '../adapters/adapter.types';
 import type { RunDeltaEvent } from '../chat.types';
 import { FakeContextWindowStore } from './__tests__/fake-context-window-store';
+import { FakeDelegateSpendStore } from './__tests__/fake-delegate-spend-store';
 import { FakeUnrecordedSpendStore } from './__tests__/fake-unrecorded-spend-store';
 import type { AgentEventBus } from './agent-events.bus';
 import {
@@ -19,6 +21,7 @@ let published: RunDeltaEvent[];
 let service: PartialStreamService;
 let windowStore: FakeContextWindowStore;
 let spendStore: FakeUnrecordedSpendStore;
+let delegateStore: FakeDelegateSpendStore;
 
 beforeEach(() => {
   published = [];
@@ -27,10 +30,12 @@ beforeEach(() => {
   } as unknown as AgentEventBus;
   windowStore = new FakeContextWindowStore();
   spendStore = new FakeUnrecordedSpendStore();
+  delegateStore = new FakeDelegateSpendStore();
   service = new PartialStreamService(
     bus,
     windowStore.asStore(),
     spendStore.asStore(),
+    delegateStore.asStore(),
   );
 });
 
@@ -38,6 +43,242 @@ beforeEach(() => {
 function last(): RunDeltaEvent {
   return published[published.length - 1]!;
 }
+
+function figuresWith(
+  overrides: Partial<DelegateFigures> = {},
+): DelegateFigures {
+  return {
+    requests: 3,
+    inputTokens: 1_200,
+    outputTokens: 340,
+    cacheReadTokens: 9_000,
+    cacheCreationTokens: 500,
+    contextTokens: 9_700,
+    model: 'claude-haiku-5-5',
+    costUsd: 0.012,
+    estimatedCostUsd: 0.011,
+    ...overrides,
+  };
+}
+
+describe('PartialStreamService — delegate figures', () => {
+  it('replaces a delegate’s entry: the last reading for its id wins', () => {
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: figuresWith({ requests: 1 }),
+      final: false,
+    });
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: figuresWith({ requests: 2 }),
+      final: false,
+    });
+
+    expect(last().delegates).toEqual({
+      'call-1': figuresWith({ requests: 2 }),
+    });
+  });
+
+  it('keeps delegates apart by id', () => {
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: figuresWith({ requests: 1 }),
+      final: false,
+    });
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-2',
+      figures: figuresWith({ requests: 5 }),
+      final: false,
+    });
+
+    expect(last().delegates).toEqual({
+      'call-1': figuresWith({ requests: 1 }),
+      'call-2': figuresWith({ requests: 5 }),
+    });
+  });
+
+  it('never moves the owner’s own spend', () => {
+    service.cost(RUN, OWNER, null, 1.5, 1.5);
+
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: figuresWith({ costUsd: 9, estimatedCostUsd: 9 }),
+      final: false,
+    });
+
+    expect(last()).toMatchObject({
+      spentCostUsd: 1.5,
+      spentEstimatedCostUsd: 1.5,
+    });
+  });
+
+  it('publishes nothing for a reading equal to the one held', () => {
+    const figures = figuresWith();
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures,
+      final: false,
+    });
+    const before = published.length;
+
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: { ...figures },
+      final: false,
+    });
+
+    expect(published).toHaveLength(before);
+  });
+
+  it('hands every change to the durable store, and a final reading even when unchanged', () => {
+    const write = vi.spyOn(delegateStore, 'set');
+    const figures = figuresWith();
+
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures,
+      final: false,
+    });
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: { ...figures },
+      final: true,
+    });
+
+    expect(write.mock.calls).toEqual([
+      [RUN, 'call-1', figures, false],
+      [RUN, 'call-1', figures, true],
+    ]);
+    expect(delegateStore.of(RUN)).toEqual({ 'call-1': figures });
+  });
+
+  it('takes an ENDED delegate off the live plane, leaving the running ones', () => {
+    const figures = figuresWith();
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures,
+      final: false,
+    });
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-2',
+      figures,
+      final: false,
+    });
+
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures,
+      final: true,
+    });
+
+    expect(published.at(-1)?.delegates).toEqual({ 'call-2': figures });
+    expect(delegateStore.of(RUN)).toEqual({
+      'call-1': figures,
+      'call-2': figures,
+    });
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-2',
+      figures,
+      final: true,
+    });
+    expect(published.at(-1)?.delegates).toBeUndefined();
+  });
+
+  it('an unchanged, non-final reading does not reach the store again', () => {
+    const write = vi.spyOn(delegateStore, 'set');
+    const figures = figuresWith();
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures,
+      final: false,
+    });
+
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: { ...figures },
+      final: false,
+    });
+
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('a store that fails does not fail the turn', () => {
+    vi.spyOn(delegateStore, 'set').mockImplementation(() => {
+      throw new Error('database is gone');
+    });
+
+    expect(() =>
+      service.delegate(RUN, OWNER, null, {
+        delegateId: 'call-1',
+        figures: figuresWith(),
+        final: false,
+      }),
+    ).not.toThrow();
+  });
+
+  it('appears in the snapshot a client joining mid-run is handed', () => {
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: figuresWith({ requests: 4 }),
+      final: false,
+    });
+
+    const owned = service.snapshot(RUN).find((e) => e.ownerKey === OWNER);
+    expect(owned?.delegates).toEqual({
+      'call-1': figuresWith({ requests: 4 }),
+    });
+  });
+
+  it('carries no delegates key for an owner that has launched none', () => {
+    service.append(RUN, OWNER, null, 'words');
+
+    expect(last()).not.toHaveProperty('delegates');
+  });
+
+  it('keeps an owner’s delegates across its turn boundary, so the next event does not blank them', () => {
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: figuresWith({ requests: 2 }),
+      final: false,
+    });
+
+    service.clearRun(RUN);
+    service.append(RUN, OWNER, null, 'next turn');
+
+    expect(last()).toMatchObject({ text: 'next turn' });
+    expect(last().delegates).toEqual({
+      'call-1': figuresWith({ requests: 2 }),
+    });
+  });
+
+  it('keeps the delegates when a tail is taken for a cancelled turn', () => {
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: figuresWith(),
+      final: false,
+    });
+    service.append(RUN, OWNER, null, 'half a sentence');
+
+    expect(service.takeTail(RUN, OWNER, null)).toBe('half a sentence');
+
+    const owned = service.snapshot(RUN).find((e) => e.ownerKey === OWNER);
+    expect(owned?.delegates).toEqual({ 'call-1': figuresWith() });
+  });
+
+  it('asks the store to write what is pending at the turn boundary, and drops nothing it holds', () => {
+    const flush = vi.spyOn(delegateStore, 'flushRun');
+    service.delegate(RUN, OWNER, null, {
+      delegateId: 'call-1',
+      figures: figuresWith(),
+      final: false,
+    });
+
+    service.clearRun(RUN);
+
+    expect(flush).toHaveBeenCalledWith(RUN);
+    expect(delegateStore.of(RUN)).toEqual({ 'call-1': figuresWith() });
+  });
+});
 
 describe('PartialStreamService — thinking is scoped to ONE stretch', () => {
   it('starts a new stretch, with its own count, after the agent writes', () => {
@@ -282,6 +523,7 @@ describe('PartialStreamService — every method stays total', () => {
       exploding,
       new FakeContextWindowStore().asStore(),
       new FakeUnrecordedSpendStore().asStore(),
+      new FakeDelegateSpendStore().asStore(),
     );
     expect(() => fragile.append(RUN, OWNER, null, 'x')).not.toThrow();
     expect(() => fragile.thinking(RUN, OWNER, null, 1)).not.toThrow();
@@ -569,6 +811,7 @@ describe('PartialStreamService — unrecorded spend is DURABLE', () => {
       } as unknown as AgentEventBus,
       new FakeContextWindowStore().asStore(),
       restoredStore.asStore(),
+      new FakeDelegateSpendStore().asStore(),
     );
     const before = published.length;
 
@@ -595,6 +838,7 @@ describe('PartialStreamService — unrecorded spend is DURABLE', () => {
       } as unknown as AgentEventBus,
       new FakeContextWindowStore().asStore(),
       spendStore.asStore(),
+      new FakeDelegateSpendStore().asStore(),
     );
     await restored.rehydrateUnrecordedSpend();
 
@@ -619,6 +863,7 @@ describe('PartialStreamService — the window survives a daemon restart', () => 
         [FakeContextWindowStore.key(AGENT, 'claude-opus-5')]: 1_000_000,
       }).asStore(),
       new FakeUnrecordedSpendStore().asStore(),
+      new FakeDelegateSpendStore().asStore(),
     );
 
     restarted.useModel(RUN, OWNER, AGENT, 'claude-opus-5');
@@ -672,6 +917,7 @@ describe('PartialStreamService — knownWindow, asked before a turn exists', () 
       } as unknown as AgentEventBus,
       windowStore.asStore(),
       new FakeUnrecordedSpendStore().asStore(),
+      new FakeDelegateSpendStore().asStore(),
     );
     expect(restarted.knownWindow(AGENT, 'claude-haiku-5-5')).toBe(1_000_000);
     expect(restarted.knownWindow(AGENT, 'a-model-nobody-has-run')).toBeNull();
@@ -690,6 +936,7 @@ describe('PartialStreamService — knownWindow, asked before a turn exists', () 
       } as unknown as AgentEventBus,
       seeded.asStore(),
       new FakeUnrecordedSpendStore().asStore(),
+      new FakeDelegateSpendStore().asStore(),
     );
 
     expect(fresh.knownWindow('codex', 'gpt-6.1-sol', '872k')).toBe(828_400);

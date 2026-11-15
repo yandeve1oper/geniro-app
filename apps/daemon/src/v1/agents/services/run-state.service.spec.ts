@@ -21,6 +21,7 @@ import { kindRowsPassthrough } from '../__tests__/kind-rows-passthrough';
 import type { MonitorOwner, MonitorSnapshot } from '../chat.types';
 import { ItemDao } from '../dao/item.dao';
 import { RunDao } from '../dao/run.dao';
+import { writeDelegateSpend } from '../utils/delegate-spend';
 import type { AgentAdapterRegistry } from './agent-adapter.registry';
 import { ApprovalRegistry } from './approval-registry';
 import type { ChatShellsService } from './chat-shells.service';
@@ -444,6 +445,130 @@ describe('RunStateService (in-memory sqlite)', () => {
       ['toolu_a', 3],
       ['toolu_b', 1],
     ]);
+  });
+
+  it('carries each delegate’s messages, requests, token split, context and cost from the run’s figures, cumulative', async () => {
+    await createRun('running');
+    await insert(1, 'tool_call', { id: 'toolu_a', name: 'Task', input: {} });
+    await insert(
+      2,
+      'message',
+      { text: 'one', parentToolUseId: 'toolu_a' },
+      { role: 'assistant' },
+    );
+    await insert(
+      3,
+      'reasoning',
+      { text: 'thinking', parentToolUseId: 'toolu_a' },
+      { role: 'assistant' },
+    );
+    await insert(
+      4,
+      'message',
+      { text: 'asked', parentToolUseId: 'toolu_a' },
+      { role: 'user' },
+    );
+    await insert(
+      5,
+      'message',
+      { text: 'two', parentToolUseId: 'toolu_a' },
+      { role: 'assistant' },
+    );
+    await runs.setDelegateSpend(
+      'run-a',
+      writeDelegateSpend(
+        new Map([
+          [
+            'toolu_a',
+            {
+              requests: 3,
+              inputTokens: 1200,
+              outputTokens: 340,
+              cacheReadTokens: 9000,
+              cacheCreationTokens: 500,
+              contextTokens: 9800,
+              model: 'claude-haiku-5-5',
+              costUsd: 0.5,
+              estimatedCostUsd: 0.25,
+            },
+          ],
+        ]),
+      ),
+    );
+
+    const delegate = (await service().read('run-a')).delegates[0]!;
+
+    expect(delegate).toMatchObject({
+      id: 'toolu_a',
+      messages: 2,
+      requests: 3,
+      inputTokens: 1200,
+      outputTokens: 340,
+      cacheReadTokens: 9000,
+      cacheCreationTokens: 500,
+      contextTokens: 9800,
+      costUsd: 0.5,
+      estimatedCostUsd: 0.25,
+      cumulative: true,
+    });
+  });
+
+  it('counts the replies its transcript holds when the rows hold fewer — a foreground delegate’s final reply is no row', async () => {
+    await createRun('running');
+    await insert(1, 'tool_call', { id: 'toolu_a', name: 'Task', input: {} });
+    await runs.setDelegateSpend(
+      'run-a',
+      writeDelegateSpend(
+        new Map([
+          [
+            'toolu_a',
+            {
+              requests: 2,
+              inputTokens: 4,
+              outputTokens: 165,
+              cacheReadTokens: 35_605,
+              cacheCreationTokens: 39_793,
+              contextTokens: 39_883,
+              model: 'claude-haiku-5-5',
+              costUsd: null,
+              estimatedCostUsd: 0.08,
+              messages: 1,
+            },
+          ],
+        ]),
+      ),
+    );
+
+    const delegate = (await service().read('run-a')).delegates[0]!;
+
+    expect(delegate.messages).toBe(1);
+  });
+
+  it('reads a delegate the run holds no figures for as not measured, its messages still counted', async () => {
+    await createRun('running');
+    await insert(1, 'tool_call', { id: 'toolu_a', name: 'Task', input: {} });
+    await insert(
+      2,
+      'message',
+      { text: 'one', parentToolUseId: 'toolu_a' },
+      { role: 'assistant' },
+    );
+
+    const delegate = (await service().read('run-a')).delegates[0]!;
+
+    expect(delegate).toMatchObject({
+      id: 'toolu_a',
+      messages: 1,
+      requests: null,
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
+      contextTokens: null,
+      costUsd: null,
+      estimatedCostUsd: null,
+      cumulative: false,
+    });
   });
 
   it('lists delegates launched by name AND by declaration, each with its launch reply', async () => {

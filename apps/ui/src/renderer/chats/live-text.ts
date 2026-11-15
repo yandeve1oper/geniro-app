@@ -1,3 +1,5 @@
+import { createContext, useMemo } from 'react';
+
 import { formatTokens } from './agent-activity';
 
 /**
@@ -26,6 +28,28 @@ import { formatTokens } from './agent-activity';
  * block and rendered in a phantom one at the bottom of the transcript.
  */
 export const CHAT_LIVE_KEY = '\u0000chat';
+
+/**
+ * One delegate's figures over every request it has made so far, as the live
+ * plane states them.
+ *
+ * TWIN of `DelegateFigures` in `apps/daemon/src/v1/agents/adapters/adapter.types.ts`
+ * (the `delegate_progress` level). Every figure is null when not measured.
+ */
+export interface LiveDelegateFigures {
+  requests: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  contextTokens: number | null;
+  model: string | null;
+  costUsd: number | null;
+  estimatedCostUsd: number | null;
+}
+
+/** The delegates one owner launched, keyed by launching tool call id. */
+export type LiveDelegates = Readonly<Record<string, LiveDelegateFigures>>;
 
 /** One `agent_delta` payload, as read defensively off an untyped WS event. */
 export interface LiveTextEvent {
@@ -112,6 +136,12 @@ export interface LiveTextEvent {
    * when none.
    */
   spentEstimatedCostUsd?: number | null;
+  /**
+   * The delegates this owner launched, each with its figures over every request
+   * so far. The owner's WHOLE set on every event: null when it has none, which
+   * replaces whatever was there. Never part of {@link spentCostUsd}.
+   */
+  delegates?: LiveDelegates | null;
 }
 
 /** What one agent is doing right now, as the transcript renders it. */
@@ -130,6 +160,52 @@ export interface LiveState {
   spentCacheReadTokens: number | null;
   spentCostUsd: number | null;
   spentEstimatedCostUsd?: number | null;
+  delegates?: LiveDelegates | null;
+}
+
+/**
+ * Every delegate's live figures, by delegate id. Null outside a provider, where
+ * a card falls back to its own rows.
+ *
+ * Derived from the live plane by {@link useLiveDelegates} rather than handed the
+ * plane itself: a card that read the plane would re-render on every streamed
+ * word of every agent.
+ */
+export const LiveDelegatesContext = createContext<ReadonlyMap<
+  string,
+  LiveDelegateFigures
+> | null>(null);
+
+function liveDelegatesKeyOf(
+  plane: ReadonlyMap<string, LiveState> | null,
+): string | null {
+  if (plane === null) {
+    return null;
+  }
+  const entries: [string, LiveDelegateFigures][] = [];
+  for (const state of plane.values()) {
+    entries.push(...Object.entries(state.delegates ?? {}));
+  }
+  entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return JSON.stringify(entries);
+}
+
+/**
+ * The delegates' live figures as one map object, kept for as long as no
+ * delegate's figures change. A delta to a message's words leaves the same object
+ * in place, so nothing reading the map renders again for it.
+ */
+export function useLiveDelegates(
+  plane: ReadonlyMap<string, LiveState> | null,
+): ReadonlyMap<string, LiveDelegateFigures> | null {
+  const key = liveDelegatesKeyOf(plane);
+  return useMemo(
+    () =>
+      key === null
+        ? null
+        : new Map(JSON.parse(key) as [string, LiveDelegateFigures][]),
+    [key],
+  );
 }
 
 /**
@@ -146,6 +222,7 @@ export function parseLiveText(data: unknown): LiveTextEvent | null {
     return null;
   }
   const record = data as Record<string, unknown>;
+  const delegates = parseDelegates(record.delegates);
   return {
     runId,
     memberId: typeof memberId === 'string' ? memberId : null,
@@ -200,6 +277,7 @@ export function parseLiveText(data: unknown): LiveTextEvent | null {
       : {
           spentEstimatedCostUsd: positiveNumber(record.spentEstimatedCostUsd),
         }),
+    ...(delegates === null ? {} : { delegates }),
   };
 }
 
@@ -252,6 +330,49 @@ function positiveNumber(value: unknown): number | null {
 /** Same, for a count whose zero is meaningful rather than absent. */
 function nonNegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && value >= 0 ? value : null;
+}
+
+/** A figure that is a finite number of zero or more, else null — never NaN or Infinity. */
+function finiteNonNegative(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+/**
+ * The delegates of one owner, read defensively: an entry that is not an object
+ * is dropped, and a figure that is not a finite non-negative number reads as
+ * unmeasured. Null when no entry survives, so an owner with none stays absent.
+ */
+function parseDelegates(value: unknown): LiveDelegates | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const entries: [string, LiveDelegateFigures][] = [];
+  for (const [id, figures] of Object.entries(value)) {
+    if (id === '' || typeof figures !== 'object' || figures === null) {
+      continue;
+    }
+    const record = figures as Record<string, unknown>;
+    entries.push([
+      id,
+      {
+        requests: finiteNonNegative(record.requests),
+        inputTokens: finiteNonNegative(record.inputTokens),
+        outputTokens: finiteNonNegative(record.outputTokens),
+        cacheReadTokens: finiteNonNegative(record.cacheReadTokens),
+        cacheCreationTokens: finiteNonNegative(record.cacheCreationTokens),
+        contextTokens: finiteNonNegative(record.contextTokens),
+        model:
+          typeof record.model === 'string' && record.model !== ''
+            ? record.model
+            : null,
+        costUsd: finiteNonNegative(record.costUsd),
+        estimatedCostUsd: finiteNonNegative(record.estimatedCostUsd),
+      },
+    ]);
+  }
+  return entries.length === 0 ? null : Object.fromEntries(entries);
 }
 
 /**
@@ -368,7 +489,10 @@ export function applyLiveText(
     // that figure between two deltas.
     event.spentOutputTokens === null &&
     event.spentInputTokens === null &&
-    event.spentCostUsd === null
+    event.spentCostUsd === null &&
+    // A DELEGATE still out keeps its owner's entry: its spend is on the row
+    // the same way the owner's own spend is.
+    event.delegates == null
   ) {
     next.delete(key);
   } else {
@@ -389,6 +513,9 @@ export function applyLiveText(
       ...(event.spentEstimatedCostUsd == null
         ? {}
         : { spentEstimatedCostUsd: event.spentEstimatedCostUsd }),
+      // Replaced whole: an owner whose delegates have all settled sends none,
+      // and its last set goes with this event.
+      ...(event.delegates == null ? {} : { delegates: event.delegates }),
     });
   }
   return next;

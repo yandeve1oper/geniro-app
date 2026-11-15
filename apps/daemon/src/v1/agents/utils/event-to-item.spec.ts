@@ -906,6 +906,40 @@ describe('mapEventToItem — the sub-agent declaration', () => {
     });
   });
 
+  it('persists a delegate’s cumulative figures with the marker that tells them from a last-request row', () => {
+    const { payload } = mapEventToItem({
+      type: 'subagent_info',
+      id: 'toolu_018bc',
+      label: null,
+      kind: null,
+      prompt: null,
+      model: 'claude-haiku-5-5',
+      durationMs: null,
+      tokens: 75_567,
+      toolUses: null,
+      inputTokens: 4,
+      outputTokens: 165,
+      cacheReadTokens: 35_605,
+      cacheCreationTokens: 39_793,
+      costUsd: 0.12,
+      estimatedCostUsd: 0.08,
+      requests: 2,
+      contextTokens: 39_883,
+      cumulative: true,
+      stepsUnavailableReason: null,
+      backgroundOpen: null,
+      backgroundOutcome: null,
+    }) as { payload: Record<string, unknown> };
+
+    expect(payload).toMatchObject({
+      tokens: 75_567,
+      estimatedCostUsd: 0.08,
+      requests: 2,
+      contextTokens: 39_883,
+      cumulative: true,
+    });
+  });
+
   it('persists a workflow row whole — the only record its fleet ever ran', () => {
     // A workflow's agents emit nothing onto this stream: they run inside the
     // CLI's own orchestrator with transcripts of their own. So unlike every

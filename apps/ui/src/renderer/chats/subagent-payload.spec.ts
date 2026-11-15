@@ -130,3 +130,62 @@ describe('readSubagentDeclaration — backgroundOutcome', () => {
     ).toBe('completed');
   });
 });
+
+describe('readSubagentDeclaration — the figures a delegate states', () => {
+  const declared = (payload: Record<string, unknown>) =>
+    readSubagentDeclaration(item({ id: 'toolu_a', ...payload }))!;
+
+  it('reads the requests, the context, the list-price cost and the cumulative flag', () => {
+    expect(
+      declared({
+        requests: 4,
+        contextTokens: 2_100,
+        estimatedCostUsd: 0.31,
+        cumulative: true,
+      }),
+    ).toMatchObject({
+      requests: 4,
+      contextTokens: 2_100,
+      estimatedCostUsd: 0.31,
+      cumulative: true,
+    });
+  });
+
+  it('reads a row that does not sum its requests as old, and keeps a zero request count', () => {
+    expect(declared({ tokens: 900 })).toMatchObject({
+      requests: null,
+      cumulative: false,
+      tokens: 900,
+    });
+    expect(declared({ requests: 0 }).requests).toBe(0);
+  });
+
+  it('reads cumulative only when the row says literally true', () => {
+    expect(declared({ cumulative: 'true' }).cumulative).toBe(false);
+    expect(declared({ cumulative: 1 }).cumulative).toBe(false);
+  });
+});
+
+describe('mergeSubagentDeclarations — the figures a delegate states', () => {
+  const declared = (payload: Record<string, unknown>) =>
+    readSubagentDeclaration(item({ id: 'toolu_a', ...payload }))!;
+
+  it('takes the later non-null figure, and keeps cumulative once a row has said it', () => {
+    const summed = declared({
+      requests: 4,
+      inputTokens: 400,
+      cumulative: true,
+    });
+    expect(mergeSubagentDeclarations(summed, declared({}))).toMatchObject({
+      requests: 4,
+      inputTokens: 400,
+      cumulative: true,
+    });
+    expect(
+      mergeSubagentDeclarations(
+        summed,
+        declared({ requests: 6, contextTokens: 10 }),
+      ),
+    ).toMatchObject({ requests: 6, contextTokens: 10, cumulative: true });
+  });
+});

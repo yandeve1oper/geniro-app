@@ -4,6 +4,7 @@ import {
   applyLiveText,
   CHAT_LIVE_KEY,
   formatLiveSpend,
+  type LiveDelegateFigures,
   type LiveState,
   type LiveTextEvent,
   liveTextKey,
@@ -448,5 +449,123 @@ describe('applyLiveText — a composition keeps the entry alive', () => {
       event({ composingTool: 'mcp__geniro-abc12345__show_artifact' }),
     );
     expect(applyLiveText(open, event()).has(CHAT_LIVE_KEY)).toBe(false);
+  });
+});
+
+describe('delegates on the live plane', () => {
+  const figures = (
+    over: Partial<LiveDelegateFigures> = {},
+  ): LiveDelegateFigures => ({
+    requests: 2,
+    inputTokens: 4_000,
+    outputTokens: 300,
+    cacheReadTokens: 12_000,
+    cacheCreationTokens: 0,
+    contextTokens: 16_000,
+    model: 'claude-sonnet-5-5',
+    costUsd: 0.04,
+    estimatedCostUsd: 0.05,
+    ...over,
+  });
+
+  it('reads each delegate’s figures, and keeps a zero request count', () => {
+    const parsed = parseLiveText({
+      runId: 'run-1',
+      memberId: 'node-a',
+      ownerKey: 'node-a',
+      text: '',
+      delegates: { toolu_1: figures({ requests: 0 }) },
+    });
+    expect(parsed?.delegates).toEqual({ toolu_1: figures({ requests: 0 }) });
+  });
+
+  it('reads a non-finite or negative figure as unmeasured, and drops an entry that is not an object', () => {
+    const parsed = parseLiveText({
+      runId: 'run-1',
+      text: '',
+      delegates: {
+        toolu_1: {
+          requests: Number.NaN,
+          inputTokens: -1,
+          outputTokens: Number.POSITIVE_INFINITY,
+          costUsd: 'x',
+          model: '',
+        },
+        toolu_2: null,
+        toolu_3: 'junk',
+      },
+    });
+    expect(parsed?.delegates).toEqual({
+      toolu_1: {
+        requests: null,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+        contextTokens: null,
+        model: null,
+        costUsd: null,
+        estimatedCostUsd: null,
+      },
+    });
+  });
+
+  it('leaves the delegates out of the parse when the owner has none', () => {
+    expect(parseLiveText({ runId: 'run-1', text: '' })).not.toHaveProperty(
+      'delegates',
+    );
+    expect(
+      parseLiveText({ runId: 'run-1', text: '', delegates: {} }),
+    ).not.toHaveProperty('delegates');
+  });
+
+  it('replaces the owner’s whole set on every event, not only the delegates it names', () => {
+    const first = applyLiveText(
+      new Map(),
+      event({
+        memberId: 'node-a',
+        ownerKey: 'node-a',
+        delegates: { toolu_1: figures(), toolu_2: figures() },
+      }),
+    );
+    const second = applyLiveText(
+      first,
+      event({
+        memberId: 'node-a',
+        ownerKey: 'node-a',
+        delegates: { toolu_2: figures({ requests: 5 }) },
+      }),
+    );
+    expect(second.get('node-a')?.delegates).toEqual({
+      toolu_2: figures({ requests: 5 }),
+    });
+  });
+
+  it('KEEPS an owner whose only news is a delegate still out', () => {
+    const kept = applyLiveText(
+      new Map(),
+      event({
+        memberId: 'node-a',
+        ownerKey: 'node-a',
+        delegates: { toolu_1: figures() },
+      }),
+    );
+    expect(kept.has('node-a')).toBe(true);
+  });
+
+  it('REMOVES the owner once its delegates are gone and it has nothing else to say', () => {
+    const kept = applyLiveText(
+      new Map(),
+      event({
+        memberId: 'node-a',
+        ownerKey: 'node-a',
+        delegates: { toolu_1: figures() },
+      }),
+    );
+    const cleared = applyLiveText(
+      kept,
+      event({ memberId: 'node-a', ownerKey: 'node-a' }),
+    );
+    expect(cleared.has('node-a')).toBe(false);
   });
 });

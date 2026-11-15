@@ -173,6 +173,7 @@ export interface ChatsApiListRunItemsRequest {
     probe?: ListRunItemsProbeEnum;
     conversation?: ListRunItemsConversationEnum;
     call?: string;
+    delegate?: string;
 }
 
 export interface ChatsApiListWaitingMessagesRequest {
@@ -1399,6 +1400,10 @@ export class ChatsApi extends runtime.BaseAPI {
 
         if (requestParameters['call'] != null) {
             queryParameters['call'] = requestParameters['call'];
+        }
+
+        if (requestParameters['delegate'] != null) {
+            queryParameters['delegate'] = requestParameters['delegate'];
         }
 
         const headerParameters: runtime.HTTPHeaders = {};

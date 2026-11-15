@@ -129,11 +129,9 @@ export class ClaudeDelegateCostLedger {
   >();
 
   /**
-   * Hold one delegate's breakdown until the turn that ran it reports its price.
-   *
-   * The order is fixed and is why this has to wait at all: a delegate's
-   * `tool_use_result` arrives while the turn is still working, and the `result`
-   * line carrying the only real money figure comes last.
+   * Hold one ENDED delegate's breakdown — every request it made — until the
+   * turn that ran it reports its price. Only an ended delegate is recorded, so
+   * a `result` never prices one still running on partial figures.
    *
    * `sessionId` is the recording LINE's `session_id` — null for a line that
    * names none, which files it with every other such line rather than under a
@@ -145,6 +143,12 @@ export class ClaudeDelegateCostLedger {
     spend: ClaudeDelegateSpend,
   ): void {
     const key = pendingKey(sessionId, toolCallId);
+    // A delegate claude reports ended again (a resumed one, or one whose
+    // detached command reported back) was already priced into the turn that
+    // ran it; holding it again would add its whole spend to a later turn.
+    if (this.priced.has(key)) {
+      return;
+    }
     this.pending.delete(key);
     this.pending.set(key, {
       session: sessionId ?? '',
@@ -180,38 +184,67 @@ export class ClaudeDelegateCostLedger {
         continue;
       }
       this.pending.delete(key);
+      this.priced.add(key);
+      trimSet(this.priced, MAX_PENDING_DELEGATES * 4);
       delegates.push([entry.toolCallId, entry.spend]);
     }
     this.settledUsd = 0;
     this.settledSession = session;
+    const calibration = readCalibration(root, this.prices);
+    if (calibration.overall !== null || calibration.byModel.size > 0) {
+      this.calibrations.delete(session);
+      this.calibrations.set(session, calibration);
+      while (this.calibrations.size > MAX_PENDING_DELEGATES) {
+        const oldest = this.calibrations.keys().next();
+        if (oldest.done === true) {
+          break;
+        }
+        this.calibrations.delete(oldest.value);
+      }
+    }
     if (delegates.length === 0) {
       return [];
     }
-    const calibration = readCalibration(root, this.prices);
     const priced: { id: string; costUsd: number }[] = [];
     for (const [id, spend] of delegates) {
-      const factor =
-        spend.model === null
-          ? null
-          : (calibration.byModel.get(canonicalClaudeModel(spend.model)) ??
-            calibration.overall);
-      const list =
-        spend.model === null
-          ? null
-          : listCostUsd(spend.model, spend, this.prices);
-      if (factor === null || list === null) {
+      const costUsd = priceWith(calibration, spend, this.prices);
+      if (costUsd === null) {
         // One delegate nobody can price makes the turn's delegate spend
         // UNKNOWN, not smaller — see `takeSettledUsd`.
         this.settledUsd = null;
         continue;
       }
-      priced.push({ id, costUsd: list * factor });
+      priced.push({ id, costUsd });
       if (this.settledUsd !== null) {
-        this.settledUsd += list * factor;
+        this.settledUsd += costUsd;
       }
     }
     return priced;
   }
+
+  /**
+   * A delegate that has just ENDED, priced with the factor this session's most
+   * recent `result` line solved — null before any. The delegate stays pending
+   * too, so the turn's own `result` re-prices it with that turn's factor.
+   */
+  priceNow(
+    sessionId: string | null,
+    spend: ClaudeDelegateSpend,
+  ): number | null {
+    const calibration = this.calibrations.get(sessionId ?? '');
+    return calibration === undefined
+      ? null
+      : priceWith(calibration, spend, this.prices);
+  }
+
+  /** Delegates a `result` line has already priced, by {@link pendingKey}. */
+  private readonly priced = new Set<string>();
+
+  /** Each session's latest usable calibration, insertion-ordered. */
+  private readonly calibrations = new Map<
+    string,
+    ReturnType<typeof readCalibration>
+  >();
 
   /**
    * What the delegates priced by the last {@link settle} of THIS session cost
@@ -235,6 +268,31 @@ export class ClaudeDelegateCostLedger {
   private settledUsd: number | null = 0;
   /** Whose figure {@link settledUsd} is — the session of the last settle. */
   private settledSession: string | null = null;
+}
+
+function trimSet(set: Set<string>, max: number): void {
+  while (set.size > max) {
+    const oldest = set.values().next();
+    if (oldest.done === true) {
+      break;
+    }
+    set.delete(oldest.value);
+  }
+}
+
+function priceWith(
+  calibration: ReturnType<typeof readCalibration>,
+  spend: ClaudeDelegateSpend,
+  prices: ClaudeListPrices,
+): number | null {
+  if (spend.model === null) {
+    return null;
+  }
+  const factor =
+    calibration.byModel.get(canonicalClaudeModel(spend.model)) ??
+    calibration.overall;
+  const list = listCostUsd(spend.model, spend, prices);
+  return factor === null || list === null ? null : list * factor;
 }
 
 /** One pending delegate's key: its session and its launching call. */

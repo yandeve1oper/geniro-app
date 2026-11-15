@@ -1,24 +1,18 @@
 import {
+  ArrowLeftRight,
   CircleDollarSign,
   Coins,
   ListChecks,
+  MessageSquare,
   Timer,
-  Wrench,
 } from 'lucide-react';
 
 import { HoverPopover } from '../components/hover-popover';
 import { formatExactUsd, formatTokens } from './agent-activity';
 import { formatElapsed } from './live-row';
+import type { SubagentFiguresView } from './subagent-figures';
 import { TaskCount } from './task-list';
-import type { SubagentBlockEntry } from './transcript-groups';
 
-/**
- * One measured fact, as a glyph and its value.
- *
- * The glyph replaces a WORD, which is the whole of the compaction: `14 tools ·
- * 82.1k tokens · took 7m 55s` is 34 characters of which 16 are labels, and the
- * labels are the part a reader already knows from the shape of the number.
- */
 function MetaChip({
   icon,
   children,
@@ -38,90 +32,115 @@ function MetaChip({
   );
 }
 
-/** One labelled row of the popover — the long form of a chip. */
 function DetailRow({
   label,
   value,
+  indent = false,
 }: {
   label: string;
   value: React.ReactNode;
+  indent?: boolean;
 }): React.JSX.Element {
   return (
-    <div className="flex items-baseline justify-between gap-4">
+    <div
+      className={
+        indent
+          ? 'flex items-baseline justify-between gap-4 pl-3'
+          : 'flex items-baseline justify-between gap-4'
+      }>
       <span className="text-muted-foreground">{label}</span>
       <span className="tabular-nums text-foreground">{value}</span>
     </div>
   );
 }
 
+export function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/** Zero is no figure: a delegate that measured no messages states none. */
+export function shownMessages(messages: number | null): number | null {
+  return messages === null || messages === 0 ? null : messages;
+}
+
+/** The line under the popover's figures that says what they are, when one is needed. */
+function figureHint({
+  legacy,
+  running,
+  costUsd,
+  tokensProcessed,
+}: {
+  legacy: boolean;
+  running: boolean;
+  costUsd: number | null;
+  tokensProcessed: number | null;
+}): string | null {
+  if (legacy) {
+    return 'Recorded before requests and tokens were counted for sub-agents.';
+  }
+  if (costUsd === null && tokensProcessed !== null) {
+    return 'No price is known for this model.';
+  }
+  if (running && costUsd !== null) {
+    return 'Cost is an estimate at list price; corrected when the turn ends.';
+  }
+  return null;
+}
+
 /**
- * What a delegate COST and how far it got, as one small block of icon chips
- * with the long form behind a hover.
+ * What a delegate spent, as icon chips with the long form behind a hover.
  *
- * REPORTED as "у нас сейчас сломан UI, видимо, из-за того, что всё не помещается
- * в одну строку" over a header reading
- * `geniro:test-runner-agent · claude-sonnet-5 · 14 tools · 82.1k tokens · took
- * 7m 55s`, which wraps onto a second line and takes the delegate's own name
- * down with it. The ask names the fix exactly: icons instead of the words, one
- * small block instead of a run of separated facts, and the general information
- * in a popover — "модель тоже не нужно писать, только в поповере будет".
- *
- * Three things follow from that, and the first is why this is a component
- * rather than a few spans in the header.
- *
- * **It lives in `headerAction`, beside the disclosure and never inside it.**
- * The header of a collapsible `BlockShell` IS the toggle's `<button>`, so the
- * popover's own trigger button could not be placed among the facts — nesting a
- * control in a button is invalid HTML whatever role it wears, and it swallows
- * presses meant for the toggle. That constraint is also what makes the fix
- * complete rather than cosmetic: moving the figures out of the header run
- * leaves the name the only thing competing for the row's width, which is the
- * reported symptom.
- *
- * **The MODEL is popover-only**, as asked. It is the longest fact on the row
- * (`claude-sonnet-5` is fifteen characters, more than the three figures
- * together once they are glyphed) and the one least often the reason somebody
- * is scanning a column of delegates.
- *
- * **A figure nothing measured is absent, never zero.** Every chip is drawn only
- * when the delegate reported it — cursor reports none of them (measured: 0 of
- * 82 turns carry tokens, cost or duration) — so its block is the tasks chip
- * alone, or nothing at all. A `$0.00` or a `0 tokens` would claim a
- * measurement nobody took, which is the rule the run it replaces already
- * followed.
+ * Every figure comes from {@link SubagentFiguresView}; a figure nothing measured
+ * is absent, never zero. It sits in `headerAction`, never inside the disclosure
+ * button, which is itself a `<button>`.
  */
 export function SubagentMetaChips({
-  block,
   title,
+  model,
+  view,
+  durationMs,
+  running,
   toolCount,
   tasks,
 }: {
-  block: SubagentBlockEntry;
   /** The delegate's own name, so the popover says what it is describing. */
   title: string;
+  model: string | null;
+  view: SubagentFiguresView;
+  /** How long it took; the plate states it once the delegate has finished. */
+  durationMs: number | null;
+  running: boolean;
   toolCount: number;
   tasks: { done: number; total: number } | null;
 }): React.JSX.Element | null {
+  const { requests, tokensProcessed, costUsd, contextTokens } = view;
+  const messages = shownMessages(view.messages);
+  // An old row's one token figure is the last request's, never a total.
+  const legacy = view.contextAtEnd !== null;
+  const took = running ? null : durationMs;
   const hasAny =
-    toolCount > 0 ||
-    block.tokens !== null ||
-    block.costUsd !== null ||
-    block.durationMs !== null ||
-    tasks !== null ||
-    block.model !== null;
+    requests !== null ||
+    messages !== null ||
+    tokensProcessed !== null ||
+    costUsd !== null ||
+    took !== null ||
+    tasks !== null;
   if (!hasAny) {
     return null;
   }
+  const hint = figureHint({ legacy, running, costUsd, tokensProcessed });
   // The accessible name carries the whole reading, so nothing here is reachable
   // only by opening the panel — the rule `HoverPopover`'s own `label` states.
+  // Live ticks are not announced: nothing on the plate is an `aria-live` region.
   const spoken = [
-    block.model === null ? null : `model ${block.model}`,
-    toolCount > 0 ? `${toolCount} tool${toolCount === 1 ? '' : 's'}` : null,
-    block.tokens === null ? null : `${formatTokens(block.tokens)} tokens`,
-    block.costUsd === null ? null : `about ${formatExactUsd(block.costUsd)}`,
-    block.durationMs === null
+    model === null ? null : `model ${model}`,
+    requests === null ? null : plural(requests, 'request'),
+    messages === null ? null : plural(messages, 'message'),
+    tokensProcessed === null
       ? null
-      : `took ${formatElapsed(block.durationMs)}`,
+      : `${formatTokens(tokensProcessed)} tokens processed`,
+    costUsd === null ? null : `about ${formatExactUsd(costUsd)}`,
+    took === null ? null : `took ${formatElapsed(took)}`,
     tasks === null ? null : `${tasks.done} of ${tasks.total} tasks done`,
   ]
     .filter((part): part is string => part !== null)
@@ -136,41 +155,45 @@ export function SubagentMetaChips({
       triggerClassName="rounded-md"
       panelClassName="min-w-56"
       trigger={
-        /* ONE block, ruled, rather than a run of separated facts: the ask was
-           to "объединить в один маленький блок", and a border is what says
-           these glyphs are one reading instead of four unrelated marks. */
         <span
           data-slot="subagent-meta-chips"
           className="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-          {toolCount > 0 ? (
+          {requests === null ? null : (
             <MetaChip
-              slot="subagent-meta-tools"
-              icon={<Wrench aria-hidden="true" className="size-3" />}>
-              {toolCount}
+              slot="subagent-meta-requests"
+              icon={<ArrowLeftRight aria-hidden="true" className="size-3" />}>
+              {requests}
             </MetaChip>
-          ) : null}
-          {block.tokens === null ? null : (
+          )}
+          {messages === null ? null : (
+            <MetaChip
+              slot="subagent-meta-messages"
+              icon={<MessageSquare aria-hidden="true" className="size-3" />}>
+              {messages}
+            </MetaChip>
+          )}
+          {tokensProcessed === null ? null : (
             <MetaChip
               slot="subagent-meta-tokens"
               icon={<Coins aria-hidden="true" className="size-3" />}>
-              {formatTokens(block.tokens)}
+              {formatTokens(tokensProcessed)}
             </MetaChip>
           )}
-          {block.costUsd === null ? null : (
+          {costUsd === null ? null : (
             <MetaChip
               slot="subagent-meta-cost"
               icon={<CircleDollarSign aria-hidden="true" className="size-3" />}>
               {/* The `≈` survives the compaction. It is the whole of what marks
                 this figure as DERIVED rather than reported, so a glyph that
                 dropped it would upgrade an estimate to a measurement. */}
-              {`≈${formatExactUsd(block.costUsd)}`}
+              {`≈${formatExactUsd(costUsd)}`}
             </MetaChip>
           )}
-          {block.durationMs === null ? null : (
+          {took === null ? null : (
             <MetaChip
               slot="subagent-meta-duration"
               icon={<Timer aria-hidden="true" className="size-3" />}>
-              {formatElapsed(block.durationMs)}
+              {formatElapsed(took)}
             </MetaChip>
           )}
           {tasks === null ? null : (
@@ -185,24 +208,77 @@ export function SubagentMetaChips({
       <div
         data-slot="subagent-meta-detail"
         className="flex flex-col gap-1 text-xs">
-        {block.model === null ? null : (
-          <DetailRow label="Model" value={block.model} />
+        {model === null ? null : <DetailRow label="Model" value={model} />}
+        {requests === null ? null : (
+          <DetailRow label="Requests (model calls)" value={requests} />
+        )}
+        {messages === null ? null : (
+          <DetailRow label="Messages" value={messages} />
+        )}
+        {tokensProcessed === null ? null : (
+          <>
+            <DetailRow
+              label="Tokens processed"
+              value={formatTokens(tokensProcessed)}
+            />
+            {view.inputTokens === null ? null : (
+              <DetailRow
+                label="input"
+                value={formatTokens(view.inputTokens)}
+                indent
+              />
+            )}
+            {view.outputTokens === null ? null : (
+              <DetailRow
+                label="output"
+                value={formatTokens(view.outputTokens)}
+                indent
+              />
+            )}
+            {view.cacheCreationTokens === null ? null : (
+              <DetailRow
+                label="cache write"
+                value={formatTokens(view.cacheCreationTokens)}
+                indent
+              />
+            )}
+            {view.cacheReadTokens === null ? null : (
+              <DetailRow
+                label="cache read"
+                value={formatTokens(view.cacheReadTokens)}
+                indent
+              />
+            )}
+          </>
+        )}
+        {contextTokens === null ? null : (
+          <DetailRow label="Context now" value={formatTokens(contextTokens)} />
+        )}
+        {view.contextAtEnd === null ? null : (
+          <DetailRow
+            label="Context at end"
+            value={formatTokens(view.contextAtEnd)}
+          />
+        )}
+        {costUsd === null ? null : (
+          <DetailRow label="Cost" value={`≈${formatExactUsd(costUsd)}`} />
         )}
         {toolCount > 0 ? <DetailRow label="Tools" value={toolCount} /> : null}
-        {block.tokens === null ? null : (
-          <DetailRow label="Tokens" value={formatTokens(block.tokens)} />
-        )}
-        {block.costUsd === null ? null : (
-          <DetailRow label="Cost" value={`≈${formatExactUsd(block.costUsd)}`} />
-        )}
-        {block.durationMs === null ? null : (
-          <DetailRow label="Took" value={formatElapsed(block.durationMs)} />
+        {took === null ? null : (
+          <DetailRow label="Took" value={formatElapsed(took)} />
         )}
         {tasks === null ? null : (
           <DetailRow
             label="Tasks"
             value={`${tasks.done} of ${tasks.total} done`}
           />
+        )}
+        {hint === null ? null : (
+          <p
+            data-slot="subagent-meta-hint"
+            className="m-0 text-muted-foreground">
+            {hint}
+          </p>
         )}
       </div>
     </HoverPopover>

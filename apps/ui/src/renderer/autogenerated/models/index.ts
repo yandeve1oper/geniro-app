@@ -10506,6 +10506,66 @@ export interface RunDelegateState {
      * @memberof RunDelegateState
      */
     toolCalls: number;
+    /**
+     * the delegate's own assistant text messages, over every row of the run up to the read's throughSeq
+     * @type {number}
+     * @memberof RunDelegateState
+     */
+    messages: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof RunDelegateState
+     */
+    requests: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof RunDelegateState
+     */
+    inputTokens: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof RunDelegateState
+     */
+    outputTokens: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof RunDelegateState
+     */
+    cacheReadTokens: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof RunDelegateState
+     */
+    cacheCreationTokens: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof RunDelegateState
+     */
+    contextTokens: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof RunDelegateState
+     */
+    costUsd: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof RunDelegateState
+     */
+    estimatedCostUsd: number | null;
+    /**
+     * true when the token figures above sum every request (counted by the daemon); false when nothing was counted for this delegate
+     * @type {boolean}
+     * @memberof RunDelegateState
+     */
+    cumulative: boolean;
 }
 
 

@@ -49,6 +49,7 @@ import type {
   AgentTurnInput,
   AgentUsage,
   CarrySessionInput,
+  DelegateFigures,
   InstalledApprovalSupport,
 } from '../adapters/adapter.types';
 import type { AgentAdapter } from '../adapters/agent-adapter';
@@ -106,6 +107,7 @@ import {
   type WallClockRow,
 } from '../utils/wall-worked';
 import { FakeContextWindowStore } from './__tests__/fake-context-window-store';
+import { FakeDelegateSpendStore } from './__tests__/fake-delegate-spend-store';
 import { FakeUnrecordedSpendStore } from './__tests__/fake-unrecorded-spend-store';
 import { UnknownAgentVersion } from './__tests__/unknown-agent-version';
 import { ActionBroker } from './action.broker';
@@ -1141,6 +1143,18 @@ function cardIdFor(
   return entry.requestId;
 }
 
+const DELEGATE_FIGURES: DelegateFigures = {
+  requests: 3,
+  inputTokens: 900,
+  outputTokens: 120,
+  cacheReadTokens: 40_000,
+  cacheCreationTokens: 0,
+  contextTokens: 41_000,
+  model: 'claude-haiku-5-5',
+  costUsd: null,
+  estimatedCostUsd: 0.02,
+};
+
 function setup(
   opts: {
     claudeModes?: ClaudeModesVerdict;
@@ -1251,6 +1265,7 @@ function setup(
     bus,
     new FakeContextWindowStore(opts.contextWindows).asStore(),
     new FakeUnrecordedSpendStore().asStore(),
+    new FakeDelegateSpendStore().asStore(),
   );
   const callTokens = new CallTokenRegistry();
   const userQuestions = new UserQuestionBroker();
@@ -1553,9 +1568,9 @@ describe('ChatService', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("hands the history route's conversation to the transcript read", async () => {
-    // The route's `conversation` / `call` reaches the DAO only through here;
-    // dropping it would page a team run's whole transcript again.
+  it("hands the history route's conversation and delegate to the transcript read", async () => {
+    // The route's `conversation` / `call` / `delegate` reaches the DAO only
+    // through here; dropping it would page a team run's whole transcript again.
     const read = vi.spyOn(FakeItemDao.prototype, 'getByRun');
     try {
       const { service } = setup();
@@ -1569,6 +1584,18 @@ describe('ChatService', () => {
         expect.anything(),
         { limit: 10 },
         [''],
+        undefined,
+      );
+
+      await service.getHistory(run.id, -1, { limit: 10 }, undefined, 'toolu_a');
+
+      expect(read).toHaveBeenLastCalledWith(
+        run.id,
+        -1,
+        expect.anything(),
+        { limit: 10 },
+        undefined,
+        'toolu_a',
       );
     } finally {
       read.mockRestore();
@@ -10789,6 +10816,28 @@ describe('ChatService — approval modes (parity M1)', () => {
     expect(updated.effort).toBe('ultracode');
   });
 
+  it('puts a delegate’s live figures on the run’s live plane under its launching call', async () => {
+    const { service, claude, deltas } = setup();
+    const run = await service.createChat({ agentKind: 'claude', cwd: dir });
+    await service.sendMessage(run.id, 'go');
+
+    claude.emit({
+      type: 'delegate_progress',
+      delegateId: 'toolu_x',
+      figures: DELEGATE_FIGURES,
+      final: false,
+    });
+    await drain();
+
+    expect(deltas.at(-1)).toMatchObject({
+      runId: run.id,
+      delegates: { toolu_x: DELEGATE_FIGURES },
+    });
+
+    claude.finish();
+    await drain();
+  });
+
   it('stops claiming the agent is thinking the moment a tool call lands', async () => {
     // The full path for the reported "Thinking… stays up between tool calls".
     // A model that thinks and then calls a tool with nothing to say first emits
@@ -13503,6 +13552,23 @@ describe('ChatService — run status is the truth, and it is broadcast', () => {
       expect(statuses).toContainEqual(
         expect.objectContaining({ runId: run.id, holdingFor: 0 }),
       );
+    });
+
+    it('puts a delegate’s live figures on the live plane while the CLI carries on by itself', async () => {
+      const { run, between, deltas } = await settledChat();
+
+      between({
+        type: 'delegate_progress',
+        delegateId: 'toolu_x',
+        figures: DELEGATE_FIGURES,
+        final: false,
+      });
+      await drain();
+
+      expect(deltas.at(-1)).toMatchObject({
+        runId: run.id,
+        delegates: { toolu_x: DELEGATE_FIGURES },
+      });
     });
 
     it('keeps when the agent woke for it, for the clock', async () => {

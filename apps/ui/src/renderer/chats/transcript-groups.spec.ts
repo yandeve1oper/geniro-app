@@ -5104,6 +5104,99 @@ describe('buildSubagentBlocks', () => {
     expect(block.model).toBe('claude-sonnet-5');
   });
 
+  it('carries the figures a delegate declared, and counts its own assistant messages in the window', () => {
+    const block = onlyBlock(
+      fold([
+        call('Task', 'task-1', {
+          subagent_type: 'code-reviewer',
+          description: 'Review the diff',
+        }),
+        item('subagent_info', {
+          id: 'task-1',
+          requests: 3,
+          inputTokens: 300,
+          outputTokens: 30,
+          cacheReadTokens: 900,
+          cacheCreationTokens: 0,
+          contextTokens: 1200,
+          costUsd: 0.4,
+          estimatedCostUsd: 0.45,
+          cumulative: true,
+        }),
+        item(
+          'message',
+          { text: 'reading', parentToolUseId: 'task-1' },
+          'orch',
+          'assistant',
+        ),
+        item(
+          'message',
+          { text: 'done', parentToolUseId: 'task-1' },
+          'orch',
+          'assistant',
+        ),
+        result('task-1', 'Found one off-by-one.'),
+      ]),
+    );
+
+    expect(block).toMatchObject({
+      requests: 3,
+      inputTokens: 300,
+      outputTokens: 30,
+      cacheReadTokens: 900,
+      cacheCreationTokens: 0,
+      contextTokens: 1200,
+      costUsd: 0.4,
+      estimatedCostUsd: 0.45,
+      cumulative: true,
+      messages: 2,
+    });
+  });
+
+  it('leaves the message count null while the window holds none of the delegate’s own', () => {
+    const block = onlyBlock(
+      fold([
+        call('Task', 'task-1', {
+          subagent_type: 'code-reviewer',
+          description: 'Review the diff',
+        }),
+        item(
+          'message',
+          { text: 'the prompt', parentToolUseId: 'task-1' },
+          'orch',
+          'user',
+        ),
+        result('task-1', 'done'),
+      ]),
+    );
+
+    expect(block.messages).toBeNull();
+  });
+
+  it('reads a row that does not sum its requests as old, so its figures are the last request’s only', () => {
+    const block = onlyBlock(
+      fold([
+        call('Task', 'task-1', {
+          subagent_type: 'code-reviewer',
+          description: 'Review the diff',
+        }),
+        item('subagent_info', {
+          id: 'task-1',
+          tokens: 26_124,
+          inputTokens: 25_000,
+          outputTokens: 1_124,
+        }),
+        result('task-1', 'done'),
+      ]),
+    );
+
+    expect(block).toMatchObject({
+      cumulative: false,
+      requests: null,
+      tokens: 26_124,
+    });
+  });
+
   it('drops `inherit`, which names no model at all', () => {
     const block = onlyBlock(
       fold([

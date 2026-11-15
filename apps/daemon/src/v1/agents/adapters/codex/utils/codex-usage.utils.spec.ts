@@ -361,4 +361,65 @@ describe('sub-agent spend', () => {
     const idle = spendBetween(reading([0, 0], [0, 0]), breakdown(0, 0), null);
     expect(sumSpends([moved, idle])?.costUsd).toBeCloseTo(0.004, 10);
   });
+
+  it('sums a delegate’s threads as its whole work, each priced at its own model', () => {
+    const MINI: ModelPrice = { ...PLAIN, input: 1, output: 5 };
+    const spend = new CodexSubagentSpend();
+    spend.record('B', reading([1_000, 0], [1_000, 0]));
+    spend.noteModel('A', 'gpt-mini');
+    spend.record('A', reading([10_000, 100], [10_000, 100]));
+    spend.record('A', reading([12_000, 150], [2_000, 50]));
+
+    expect(
+      spend.delegateFigures(
+        ['A', 'B'],
+        (model) => (model === 'gpt-mini' ? MINI : PLAIN),
+        'gpt-parent',
+      ),
+    ).toEqual({
+      requests: null,
+      inputTokens: 12_000 + 1_000,
+      outputTokens: 150,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      contextTokens: 2_050,
+      model: 'gpt-mini',
+      costUsd: null,
+      estimatedCostUsd: (12_000 * 1 + 150 * 5 + 1_000 * 4) / 1e6,
+    });
+  });
+
+  it('reads a delegate’s fresh input apart from what came from the cache', () => {
+    const spend = new CodexSubagentSpend();
+    spend.record('A', {
+      total: breakdown(20_000, 100, 15_000),
+      last: breakdown(20_000, 100, 15_000),
+      modelContextWindow: null,
+    });
+    expect(spend.delegateFigures(['A'], () => PLAIN, null)).toMatchObject({
+      inputTokens: 5_000,
+      cacheReadTokens: 15_000,
+      cacheCreationTokens: 0,
+      outputTokens: 100,
+      contextTokens: 20_100,
+    });
+  });
+
+  it('skips a thread nobody has read, and states nothing while none has been', () => {
+    const spend = new CodexSubagentSpend();
+    expect(spend.delegateFigures(['A'], () => PLAIN, null)).toBeNull();
+    spend.record('A', reading([1_000, 0], [1_000, 0]));
+    expect(spend.delegateFigures(['A', 'X'], () => PLAIN, null)).toMatchObject({
+      inputTokens: 1_000,
+    });
+  });
+
+  it('leaves the estimate unmeasured when a thread that spent cannot be priced', () => {
+    const spend = new CodexSubagentSpend();
+    spend.record('A', reading([1_000, 0], [1_000, 0]));
+    expect(spend.delegateFigures(['A'], () => null, null)).toMatchObject({
+      inputTokens: 1_000,
+      estimatedCostUsd: null,
+    });
+  });
 });

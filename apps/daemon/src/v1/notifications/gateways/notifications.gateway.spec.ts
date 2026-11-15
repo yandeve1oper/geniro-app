@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RuntimeInfo } from '../../../auth/runtime';
 import type { ItemWire, RunWire } from '../../agents/chat.types';
 import { FakeContextWindowStore } from '../../agents/services/__tests__/fake-context-window-store';
+import { FakeDelegateSpendStore } from '../../agents/services/__tests__/fake-delegate-spend-store';
 import { FakeUnrecordedSpendStore } from '../../agents/services/__tests__/fake-unrecorded-spend-store';
 import { AgentEventBus } from '../../agents/services/agent-events.bus';
 import { ApprovalRegistry } from '../../agents/services/approval-registry';
@@ -69,6 +70,7 @@ function partials(
     bus,
     new FakeContextWindowStore().asStore(),
     new FakeUnrecordedSpendStore().asStore(),
+    new FakeDelegateSpendStore().asStore(),
   );
 }
 

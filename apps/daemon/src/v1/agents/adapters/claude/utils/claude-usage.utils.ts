@@ -25,6 +25,7 @@ import {
   NO_CLAUDE_LIST_PRICES,
   readCalibration,
 } from './claude-delegate-cost.utils';
+import { ClaudeDelegateSpendTracker } from './claude-delegate-spend.utils';
 
 /**
  * The running totals claude's own cost ledger reports, per CLI SESSION.
@@ -101,9 +102,44 @@ export class ClaudeSessionCostLedger {
     private readonly store: ClaudeCostTotalsFile | null = null,
   ) {
     this.delegates = new ClaudeDelegateCostLedger(prices);
+    this.delegateSpend = new ClaudeDelegateSpendTracker(prices);
     for (const [sessionId, totals] of store?.read() ?? []) {
       this.remember(sessionId, totals, false);
     }
+  }
+
+  /** Each live delegate's running totals over every request it made. */
+  readonly delegateSpend: ClaudeDelegateSpendTracker;
+
+  /** Main-thread request ids already reported live, per session. */
+  private readonly mainRequests = new Map<string, Set<string>>();
+
+  /**
+   * Whether this main-thread line is the FIRST of its model response. A
+   * response arrives as one line per content block, every one repeating the
+   * response's `usage`, so only the first may count. A line naming no id
+   * always counts.
+   */
+  firstLineOfRequest(
+    sessionId: string | null,
+    messageId: string | null,
+  ): boolean {
+    if (messageId === null) {
+      return true;
+    }
+    const session = sessionId ?? '';
+    let seen = this.mainRequests.get(session);
+    if (seen === undefined) {
+      seen = new Set();
+      this.mainRequests.set(session, seen);
+      trimOldest(this.mainRequests, MAX_TRACKED_SESSIONS);
+    }
+    if (seen.has(messageId)) {
+      return false;
+    }
+    seen.add(messageId);
+    trimOldest(seen, MAX_TRACKED_MAIN_REQUESTS);
+    return true;
   }
 
   /**
@@ -568,6 +604,9 @@ const TOTALS_FLUSH_DELAY_MS = 1_000;
  * to save memory.
  */
 const MAX_TRACKED_SESSIONS = 512;
+
+/** How many main-thread response ids one session remembers. */
+const MAX_TRACKED_MAIN_REQUESTS = 512;
 
 /**
  * How far the CLI's own figure may exceed the turn's token-priced spend before

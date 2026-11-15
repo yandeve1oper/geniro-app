@@ -70,6 +70,10 @@ import {
 import { unsentMessageIds } from './system-payload';
 import { laterInstant } from './unread';
 import { useCallPages } from './use-call-pages';
+import {
+  type DelegateConversationLoader,
+  useDelegatePages,
+} from './use-delegate-pages';
 import { EMPTY_LIVE_TEXT, useRunStream } from './use-run-stream';
 
 /** Shared empty set, so "nothing is being named" is one stable identity. */
@@ -408,6 +412,8 @@ export interface ChatRunState {
   anchors: ChatItem[];
   /** How an opened call card reads its own conversation. */
   callConversations: CallConversationLoader;
+  /** How an opened sub-agent card reads its own rows. */
+  delegateConversations: DelegateConversationLoader;
   /** The loaded window does not reach the start of the conversation. */
   hasOlder: boolean;
   /** A page of older items is in flight. */
@@ -1172,6 +1178,12 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
   });
 
   const { callConversations, forgetCallPages } = useCallPages({
+    runIdRef: activeRunIdRef,
+    api: chatApi,
+    pageSizeRef,
+    commitRows: commitCallRows,
+  });
+  const { delegateConversations, forgetDelegatePages } = useDelegatePages({
     runIdRef: activeRunIdRef,
     api: chatApi,
     pageSizeRef,
@@ -2037,6 +2049,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
       commitAnchors([]);
       commitCallRows([]);
       forgetCallPages();
+      forgetDelegatePages();
       forgetAnchorAsks();
       // Both belong to the thread being left. `hasOlder` is answered by the
       // fetch below; clearing it first stops the incoming thread from offering
@@ -2183,6 +2196,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
     commitAnchors([]);
     commitCallRows([]);
     forgetCallPages();
+    forgetDelegatePages();
     forgetAnchorAsks();
     setLoadingHistory(false);
     setLiveText(EMPTY_LIVE_TEXT);
@@ -2979,6 +2993,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
         return;
       }
       forgetCallPages();
+      forgetDelegatePages();
       void chatApi
         .listRunItems({ runId, afterSeq })
         .then(({ items: missed, anchors: missedAnchors }) => {
@@ -3008,7 +3023,14 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
         // Best effort: the next live row, or reopening the thread, covers it.
         .catch(() => undefined);
     },
-    [chatApi, commitItems, commitAnchors, commitCallRows, forgetCallPages],
+    [
+      chatApi,
+      commitItems,
+      commitAnchors,
+      commitCallRows,
+      forgetCallPages,
+      forgetDelegatePages,
+    ],
   );
 
   /**
@@ -3263,6 +3285,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
     items,
     anchors: structure,
     callConversations,
+    delegateConversations,
     hasOlder,
     loadingOlder,
     loadingHistory,

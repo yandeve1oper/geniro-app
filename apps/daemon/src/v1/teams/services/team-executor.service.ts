@@ -5246,6 +5246,10 @@ export class TeamExecutorService
             this.partials.composing(runId, ownerKey, node.id, event);
             return;
           }
+          if (event.type === 'delegate_progress') {
+            this.partials.delegate(runId, ownerKey, node.id, event);
+            return;
+          }
           if (event.type === 'usage_progress') {
             // The member's own running bill for this turn — the team twin of
             // `ChatService`'s site, and ephemeral for the same reason: the

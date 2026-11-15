@@ -71,6 +71,12 @@ import {
   GENIRO_MCP_TOOL_TIMEOUT_MS,
 } from './claude.const';
 import type { ClaudeModeProbe, ClaudeModesVerdict } from './claude.types';
+import {
+  BACKGROUND_AGENT,
+  BACKGROUND_CALL,
+  backgroundDelegateLines,
+  taskNotification,
+} from './utils/__tests__/claude-subagent-stream';
 
 /**
  * A child that DIES when signalled, the way a real CLI does: `close` follows
@@ -2140,6 +2146,44 @@ describe('ClaudeAdapter — skills and commands on disk', () => {
     await expect(
       new ClaudeAdapter().listSkills({ cwd, homeDir, configDir: null }),
     ).resolves.toEqual([]);
+  });
+});
+
+describe('ClaudeAdapter — a delegate’s end on the live channel', () => {
+  it('states a finished background delegate’s figures as final while its turn still runs', async () => {
+    const { spawn, child } = fakeSpawn();
+    const events: AgentEvent[] = [];
+    const handle = new ClaudeAdapter({ spawn, waitForMcpServers: false }).start(
+      {
+        prompt: 'go',
+        cwd: '/proj',
+        model: 'opus',
+        configDir: '/profiles/work',
+      },
+      (e) => events.push(e),
+    );
+
+    child.stdout.emitData(
+      [
+        ...backgroundDelegateLines,
+        taskNotification(BACKGROUND_AGENT, BACKGROUND_CALL, 'completed'),
+      ]
+        .map((line) => `${JSON.stringify(line)}\n`)
+        .join(''),
+    );
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'delegate_progress',
+          delegateId: BACKGROUND_CALL,
+          final: true,
+          figures: expect.objectContaining({ requests: 2 }),
+        }),
+      );
+    });
+    child.emit('close', 0, null);
+    await handle.done;
   });
 });
 

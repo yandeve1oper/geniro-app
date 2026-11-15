@@ -14,6 +14,7 @@ import type {
 import { ItemDao } from '../dao/item.dao';
 import { RunDao } from '../dao/run.dao';
 import { foldActions } from '../utils/action-fold';
+import { readDelegateSpend } from '../utils/delegate-spend';
 import { rowsWithId, workflowEdgeRows } from '../utils/history-anchors';
 import { itemToWire } from '../utils/item-wire';
 import { payloadString } from '../utils/json-util';
@@ -175,14 +176,34 @@ export class RunStateService {
     });
     // Counted over every row through this read: a delegate with none counted
     // made none.
-    const toolCalls =
+    const [toolCalls, messages] =
       lifecycles.length === 0
-        ? new Map<string, number>()
-        : await this.itemDao.delegateToolCallCounts(runId, throughSeq, em);
-    const delegates = lifecycles.map((delegate) => ({
-      ...delegate,
-      toolCalls: toolCalls.get(delegate.id) ?? 0,
-    }));
+        ? [new Map<string, number>(), new Map<string, number>()]
+        : await Promise.all([
+            this.itemDao.delegateToolCallCounts(runId, throughSeq, em),
+            this.itemDao.delegateMessageCounts(runId, throughSeq, em),
+          ]);
+    const spend = readDelegateSpend(run.delegateSpend);
+    const delegates = lifecycles.map((delegate) => {
+      const figures = spend.get(delegate.id) ?? null;
+      return {
+        ...delegate,
+        toolCalls: toolCalls.get(delegate.id) ?? 0,
+        messages: Math.max(
+          messages.get(delegate.id) ?? 0,
+          figures?.messages ?? 0,
+        ),
+        requests: figures?.requests ?? null,
+        inputTokens: figures?.inputTokens ?? null,
+        outputTokens: figures?.outputTokens ?? null,
+        cacheReadTokens: figures?.cacheReadTokens ?? null,
+        cacheCreationTokens: figures?.cacheCreationTokens ?? null,
+        contextTokens: figures?.contextTokens ?? null,
+        costUsd: figures?.costUsd ?? null,
+        estimatedCostUsd: figures?.estimatedCostUsd ?? null,
+        cumulative: figures !== null,
+      };
+    });
     const workflowRows = [
       ...workflowEdgeRows(announcements, workflowIds),
       ...workflowLaunches,

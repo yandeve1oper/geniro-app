@@ -84,9 +84,17 @@ describe('ChatHistoryService (in-memory sqlite)', () => {
         afterSeq: number,
         window: Parameters<ItemDao['getByRun']>[3],
         inCalls: readonly string[] | undefined,
+        delegateId: string | undefined,
       ) =>
         (
-          await dao.getByRun(runId, afterSeq, orm.em.fork(), window, inCalls)
+          await dao.getByRun(
+            runId,
+            afterSeq,
+            orm.em.fork(),
+            window,
+            inCalls,
+            delegateId,
+          )
         ).map(itemToWire),
     } as unknown as ChatService;
     return new ChatHistoryService(
@@ -136,6 +144,47 @@ describe('ChatHistoryService (in-memory sqlite)', () => {
     expect(JSON.parse((await dao.getByRun('run-a', -1))[1]!.payload)).toEqual(
       screenshot,
     );
+  });
+
+  describe('one delegate of a run', () => {
+    async function delegateRun(): Promise<void> {
+      await insert(1, 'tool_call', { id: 'toolu_a', name: 'Task', input: {} });
+      await insert(2, 'tool_call', {
+        id: 'a-2',
+        name: 'Read',
+        parentToolUseId: 'toolu_a',
+      });
+      await insert(3, 'message', {
+        text: 'the other delegate',
+        parentToolUseId: 'toolu_b',
+      });
+      await insert(4, 'tool_call', { id: 'own', name: 'Bash' });
+      await insert(5, 'message', {
+        text: 'found it',
+        parentToolUseId: 'toolu_a',
+      });
+      await insert(6, 'tool_result', { id: 'a-2', parentToolUseId: 'toolu_a' });
+    }
+
+    it("reads only that delegate's rows, and the newest window of them when one is asked", async () => {
+      await delegateRun();
+
+      const whole = await readingService().read(
+        'run-a',
+        -1,
+        { limit: 50 },
+        { delegate: 'toolu_a' },
+      );
+      expect(whole.items.map((item) => item.seq)).toEqual([2, 5, 6]);
+
+      const newest = await readingService().read(
+        'run-a',
+        -1,
+        { limit: 2 },
+        { delegate: 'toolu_a' },
+      );
+      expect(newest.items.map((item) => item.seq)).toEqual([5, 6]);
+    });
   });
 
   describe('one conversation of a team run', () => {

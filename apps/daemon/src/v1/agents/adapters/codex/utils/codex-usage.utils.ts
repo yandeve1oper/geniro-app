@@ -5,7 +5,11 @@ import {
   ratesForPrompt,
   tokenCostUsd,
 } from '../../../utils/model-prices';
-import type { AgentModelCost, AgentUsage } from '../../adapter.types';
+import type {
+  AgentModelCost,
+  AgentUsage,
+  DelegateFigures,
+} from '../../adapter.types';
 import type { CodexTokenBreakdown, CodexTokenUsage } from '../codex.types';
 
 /** One breakdown, or null when a figure is missing — a partial one is unusable. */
@@ -180,6 +184,15 @@ export function sumSpends(parts: readonly CodexSpend[]): CodexSpend | null {
   };
 }
 
+const NO_TOKENS: CodexTokenBreakdown = {
+  totalTokens: 0,
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  cacheWriteInputTokens: 0,
+  outputTokens: 0,
+  reasoningOutputTokens: 0,
+};
+
 /**
  * What a conversation's SUB-AGENTS have spent that no turn has recorded yet —
  * kept on the session, because a sub-agent is a codex thread of its own whose
@@ -197,9 +210,10 @@ export function sumSpends(parts: readonly CodexSpend[]): CodexSpend | null {
 export class CodexSubagentSpend {
   private readonly threads = new Map<
     string,
-    { billed: CodexTokenBreakdown; latest: CodexTokenUsage }
+    { billed: CodexTokenBreakdown; latest: CodexTokenUsage; readAt: number }
   >();
   private readonly models = new Map<string, string>();
+  private readings = 0;
 
   /** The model a sub-agent thread runs on, when codex named it. */
   noteModel(threadId: string, model: string): void {
@@ -215,14 +229,17 @@ export class CodexSubagentSpend {
     threadId: string,
     usage: CodexTokenUsage,
   ): { previous: CodexTokenBreakdown } {
+    this.readings += 1;
+    const readAt = this.readings;
     const held = this.threads.get(threadId);
     if (held === undefined) {
       const billed = baselineOf(usage);
-      this.threads.set(threadId, { billed, latest: usage });
+      this.threads.set(threadId, { billed, latest: usage, readAt });
       return { previous: billed };
     }
     const previous = held.latest.total;
     held.latest = usage;
+    held.readAt = readAt;
     return { previous };
   }
 
@@ -247,6 +264,47 @@ export class CodexSubagentSpend {
     }
     const total = sumSpends(parts);
     return total === null ? null : { ...total, modelCosts };
+  }
+
+  /**
+   * The cumulative figures of one delegate: every thread in `threadIds` that has
+   * been read, summed as the whole of its work. The context and the model stand
+   * for the thread that read last. Null while none of them has been read.
+   */
+  delegateFigures(
+    threadIds: readonly string[],
+    priceOf: (model: string | null) => ModelPrice | null,
+    fallbackModel: string | null,
+  ): DelegateFigures | null {
+    const read = threadIds.flatMap((threadId) => {
+      const held = this.threads.get(threadId);
+      return held === undefined ? [] : [{ threadId, ...held }];
+    });
+    const spend = sumSpends(
+      read.map(({ threadId, latest }) =>
+        spendBetween(
+          latest,
+          NO_TOKENS,
+          priceOf(this.models.get(threadId) ?? fallbackModel),
+        ),
+      ),
+    );
+    if (spend === null) {
+      return null;
+    }
+    const newest = read.reduce((a, b) => (b.readAt > a.readAt ? b : a));
+    const context = newest.latest.last.totalTokens;
+    return {
+      requests: null,
+      inputTokens: spend.inputTokens,
+      outputTokens: spend.outputTokens,
+      cacheReadTokens: spend.cachedInputTokens,
+      cacheCreationTokens: spend.cacheWriteInputTokens,
+      contextTokens: context > 0 ? context : null,
+      model: this.models.get(newest.threadId) ?? null,
+      costUsd: null,
+      estimatedCostUsd: spend.costUsd,
+    };
   }
 
   /** Everything read so far is now on a turn's row. */

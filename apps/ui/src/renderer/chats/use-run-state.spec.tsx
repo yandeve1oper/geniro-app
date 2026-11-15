@@ -197,6 +197,19 @@ describe('useRunState', () => {
     expect(h.api.readRunState.mock.calls.length).toBe(before + 1);
   });
 
+  const UNMEASURED_FIGURES = {
+    messages: 0,
+    requests: null,
+    inputTokens: null,
+    outputTokens: null,
+    cacheReadTokens: null,
+    cacheCreationTokens: null,
+    contextTokens: null,
+    costUsd: null,
+    estimatedCostUsd: null,
+    cumulative: false,
+  };
+
   it('re-reads on an artifact publish, and on the reply to a delegate it lists', async () => {
     const h = harness('r1');
     h.api.readRunState.mockResolvedValue({
@@ -213,6 +226,7 @@ describe('useRunState', () => {
           launchSeq: 1,
           toolCalls: 0,
           startedAt: 'now',
+          ...UNMEASURED_FIGURES,
         },
       ],
     });
@@ -322,6 +336,7 @@ describe('useRunState', () => {
       launchSeq: 1,
       toolCalls: 0,
       startedAt: 'now',
+      ...UNMEASURED_FIGURES,
     };
     h.api.readRunState.mockResolvedValue({
       ...state(0),
@@ -362,6 +377,7 @@ describe('useRunState', () => {
             launchSeq: 1,
             toolCalls: 0,
             startedAt: 'now',
+            ...UNMEASURED_FIGURES,
           },
         ],
       });

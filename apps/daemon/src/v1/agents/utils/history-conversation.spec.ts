@@ -16,6 +16,12 @@ describe('historyConversationOf', () => {
     });
   });
 
+  it("reads `delegate` as that delegate's own rows", () => {
+    expect(historyConversationOf({ delegate: 'toolu_a' })).toEqual({
+      delegate: 'toolu_a',
+    });
+  });
+
   it('reads neither as the whole run', () => {
     expect(historyConversationOf({})).toBeUndefined();
   });
@@ -33,5 +39,25 @@ describe('historyQuerySchema', () => {
     expect(
       historyQuerySchema.safeParse({ conversation: 'call-3' }).success,
     ).toBe(false);
+  });
+
+  it('refuses a delegate together with a call or the root flow', () => {
+    expect(
+      historyQuerySchema.safeParse({ delegate: 'toolu_a', call: 'call-3' })
+        .success,
+    ).toBe(false);
+    expect(
+      historyQuerySchema.safeParse({
+        delegate: 'toolu_a',
+        conversation: 'root',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts a delegate on its own, with a window', () => {
+    expect(
+      historyQuerySchema.safeParse({ delegate: 'toolu_a', limit: '200' })
+        .success,
+    ).toBe(true);
   });
 });

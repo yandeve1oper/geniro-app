@@ -1359,6 +1359,7 @@ export class CodexTurnDriver {
                 : undefined,
           }),
         );
+        events.push(...this.session.delegateProgressOf(item.id));
       }
     }
     for (const { threadId, outcome } of finishedAgentsOf(item)) {
@@ -1388,6 +1389,7 @@ export class CodexTurnDriver {
           label: activity.name,
           childSessionId: activity.threadId,
         }),
+        ...this.session.delegateProgressOf(item.id),
       ];
     }
     const outcome = subagentOutcomeOf(activity.kind);
@@ -1522,7 +1524,8 @@ export class CodexTurnDriver {
   /**
    * One reading of a SUB-AGENT's thread. Its spend is held on the session and
    * folded into the next ending of a turn of this conversation; meanwhile it
-   * rides the live plane like the parent's own.
+   * rides the live plane like the parent's own, and once codex has mapped its
+   * thread to a delegate, the delegate's card states the figures.
    */
   private onSubagentUsage(
     threadId: string,
@@ -1532,7 +1535,11 @@ export class CodexTurnDriver {
       return [];
     }
     const { previous } = this.session.subagentSpend.record(threadId, usage);
-    return this.spendEvents(spendBetween(usage, previous, null));
+    const parent = this.session.subagents.get(threadId);
+    return [
+      ...this.spendEvents(spendBetween(usage, previous, null)),
+      ...(parent === undefined ? [] : this.session.delegateProgressOf(parent)),
+    ];
   }
 
   /**

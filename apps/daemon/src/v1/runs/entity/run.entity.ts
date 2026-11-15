@@ -989,4 +989,14 @@ export class Run extends TimestampsEntity {
    */
   @Property({ type: 'text', nullable: true })
   unrecordedSpend: string | null = null;
+
+  /**
+   * JSON: launching tool call id → that delegate's figures over every model
+   * request it made (`agents/utils/delegate-spend.ts`), null when none was
+   * counted. The live plane carries them while the daemon runs; this copy is
+   * what the run-state read and a restarted daemon see. TEXT for the same
+   * additive schema sync as {@link unrecordedSpend}.
+   */
+  @Property({ type: 'text', nullable: true })
+  delegateSpend: string | null = null;
 }

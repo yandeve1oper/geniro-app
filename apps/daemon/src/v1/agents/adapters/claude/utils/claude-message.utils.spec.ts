@@ -3,11 +3,36 @@ import { describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../../adapter.types';
 import { catalogClaudePrices } from './__tests__/claude-list-prices';
 import {
+  ClaudeDelegateSettler,
+  readDelegateEnd,
+} from './claude-delegate-spend.utils';
+import {
   mapClaudeMessage,
   mapClaudeStreamEvent,
   mapClaudeThinkingTokens,
 } from './claude-message.utils';
 import { ClaudeSessionCostLedger } from './claude-usage.utils';
+
+/** End a delegate the way the driver's settler does, with no transcript on disk. */
+async function endDelegate(
+  ledger: ClaudeSessionCostLedger,
+  line: Record<string, unknown>,
+): Promise<AgentEvent[]> {
+  const launchOfTask = (taskId: string, toolCallId: string | null) =>
+    ledger.launchOfTask(taskId, toolCallId);
+  const end = readDelegateEnd(line, launchOfTask);
+  if (end === null) {
+    throw new Error('the line ends no delegate');
+  }
+  return new ClaudeDelegateSettler({
+    tracker: ledger.delegateSpend,
+    launchOfTask,
+    priceNow: (sessionId, spend) => ledger.delegates.priceNow(sessionId, spend),
+    record: (sessionId, delegateId, spend) =>
+      ledger.delegates.record(sessionId, delegateId, spend),
+    readTranscript: () => Promise.resolve(null),
+  }).settle(end);
+}
 
 /** A stream_event line as captured from a live claude-opus-5 turn. */
 const textDelta = (text: string): Record<string, unknown> => ({
@@ -1514,7 +1539,25 @@ describe('mapClaudeMessage — sub-agent origin', () => {
     expect(events.some((event) => event.type === 'context_progress')).toBe(
       false,
     );
+    expect(events.some((event) => event.type === 'usage_progress')).toBe(false);
     expect(events).toEqual([
+      {
+        type: 'delegate_progress',
+        delegateId: AGENT_TOOL_USE_ID,
+        figures: {
+          requests: 1,
+          inputTokens: 4,
+          outputTokens: 9,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 11_000,
+          contextTokens: 11_013,
+          model: null,
+          costUsd: null,
+          estimatedCostUsd: null,
+        },
+        final: false,
+        parentToolUseId: AGENT_TOOL_USE_ID,
+      },
       { type: 'text', text: 'looking', parentToolUseId: AGENT_TOOL_USE_ID },
     ]);
   });
@@ -2889,12 +2932,14 @@ describe('mapClaudeMessage — what a delegate spent, and what it cost', () => {
     },
   };
 
-  it('reads the delegate’s billing breakdown off the line that closes its call', () => {
+  it('counts the closing request as ONE of the delegate’s requests, never as its whole spend', () => {
     const events = mapClaudeMessage(
       delegateReturn,
       new ClaudeSessionCostLedger(LIST_PRICES),
     );
 
+    // `usage` and `totalTokens` on this line are the LAST request's only, so
+    // the declaration states none of them as the delegate's spend.
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'subagent_info',
@@ -2902,19 +2947,47 @@ describe('mapClaudeMessage — what a delegate spent, and what it cost', () => {
         kind: 'general-purpose',
         model: 'claude-opus-5[1m]',
         durationMs: 1761,
-        tokens: 29_388,
+        tokens: null,
         toolUses: 0,
-        // The four kinds, which is the whole reason this channel is read at
-        // all: `task_notification` reports the 29,388 roll-up and no split,
-        // and a roll-up cannot be priced when its parts bill 12.5x apart.
-        inputTokens: 2,
-        outputTokens: 4,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 29_382,
-        // Not yet: no line so far has said what any of it was charged at.
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
         costUsd: null,
       }),
     );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'delegate_progress',
+        delegateId: 'toolu_016irjy3GNmGTa2RzaFCy6HM',
+        final: false,
+        figures: expect.objectContaining({
+          requests: 1,
+          inputTokens: 2,
+          outputTokens: 4,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 29_382,
+          contextTokens: 29_388,
+          model: 'claude-opus-5[1m]',
+          costUsd: null,
+        }),
+      }),
+    );
+  });
+
+  it('does not price a delegate that has not ENDED, whatever result line arrives', () => {
+    const ledger = new ClaudeSessionCostLedger(LIST_PRICES);
+    mapClaudeMessage(delegateReturn, ledger);
+
+    const events = mapClaudeMessage(turnResult, ledger);
+
+    expect(
+      events.some(
+        (event) =>
+          (event.type === 'subagent_info' && event.costUsd !== null) ||
+          event.type === 'delegate_progress',
+      ),
+    ).toBe(false);
   });
 
   it('still closes the launching call, which is the row the block hangs on', () => {
@@ -2931,9 +3004,10 @@ describe('mapClaudeMessage — what a delegate spent, and what it cost', () => {
     );
   });
 
-  it('prices the delegate on the result line, calibrated against that turn', () => {
+  it('prices the delegate on the result line, calibrated against that turn', async () => {
     const ledger = new ClaudeSessionCostLedger(LIST_PRICES);
     mapClaudeMessage(delegateReturn, ledger);
+    await endDelegate(ledger, delegateReturn);
 
     const events = mapClaudeMessage(turnResult, ledger);
 
@@ -2963,12 +3037,13 @@ describe('mapClaudeMessage — what a delegate spent, and what it cost', () => {
     expect(events.some((event) => event.type === 'subagent_info')).toBe(false);
   });
 
-  it('prices a delegate on ITS OWN session’s result under fan-out, never a neighbour’s', () => {
+  it('prices a delegate on ITS OWN session’s result under fan-out, never a neighbour’s', async () => {
     // One adapter — and so one ledger — maps every claude process a team
     // fans out to. Session B's `result` landing between A's delegate return
     // and A's own `result` must not price A's delegate into B's stream.
     const ledger = new ClaudeSessionCostLedger(LIST_PRICES);
     mapClaudeMessage(delegateReturn, ledger);
+    await endDelegate(ledger, delegateReturn);
 
     const neighbour = mapClaudeMessage(
       { ...turnResult, session_id: 'another-process-session' },
@@ -3035,9 +3110,10 @@ describe('mapClaudeMessage — what a delegate spent, and what it cost', () => {
     expect(events.some((event) => event.type === 'subagent_info')).toBe(false);
   });
 
-  it('prices a delegate whose turn then FAILED — it still ran and still billed', () => {
+  it('prices a delegate whose turn then FAILED — it still ran and still billed', async () => {
     const ledger = new ClaudeSessionCostLedger(LIST_PRICES);
     mapClaudeMessage(delegateReturn, ledger);
+    await endDelegate(ledger, delegateReturn);
 
     const events = mapClaudeMessage(
       { ...turnResult, is_error: true, terminal_reason: 'api_error' },

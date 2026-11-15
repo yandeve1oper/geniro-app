@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import type { AgentKind } from '../../runs/runs.types';
+import type { DelegateFigures } from '../adapters/adapter.types';
 import { type RunDeltaEvent, SINGLE_AGENT_NODE } from '../chat.types';
 import { AgentEventBus } from './agent-events.bus';
 import { contextWindowKey, ContextWindowStore } from './context-window.store';
+import { DelegateSpendStore } from './delegate-spend.store';
 import { UnrecordedSpendStore } from './unrecorded-spend.store';
 
 /**
@@ -90,6 +92,12 @@ interface LiveState {
   composingTool: string | null;
   /** Argument bytes written so far in the CURRENT composition. */
   composingBytes: number;
+  /**
+   * The delegates this owner launched, by launching tool call id, each at its
+   * latest figures. REPLACED per delegate, never added: the CLI's own running
+   * total already counts what its delegates spent.
+   */
+  delegates: Map<string, DelegateFigures>;
 }
 
 /**
@@ -181,6 +189,8 @@ export class PartialStreamService {
      * no row records yet (`Run.unrecordedSpend`).
      */
     private readonly spendStore: UnrecordedSpendStore,
+    /** The durable twin of every delegate's figures — `Run.delegateSpend`. */
+    private readonly delegateSpend: DelegateSpendStore,
   ) {}
 
   /** Extend an owner's tail and publish it. */
@@ -510,6 +520,50 @@ export class PartialStreamService {
   }
 
   /**
+   * One delegate's figures over every request it has made so far — REPLACED per
+   * delegate id, and never added to the owner's spend, which already includes
+   * what its delegates cost.
+   *
+   * A reading equal to the one held is not published again. A final reading is
+   * still handed to the store even when unchanged, so its figures reach the row
+   * at once rather than when the coalesced write comes round.
+   */
+  delegate(
+    runId: string,
+    ownerKey: string,
+    memberId: string | null,
+    event: { delegateId: string; figures: DelegateFigures; final: boolean },
+  ): void {
+    try {
+      const state = this.stateOf(runId, ownerKey);
+      const held = state.delegates.get(event.delegateId);
+      if (event.final) {
+        // An ended delegate leaves the live plane: its closing `subagent_info`
+        // and the run row carry it from here, and an owner kept on the plane
+        // only for finished delegates would read as still at work.
+        this.delegateSpend.set(runId, event.delegateId, event.figures, true);
+        if (state.delegates.delete(event.delegateId)) {
+          this.publish(this.eventOf(runId, ownerKey, memberId, state));
+        }
+        return;
+      }
+      if (held !== undefined && sameFigures(held, event.figures)) {
+        return;
+      }
+      state.delegates.set(event.delegateId, event.figures);
+      this.delegateSpend.set(
+        runId,
+        event.delegateId,
+        event.figures,
+        event.final,
+      );
+      this.publish(this.eventOf(runId, ownerKey, memberId, state));
+    } catch (err) {
+      this.warn('delegate', err);
+    }
+  }
+
+  /**
    * This owner's turn is OVER — nothing it spent is unrecorded any more, or
    * what is will be recorded by a line this owner no longer answers for.
    *
@@ -742,23 +796,29 @@ export class PartialStreamService {
   private stateOf(runId: string, ownerKey: string): LiveState {
     const byOwner = this.tails.get(runId) ?? new Map<string, LiveState>();
     this.tails.set(runId, byOwner);
-    const state = byOwner.get(ownerKey) ?? {
-      text: '',
-      thinkingStretch: 0,
-      thinkingCurrent: null,
-      thinkingText: '',
-      thinkingSince: null,
-      contextTokens: null,
-      spentInputTokens: null,
-      spentOutputTokens: null,
-      spentCacheReadTokens: null,
-      spentCostUsd: null,
-      spentEstimatedCostUsd: null,
-      composingTool: null,
-      composingBytes: 0,
-    };
+    const state = byOwner.get(ownerKey) ?? newLiveState();
     byOwner.set(ownerKey, state);
     return state;
+  }
+
+  /**
+   * Keep an owner's still-running delegates when its turn ends: a background
+   * delegate outlives the turn that launched it, and every event for the owner
+   * replaces the whole record it carries.
+   */
+  private retainDelegates(
+    runId: string,
+    ownerKey: string,
+    state: LiveState,
+  ): void {
+    if (state.delegates.size === 0) {
+      return;
+    }
+    const kept = newLiveState();
+    kept.delegates = state.delegates;
+    const byOwner = this.tails.get(runId) ?? new Map<string, LiveState>();
+    byOwner.set(ownerKey, kept);
+    this.tails.set(runId, byOwner);
   }
 
   /** Project the internal state onto the wire shape clients actually read. */
@@ -797,6 +857,9 @@ export class PartialStreamService {
       // count is looking at a live composition, never at the leftovers of one.
       composingBytes:
         state.composingTool === null ? null : state.composingBytes,
+      ...(state.delegates.size > 0
+        ? { delegates: Object.fromEntries(state.delegates) }
+        : {}),
     };
   }
 
@@ -848,6 +911,7 @@ export class PartialStreamService {
         return null;
       }
       this.tails.get(runId)?.delete(ownerKey);
+      this.retainDelegates(runId, ownerKey, state);
       this.spendStore.set(runId, ownerKey, null);
       // Announced, not merely forgotten. These words are about to be written as
       // a durable `partial` item; without an event saying the live copy is gone
@@ -922,11 +986,8 @@ export class PartialStreamService {
   clearRun(runId: string): void {
     try {
       this.spendStore.clearRun(runId);
-      const byOwner = this.tails.get(runId);
+      const byOwner = this.tails.get(runId) ?? new Map<string, LiveState>();
       this.tails.delete(runId);
-      if (!byOwner) {
-        return;
-      }
       for (const [ownerKey, state] of byOwner) {
         this.publish(
           this.eventOf(runId, ownerKey, nodeIdOfOwner(ownerKey), {
@@ -940,7 +1001,9 @@ export class PartialStreamService {
             spentEstimatedCostUsd: null,
           }),
         );
+        this.retainDelegates(runId, ownerKey, state);
       }
+      this.delegateSpend.flushRun(runId);
     } catch (err) {
       this.warn('clearRun', err);
     }
@@ -1086,4 +1149,29 @@ function addSpend(
     return total;
   }
   return (total ?? 0) + part;
+}
+
+function newLiveState(): LiveState {
+  return {
+    text: '',
+    thinkingStretch: 0,
+    thinkingCurrent: null,
+    thinkingText: '',
+    thinkingSince: null,
+    contextTokens: null,
+    spentInputTokens: null,
+    spentOutputTokens: null,
+    spentCacheReadTokens: null,
+    spentCostUsd: null,
+    spentEstimatedCostUsd: null,
+    composingTool: null,
+    composingBytes: 0,
+    delegates: new Map(),
+  };
+}
+
+function sameFigures(a: DelegateFigures, b: DelegateFigures): boolean {
+  return (Object.keys(a) as (keyof DelegateFigures)[]).every(
+    (key) => a[key] === b[key],
+  );
 }

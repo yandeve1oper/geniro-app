@@ -6,6 +6,7 @@ import type {
   AgentTurnInput,
   ApprovalOption,
   BackgroundUnitOutcome,
+  DelegateFigures,
   FollowUpMessage,
   TurnDriver,
   TurnIo,
@@ -448,13 +449,56 @@ export class CodexSession implements TurnDriver {
     } else {
       this.untrackedSubagents.delete(parent);
     }
-    return [subagentState(parent, { open: false, outcome })];
+    const figures = this.delegateFiguresOf(parent);
+    if (figures === null) {
+      return [subagentState(parent, { open: false, outcome })];
+    }
+    return [
+      { type: 'delegate_progress', delegateId: parent, figures, final: true },
+      subagentState(parent, { open: false, outcome, figures }),
+    ];
   }
 
   /** Mark a spawning call's delegate as running, so its ending is owed. */
   openSubagent(spawnItemId: string): void {
     this.openSubagents.add(spawnItemId);
     this.untrackedSubagents.delete(spawnItemId);
+  }
+
+  /**
+   * The cumulative figures of one delegate: every thread codex mapped to its
+   * spawning call, summed. Null until one of them has been read.
+   */
+  delegateFiguresOf(spawnItemId: string): DelegateFigures | null {
+    const threadIds = [...this.subagents]
+      .filter(([, parent]) => parent === spawnItemId)
+      .map(([threadId]) => threadId);
+    return this.subagentSpend.delegateFigures(
+      threadIds,
+      (model) => this.listPriceOf(model),
+      this.threadModel,
+    );
+  }
+
+  /**
+   * A delegate's figures so far, as a live row, while it is open. A reading
+   * that lands after its end is not a live figure any more.
+   */
+  delegateProgressOf(spawnItemId: string): AgentEvent[] {
+    if (!this.openSubagents.has(spawnItemId)) {
+      return [];
+    }
+    const figures = this.delegateFiguresOf(spawnItemId);
+    return figures === null
+      ? []
+      : [
+          {
+            type: 'delegate_progress',
+            delegateId: spawnItemId,
+            figures,
+            final: false,
+          },
+        ];
   }
 
   /**

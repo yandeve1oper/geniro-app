@@ -179,6 +179,10 @@ import {
 } from './utils/claude-cost-state.utils';
 import { ClaudeCostTotalsFile } from './utils/claude-cost-totals.utils';
 import {
+  ClaudeDelegateSettler,
+  readClaudeDelegateTranscript,
+} from './utils/claude-delegate-spend.utils';
+import {
   fastModeParameter,
   isFastModeCapable,
 } from './utils/claude-fast-mode.utils';
@@ -2667,6 +2671,7 @@ export class ClaudeAdapter extends AgentAdapter {
         onMessage: (obj) => this.mapMessage(obj),
       };
     }
+    const delegateSettler = this.delegateSettlerFor(input);
     if (!this.waitsForMcpServers(input)) {
       // The base's stateless literal, which has no `awaitPromptReady` at all —
       // absence is what keeps the opening write SYNCHRONOUS for a turn with
@@ -2675,7 +2680,14 @@ export class ClaudeAdapter extends AgentAdapter {
       const modelMismatch = new ClaudeModelMismatchNotice(input.model);
       return {
         ...driver,
-        onMessage: (obj) => modelMismatch.onMessage(obj, driver.onMessage(obj)),
+        onStdinReady: (io) => {
+          delegateSettler.attach(io);
+          driver.onStdinReady?.(io);
+        },
+        onMessage: (obj) => {
+          delegateSettler.observe(obj);
+          return modelMismatch.onMessage(obj, driver.onMessage(obj));
+        },
       };
     }
     return new ClaudeTurnDriver({
@@ -2684,6 +2696,28 @@ export class ClaudeAdapter extends AgentAdapter {
       buildApprovalResponse: (id, allow, updatedInput, option) =>
         this.buildApprovalResponse(id, allow, updatedInput, option),
       logger: this.options.logger,
+      delegateSettler,
+    });
+  }
+
+  /** One process's delegate settler, reading transcripts under its profile. */
+  private delegateSettlerFor(input: AgentTurnInput): ClaudeDelegateSettler {
+    const profileDir = this.profileDir(input.configDir ?? null);
+    return new ClaudeDelegateSettler({
+      tracker: this.costLedger.delegateSpend,
+      launchOfTask: (taskId, toolCallId) =>
+        this.costLedger.launchOfTask(taskId, toolCallId),
+      priceNow: (sessionId, spend) =>
+        this.costLedger.delegates.priceNow(sessionId, spend),
+      record: (sessionId, delegateId, spend) =>
+        this.costLedger.delegates.record(sessionId, delegateId, spend),
+      readTranscript: (sessionId, agentId) =>
+        readClaudeDelegateTranscript(
+          profileDir,
+          sessionId,
+          input.cwd ?? null,
+          agentId,
+        ),
     });
   }
 

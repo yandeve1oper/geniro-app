@@ -6,6 +6,7 @@ import type { AgentKind } from '../../runs/runs.types';
 import type {
   AgentApprovalProbeSchema,
   AgentOptionSpecSchema,
+  DelegateFigures,
   ProbeStatusSchema,
   PromptCacheTtlReason,
 } from '../chat.types';
@@ -84,6 +85,8 @@ export interface BackgroundUnitUsage {
   /** How long it ran, as the CLI measured it. */
   durationMs: number | null;
 }
+
+export type { DelegateFigures } from '../chat.types';
 
 /**
  * How ONE agent inside a dynamic workflow is doing, in this app's own words.
@@ -995,6 +998,24 @@ type AgentEventBody =
     }
   | {
       /**
+       * One delegate's figures over every model request it has made so far — a
+       * LEVEL the consumer replaces, never adds.
+       *
+       * EPHEMERAL on the item plane: the live channel carries it, the run row
+       * keeps the latest copy (`Run.delegateSpend`), and the delegate's closing
+       * `subagent_info` writes the final figures durably. Never part of the
+       * owner's own spend, which the CLI already reports with its delegates in
+       * it.
+       */
+      type: 'delegate_progress';
+      /** The launching tool call's id — the delegate's card id. */
+      delegateId: string;
+      figures: DelegateFigures;
+      /** The delegate's end was seen, so these are its final figures. */
+      final: boolean;
+    }
+  | {
+      /**
        * What the process has spent since its last `result` line, in dollars,
        * as the CLI's own cost ledger states it: the part of a running turn no
        * durable row carries yet.
@@ -1380,6 +1401,24 @@ type AgentEventBody =
        * must render the absence as "not shown", never as a free delegate.
        */
       costUsd: number | null;
+      /**
+       * {@link costUsd} at the list rate alone, for a delegate no `result` line
+       * has calibrated yet. Absent on rows written before it existed.
+       */
+      estimatedCostUsd?: number | null;
+      /**
+       * Model requests the delegate made — one per response, however many
+       * stream lines a response was split into.
+       */
+      requests?: number | null;
+      /** The four token kinds of the delegate's LATEST request, summed. */
+      contextTokens?: number | null;
+      /**
+       * Present when {@link tokens} and the four kinds sum EVERY request the
+       * delegate made. Rows written before it describe the last request only,
+       * which is what the renderer tells them apart by.
+       */
+      cumulative?: true;
       /**
        * {@link AdapterConfig.subagents.stepsUnavailableReason} — why this
        * delegate's own conversation is absent. Null for a CLI that streams it.

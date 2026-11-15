@@ -428,11 +428,22 @@ export const historyQuerySchema = z
      * what an opened call card reads. Never together with `conversation`.
      */
     call: z.string().min(1).max(200).optional(),
+    /**
+     * Only one delegate's own rows — those carrying this launching tool call
+     * id as `parentToolUseId` — what an opened sub-agent card reads when its
+     * steps fall outside the loaded window. Never with `conversation` or
+     * `call`.
+     */
+    delegate: z.string().min(1).max(200).optional(),
   })
   .refine(
-    (query) => query.conversation === undefined || query.call === undefined,
+    (query) =>
+      [query.conversation, query.call, query.delegate].filter(
+        (filter) => filter !== undefined,
+      ).length <= 1,
     {
-      message: 'conversation and call name two different conversations',
+      message:
+        'conversation, call and delegate each name a different conversation',
     },
   );
 export class HistoryQueryDto extends createZodDto(historyQuerySchema) {}

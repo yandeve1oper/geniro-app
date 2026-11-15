@@ -974,6 +974,44 @@ export class RunDao extends BaseDao<Run> {
     return row?.unrecordedSpend ?? null;
   }
 
+  /** Replace a run's {@link Run.delegateSpend}, leaving `updatedAt` alone. */
+  async setDelegateSpend(
+    runId: string,
+    value: string | null,
+    txEm?: EntityManager,
+  ): Promise<void> {
+    await this.getRepo(txEm).nativeUpdate(
+      { id: runId },
+      { delegateSpend: value },
+    );
+  }
+
+  /** One run's {@link Run.delegateSpend}, or null for a run that is gone. */
+  async delegateSpendOf(
+    runId: string,
+    txEm?: EntityManager,
+  ): Promise<string | null> {
+    const row = await this.getRepo(txEm).findOne(
+      { id: runId },
+      { fields: ['delegateSpend'], disableIdentityMap: true },
+    );
+    return row?.delegateSpend ?? null;
+  }
+
+  /** Every run with delegate figures — what the boot rehydration seeds from. */
+  async listRunsWithDelegateSpend(
+    txEm?: EntityManager,
+  ): Promise<Pick<Run, 'id' | 'delegateSpend'>[]> {
+    const rows = await this.getRepo(txEm).find(
+      { delegateSpend: { $ne: null } },
+      { fields: ['id', 'delegateSpend'], disableIdentityMap: true },
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      delegateSpend: row.delegateSpend,
+    }));
+  }
+
   /** Every run with spend outstanding — what the boot rehydration seeds from. */
   async listRunsWithUnrecordedSpend(
     txEm?: EntityManager,

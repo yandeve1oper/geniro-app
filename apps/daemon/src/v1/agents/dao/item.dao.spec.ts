@@ -18,7 +18,7 @@ import { Item } from '../../runs/entity/item.entity';
 import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
 import type { ItemKind } from '../../runs/runs.types';
-import type { ChatTextDatabase, SeqRange } from '../chat.types';
+import type { ChatTextDatabase, HistoryWindow, SeqRange } from '../chat.types';
 import { PULL_REQUEST_NAMING_KINDS } from '../utils/pull-request-capture';
 import { ItemDao } from './item.dao';
 import { RunDao } from './run.dao';
@@ -534,6 +534,115 @@ describe('ItemDao (in-memory sqlite)', () => {
       expect(items.map((i) => i.runId)).toEqual(['run-b', 'run-b']);
       expect(items.map((i) => i.seq)).toEqual([0, 1]);
     });
+  });
+
+  describe('one delegate of a run', () => {
+    /**
+     * A run with two delegates (`toolu_a`, `toolu_b`) and the launching agent's
+     * own rows. The copied `parentToolUseId` column is written only on a stamped
+     * run; an unstamped one carries the id in its payload alone.
+     */
+    async function delegateRun(runId: string, stamped: boolean): Promise<void> {
+      await new RunDao(orm.em.fork()).create({
+        id: runId,
+        status: 'running',
+        teamId: null,
+      });
+      if (!stamped) {
+        await orm.em
+          .fork()
+          .nativeUpdate(Run, { id: runId }, { payloadRefsVersion: null });
+      }
+      const at = new Date(Date.UTC(2026, 9, 27));
+      const row = (
+        seq: number,
+        kind: ItemKind,
+        parent: string | null,
+        role = 'assistant',
+      ) => ({
+        id: `${runId}-${seq}`,
+        runId,
+        seq,
+        kind,
+        role,
+        payload: JSON.stringify(
+          parent === null
+            ? { text: `m${seq}` }
+            : { text: `m${seq}`, parentToolUseId: parent },
+        ),
+        memberId: 'eng',
+        inCall: 'call-1',
+        parentToolUseId: stamped ? parent : null,
+        createdAt: at,
+        updatedAt: at,
+      });
+      await orm.em
+        .fork()
+        .insertMany(Item, [
+          row(1, 'tool_call', 'toolu_a'),
+          row(2, 'message', 'toolu_a'),
+          row(3, 'message', 'toolu_b'),
+          row(4, 'message', null),
+          row(5, 'message', 'toolu_a', 'user'),
+          row(6, 'reasoning', 'toolu_a'),
+          row(7, 'message', 'toolu_a'),
+          row(8, 'tool_result', 'toolu_a'),
+          row(9, 'message', 'toolu_b'),
+          row(10, 'message', 'toolu_a'),
+        ]);
+    }
+
+    const seqsOf = (rows: readonly Item[]) => rows.map((row) => row.seq);
+
+    it.each<[string, boolean]>([
+      ['stamped', true],
+      ['unstamped', false],
+    ])(
+      'reads only one delegate’s rows of a %s run, the window keeping its newest or oldest rows',
+      async (label, stamped) => {
+        const runId = `run-${label}`;
+        await delegateRun(runId, stamped);
+        const delegate = (
+          delegateId: string,
+          afterSeq = -1,
+          window?: HistoryWindow,
+        ) =>
+          dao
+            .getByRun(runId, afterSeq, undefined, window, undefined, delegateId)
+            .then(seqsOf);
+
+        expect(await delegate('toolu_a')).toEqual([1, 2, 5, 6, 7, 8, 10]);
+        expect(await delegate('toolu_b')).toEqual([3, 9]);
+        expect(await delegate('toolu_none')).toEqual([]);
+        expect(await delegate('toolu_a', 5)).toEqual([6, 7, 8, 10]);
+        expect(await delegate('toolu_a', -1, { limit: 3 })).toEqual([7, 8, 10]);
+        expect(
+          await delegate('toolu_a', -1, { limit: 2, take: 'oldest' }),
+        ).toEqual([1, 2]);
+        expect(
+          await delegate('toolu_a', 5, { limit: 2, take: 'oldest' }),
+        ).toEqual([6, 7]);
+        expect(
+          await delegate('toolu_a', -1, { limit: 2, beforeSeq: 8 }),
+        ).toEqual([6, 7]);
+      },
+    );
+
+    it.each<[string, boolean]>([
+      ['stamped', true],
+      ['unstamped', false],
+    ])(
+      'counts each delegate’s assistant messages of a %s run up to maxSeq, reasoning and user rows aside',
+      async (label, stamped) => {
+        const runId = `run-${label}`;
+        await delegateRun(runId, stamped);
+        const counts = async (maxSeq: number) =>
+          Object.fromEntries(await dao.delegateMessageCounts(runId, maxSeq));
+
+        expect(await counts(100)).toEqual({ toolu_a: 3, toolu_b: 2 });
+        expect(await counts(9)).toEqual({ toolu_a: 2, toolu_b: 2 });
+      },
+    );
   });
 
   describe('maxSeq', () => {

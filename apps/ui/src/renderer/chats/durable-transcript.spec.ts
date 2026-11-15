@@ -220,6 +220,7 @@ describe('daemon subagent lifecycle', () => {
           launchSeq: 1,
           toolCalls: 0,
           startedAt: launch.createdAt,
+          ...UNMEASURED_FIGURES,
         },
       ],
     };
@@ -308,6 +309,19 @@ describe('daemon subagent lifecycle', () => {
   });
 });
 
+const UNMEASURED_FIGURES = {
+  messages: 0,
+  requests: null,
+  inputTokens: null,
+  outputTokens: null,
+  cacheReadTokens: null,
+  cacheCreationTokens: null,
+  contextTokens: null,
+  costUsd: null,
+  estimatedCostUsd: null,
+  cumulative: false,
+};
+
 function delegateState(
   status: RunDelegateState['status'],
   processEnded = false,
@@ -323,6 +337,7 @@ function delegateState(
     launchSeq: 1,
     toolCalls: 0,
     startedAt: '2026-09-14T10:00:00.000Z',
+    ...UNMEASURED_FIGURES,
   };
 }
 
@@ -391,6 +406,120 @@ describe('withDaemonStartedCalls', () => {
         }),
       ),
     ).toMatchObject({ queued: true });
+  });
+});
+
+describe('the daemon’s figures on a delegate', () => {
+  const launch = row(
+    'launch',
+    'tool_call',
+    { id: 'delegate', name: 'Task', input: { description: 'Review' } },
+    1,
+  );
+  const declared = row(
+    'declared',
+    'subagent_info',
+    { id: 'delegate', requests: 9, inputTokens: 90, costUsd: 0.1 },
+    2,
+  );
+  const rows = [launch, declared];
+  const withFigures = (cumulative: boolean) => ({
+    throughSeq: 2,
+    delegates: [
+      {
+        ...delegateState('completed'),
+        requests: 4,
+        inputTokens: 400,
+        outputTokens: 40,
+        cacheReadTokens: 900,
+        cacheCreationTokens: 0,
+        contextTokens: 1_300,
+        costUsd: 0.2,
+        estimatedCostUsd: 0.25,
+        cumulative,
+      },
+    ],
+  });
+  const blockOf = (state: ReturnType<typeof withFigures>) => {
+    const [block] = collectSubagentBlocks(
+      applyDaemonReadings(
+        foldOf(rows, true),
+        daemonSubagentReadings(state, rows),
+      ),
+    );
+    return block!;
+  };
+
+  it('carries the daemon’s figures, and its message count with the window’s rows above the read added', () => {
+    const readings = daemonSubagentReadings(
+      {
+        throughSeq: 3,
+        delegates: [
+          {
+            ...withFigures(true).delegates[0]!,
+            messages: 2,
+          },
+        ],
+      },
+      [
+        launch,
+        {
+          ...row(
+            'at-read',
+            'message',
+            { text: 'at the read', parentToolUseId: 'delegate' },
+            3,
+          ),
+          role: 'assistant',
+        },
+        {
+          ...row(
+            'after-read',
+            'message',
+            { text: 'after the read', parentToolUseId: 'delegate' },
+            4,
+          ),
+          role: 'assistant',
+        },
+        {
+          ...row(
+            'prompt',
+            'message',
+            { text: 'the prompt', parentToolUseId: 'delegate' },
+            5,
+          ),
+          role: 'user',
+        },
+      ],
+    );
+
+    expect(readings.get('delegate')).toMatchObject({
+      requests: 4,
+      inputTokens: 400,
+      outputTokens: 40,
+      cacheReadTokens: 900,
+      cacheCreationTokens: 0,
+      contextTokens: 1_300,
+      costUsd: 0.2,
+      estimatedCostUsd: 0.25,
+      cumulative: true,
+      messages: 3,
+    });
+  });
+
+  it('replaces the row-derived figures only with a reading that sums every request', () => {
+    expect(blockOf(withFigures(true))).toMatchObject({
+      requests: 4,
+      inputTokens: 400,
+      costUsd: 0.2,
+      cumulative: true,
+    });
+    expect(blockOf(withFigures(false))).toMatchObject({
+      requests: 9,
+      inputTokens: 90,
+      costUsd: 0.1,
+      cumulative: false,
+    });
   });
 });
 

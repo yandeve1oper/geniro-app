@@ -20,6 +20,7 @@ import {
   CLAUDE_MCP_RECONNECT_FAILED_MESSAGE,
   CLAUDE_MCP_RECONNECTED_MESSAGE,
 } from './claude.const';
+import type { ClaudeDelegateSettler } from './utils/claude-delegate-spend.utils';
 import {
   type ClaudeMcpStatusRow,
   mcpReadingKey,
@@ -65,6 +66,8 @@ export interface ClaudeTurnDriverDeps {
   ) => string | undefined;
   /** Sink for the gate's account of itself; silent by default. */
   logger?: { warn(message: string): void; debug?(message: string): void };
+  /** Settles each delegate's figures from its own transcript as it ends. */
+  delegateSettler?: ClaudeDelegateSettler;
   /** Injected so a spec can run the gate's whole loop in no wall-clock time. */
   now?: () => number;
   delay?: (ms: number) => Promise<void>;
@@ -143,6 +146,7 @@ export class ClaudeTurnDriver implements TurnDriver {
    */
   async awaitPromptReady(io: TurnIo): Promise<void> {
     this.io = io;
+    this.deps.delegateSettler?.attach(io);
     const now = this.deps.now ?? Date.now;
     const startedAt = now();
     const ceiling = startedAt + CLAUDE_MCP_READY_MAX_WAIT_MS;
@@ -278,11 +282,13 @@ export class ClaudeTurnDriver implements TurnDriver {
 
   onStdinReady(io: TurnIo): void {
     this.io = io;
+    this.deps.delegateSettler?.attach(io);
   }
 
   onMessage(obj: unknown): AgentEvent[] {
     // Recorded, never consumed: the line still reaches the mapper below.
     this.trackHook(obj);
+    this.deps.delegateSettler?.observe(obj);
     const open = this.openPoll;
     if (open) {
       const reading = readMcpStatusReply(obj, open.id);

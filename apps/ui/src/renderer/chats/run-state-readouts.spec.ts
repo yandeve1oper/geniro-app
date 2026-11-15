@@ -29,6 +29,16 @@ const delegate = (
   launchSeq: 1,
   toolCalls: 0,
   startedAt: '2026-10-01T00:00:00.000Z',
+  messages: 0,
+  requests: null,
+  inputTokens: null,
+  outputTokens: null,
+  cacheReadTokens: null,
+  cacheCreationTokens: null,
+  contextTokens: null,
+  costUsd: null,
+  estimatedCostUsd: null,
+  cumulative: false,
   ...extra,
 });
 
