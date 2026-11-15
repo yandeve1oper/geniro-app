@@ -357,6 +357,7 @@ import {
   indexCallBlocks,
   openCallBlocks,
   resolveCallChains,
+  runningCallCallees,
   type SubagentBlockEntry,
   subagentNamed,
   subagentTitle,
@@ -6614,6 +6615,10 @@ export function Chats({
         : null,
     [activeRun, activeRunStatus, items],
   );
+  const daemonOpenCalls = useMemo(
+    () => runningCallCallees(runState.calls),
+    [runState.calls],
+  );
   const transcriptEntries = useMemo(
     () =>
       // No live rows over a thread whose first page has not landed. The
@@ -6629,8 +6634,16 @@ export function Chats({
             liveText,
             workingAgents,
             activeRun?.id ?? null,
+            daemonOpenCalls,
           ),
-    [loadingHistory, durableEntries, liveText, workingAgents, activeRun?.id],
+    [
+      loadingHistory,
+      durableEntries,
+      liveText,
+      workingAgents,
+      activeRun?.id,
+      daemonOpenCalls,
+    ],
   );
   useEffect(() => {
     drawnEntriesRef.current = transcriptEntries;
