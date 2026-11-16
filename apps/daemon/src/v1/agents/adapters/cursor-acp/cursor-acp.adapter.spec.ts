@@ -3916,6 +3916,47 @@ describe('CursorAcpAdapter misuse', () => {
         }).listModels({ configDir: null }),
       ).resolves.toEqual([]);
     });
+
+    it('logs why the probe failed before reporting nothing', async () => {
+      const groupSpawnFn = ((_command: string, _args: readonly string[]) => {
+        const child = fakeGroupChild(4242);
+        queueMicrotask(() => child.close(1));
+        return child.child;
+      }) as unknown as typeof spawn;
+      const warn = vi.fn();
+
+      await new CursorAcpAdapter({
+        vocabularyStore: freshVocabularyStore(),
+        groupSpawnFn,
+        logger: { warn },
+      }).listModels({ configDir: null });
+
+      expect(warn).toHaveBeenCalledWith(
+        'cursor-agent model probe got no answer: the CLI exited, could not start or ran past 15000 ms',
+      );
+    });
+
+    it('logs a reply that listed no models', async () => {
+      const { groupSpawnFn } = fakeAcpProbe(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          result: { sessionId: 's1', models: { availableModels: [] } },
+        })}\n`,
+      );
+      const warn = vi.fn();
+
+      await expect(
+        new CursorAcpAdapter({
+          vocabularyStore: freshVocabularyStore(),
+          groupSpawnFn,
+          logger: { warn },
+        }).listModels({ configDir: null }),
+      ).resolves.toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        'cursor-agent model probe: the reply listed no models',
+      );
+    });
   });
 
   describe('listModelEfforts + listModelContextWindows share one handshake', () => {

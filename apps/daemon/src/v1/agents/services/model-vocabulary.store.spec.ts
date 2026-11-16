@@ -151,6 +151,48 @@ describe('ModelVocabularyStore — what it serves', () => {
   });
 });
 
+describe('ModelVocabularyStore — the last answer under any version', () => {
+  it('serves an entry taken under another version of the CLI', () => {
+    seed({ [modelVocabularyKey(AGENT, MODEL, null)]: record() });
+    const store = new ModelVocabularyStore({ file, now: () => 1_000 });
+
+    expect(store.readAnyVersion(AGENT, MODEL, null, isText)).toBe(REPLY);
+    expect(store.readAnyVersion(AGENT, MODEL, '/profiles/work', isText)).toBe(
+      null,
+    );
+  });
+
+  it('stops serving once the backstop is reached', () => {
+    seed({ [modelVocabularyKey(AGENT, MODEL, null)]: record() });
+
+    expect(
+      new ModelVocabularyStore({ file, now: () => WEEK - 1 }).readAnyVersion(
+        AGENT,
+        MODEL,
+        null,
+        isText,
+      ),
+    ).toBe(REPLY);
+    expect(
+      new ModelVocabularyStore({ file, now: () => WEEK }).readAnyVersion(
+        AGENT,
+        MODEL,
+        null,
+        isText,
+      ),
+    ).toBeNull();
+  });
+
+  it('refuses a value whose shape has changed under it', () => {
+    seed({
+      [modelVocabularyKey(AGENT, MODEL, null)]: record({ value: { old: 1 } }),
+    });
+    const store = new ModelVocabularyStore({ file, now: () => 1_000 });
+
+    expect(store.readAnyVersion(AGENT, MODEL, null, isText)).toBeNull();
+  });
+});
+
 describe('ModelVocabularyStore — when it stops being trusted', () => {
   it('serves an aged entry AND asks to be refreshed behind it', () => {
     // The mechanism for every cause this app cannot observe — a plan change, a

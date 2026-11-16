@@ -1318,6 +1318,7 @@ export class CursorAcpAdapter extends AgentAdapter {
         homeDir: this.cursorOptions.homeDir,
         ...this.profileSeed(input.configDir),
       });
+      const timeoutMs = options.timeoutMs ?? CURSOR_MODEL_PROBE_TIMEOUT_MS;
       const stdout = await this.runCommand([...CURSOR_ACP_ARGS], {
         ...options,
         cwd,
@@ -1335,10 +1336,25 @@ export class CursorAcpAdapter extends AgentAdapter {
           [CURSOR_CONFIG_DIR_ENV]: profile,
           ...this.profileRunEnv(input.configDir),
         },
-        timeoutMs: options.timeoutMs ?? CURSOR_MODEL_PROBE_TIMEOUT_MS,
+        timeoutMs,
       });
-      return this.readModelProbe(stdout);
-    } catch {
+      if (stdout === null) {
+        this.options.logger?.warn(
+          `cursor-agent model probe got no answer: the CLI exited, could not start or ran past ${timeoutMs} ms`,
+        );
+        return [];
+      }
+      const models = this.readModelProbe(stdout);
+      if (models.length === 0) {
+        this.options.logger?.warn(
+          'cursor-agent model probe: the reply listed no models',
+        );
+      }
+      return models;
+    } catch (err) {
+      this.options.logger?.warn(
+        `cursor-agent model probe failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return [];
     } finally {
       if (cwd !== '') {
@@ -1807,13 +1823,7 @@ export class CursorAcpAdapter extends AgentAdapter {
     };
   }
 
-  private readModelProbe(stdout: string | null): AgentModel[] {
-    if (stdout === null) {
-      // A failed probe is an unknown vocabulary, not an empty one. Returning
-      // [] is what the picker renders as "default model only", which is the
-      // honest reading of "we could not ask".
-      return [];
-    }
+  private readModelProbe(stdout: string): AgentModel[] {
     // The ids come back BARE now (`claude-opus-5`, not the bracketed form) —
     // the probe speaks the same parameterized handshake a turn does, so what the
     // picker stores is what a turn can apply. That is also why no effort is read

@@ -223,6 +223,23 @@ export class ModelVocabularyStore {
     };
   }
 
+  readAnyVersion<T>(
+    agent: string,
+    model: string | null,
+    configDir: string | null,
+    isValid: (value: unknown) => value is T,
+  ): T | null {
+    const record = this.load().get(modelVocabularyKey(agent, model, configDir));
+    if (
+      record === undefined ||
+      this.now() - record.fetchedAt >= FRESH_FOR_MS ||
+      !isValid(record.value)
+    ) {
+      return null;
+    }
+    return record.value;
+  }
+
   /**
    * File what a CLI just answered.
    *

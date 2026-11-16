@@ -380,6 +380,115 @@ describe('ModelsService — an account change (`forgetAgent`)', () => {
   });
 });
 
+describe('ModelsService — a listing the CLI could not answer', () => {
+  it('asks again well inside the TTL after an empty listing', async () => {
+    let clock = 0;
+    const { models, cursor } = service({
+      ttlMs: 10 * 60_000,
+      now: () => clock,
+    });
+    const ask = vi
+      .spyOn(cursor, 'listModels')
+      .mockResolvedValueOnce([])
+      .mockResolvedValue(structuredClone(LISTED));
+
+    expect(await models.list('cursor-agent')).toEqual([]);
+    clock = 2 * 60_000;
+
+    expect(
+      (await models.list('cursor-agent')).map((model) => model.id),
+    ).toContain('claude-opus-5');
+    expect(ask).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps serving the last good list when a refresh comes back empty', async () => {
+    let clock = 0;
+    const store = new ModelVocabularyStore({
+      file: join(mkdtempSync(join(tmpdir(), 'geniro-models-')), 'v.json'),
+      now: () => clock,
+    });
+    store.remember('cursor-agent', null, null, '2026.08.11-e8db854', LISTED);
+    clock = 2 * 60 * 60_000;
+    const { models, cursor } = service({ now: () => clock }, store);
+    const ask = vi.spyOn(cursor, 'listModels').mockResolvedValue([]);
+
+    expect(
+      (await models.list('cursor-agent')).map((model) => model.id),
+    ).toContain('claude-opus-5');
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(
+      (await models.list('cursor-agent')).map((model) => model.id),
+    ).toContain('claude-opus-5');
+  });
+
+  it("serves the previous version's list when the first probe after an upgrade comes back empty, and files nothing", async () => {
+    let clock = 0;
+    const store = new ModelVocabularyStore({
+      file: join(mkdtempSync(join(tmpdir(), 'geniro-models-')), 'v.json'),
+      now: () => clock,
+    });
+    store.remember('cursor-agent', null, null, '2026.08.04-aaa8809', LISTED);
+    clock = 60_000;
+    const { models, cursor } = service({ now: () => clock }, store);
+    const ask = vi
+      .spyOn(cursor, 'listModels')
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        { id: 'claude-opus-6', label: 'Claude Opus 6', source: 'cli' },
+      ]);
+
+    expect(
+      (await models.list('cursor-agent')).map((model) => model.id),
+    ).toEqual(['claude-opus-5']);
+    expect(
+      store.read('cursor-agent', null, null, '2026.08.11-e8db854', isList),
+    ).toBeNull();
+
+    clock += 31_000;
+    expect(
+      (await models.list('cursor-agent')).map((model) => model.id),
+    ).toEqual(['claude-opus-6']);
+    expect(ask).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats a listing that threw like an empty one and asks again after the retry window', async () => {
+    let clock = 0;
+    const { models, cursor } = service({
+      ttlMs: 10 * 60_000,
+      now: () => clock,
+    });
+    const ask = vi
+      .spyOn(cursor, 'listModels')
+      .mockRejectedValueOnce(new Error('probe crashed'))
+      .mockResolvedValue(structuredClone(LISTED));
+
+    expect(await models.list('cursor-agent')).toEqual([]);
+    clock = 10_000;
+    expect(await models.list('cursor-agent')).toEqual([]);
+    expect(ask).toHaveBeenCalledTimes(1);
+    clock = 31_000;
+
+    expect(
+      (await models.list('cursor-agent')).map((model) => model.id),
+    ).toEqual(['claude-opus-5']);
+    expect(ask).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not ask again inside the retry window', async () => {
+    let clock = 0;
+    const { models, cursor } = service({ now: () => clock });
+    const ask = vi.spyOn(cursor, 'listModels').mockResolvedValue([]);
+
+    await models.list('cursor-agent');
+    clock = 10_000;
+    await models.list('cursor-agent');
+
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+});
+
 /** The store's shape guard, in miniature. */
 function isList(value: unknown): value is AgentModelWire[] {
   return Array.isArray(value);

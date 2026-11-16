@@ -27,6 +27,7 @@ interface CacheEntry {
   version: string | null;
   fetchedAt: number;
   models: AgentModelWire[];
+  ttlMs?: number;
 }
 
 /**
@@ -50,6 +51,8 @@ function cacheKey(kind: AgentKind, profile: string | null): string {
  * account changes, and asking cursor costs a process spawn.
  */
 const DEFAULT_TTL_MS = 10 * 60_000;
+
+const UNANSWERED_LISTING_RETRY_MS = 30_000;
 
 /**
  * The composer's model list, per agent kind.
@@ -186,7 +189,7 @@ export class ModelsService {
     if (
       cached &&
       cached.version === version &&
-      this.now() - cached.fetchedAt < this.ttlMs
+      this.now() - cached.fetchedAt < (cached.ttlMs ?? this.ttlMs)
     ) {
       return cached.models;
     }
@@ -308,7 +311,7 @@ export class ModelsService {
     // `generations` and `ModelVocabularyStore.epoch`.
     const generation = this.generations.get(kind) ?? 0;
     const askedAt = this.store.epoch(kind);
-    let models: AgentModelWire[];
+    let models: AgentModelWire[] = [];
     try {
       models = await adapter.listModels(
         { configDir: profile },
@@ -324,27 +327,44 @@ export class ModelsService {
         },
       );
     } catch (err) {
-      // An adapter must not throw here, but a picker with no rows is a dead
-      // control — keep the last good answer rather than propagate.
       this.logger.warn(
         `listing ${kind} models failed: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return cached?.models ?? [];
     }
     if ((this.generations.get(kind) ?? 0) !== generation) {
       // The account changed while this ask ran: whoever was waiting gets the
       // answer they asked for, and nothing of it is kept.
       return models;
     }
-    this.cache.set(key, { version, fetchedAt: this.now(), models });
-    // An EMPTY list is deliberately not filed: every adapter answers one when
-    // it could not ask, so storing it would re-serve "this CLI has no models"
-    // for as long as the entry stood — the same rule the cursor adapter applies
-    // to a reply that enumerated nothing.
-    if (models.length > 0) {
-      this.store.remember(kind, null, profile, version, models, askedAt);
+    if (models.length === 0) {
+      const lastGood = this.lastGoodModels(kind, key, profile, cached);
+      this.cache.set(key, {
+        version,
+        fetchedAt: this.now(),
+        models: lastGood,
+        ttlMs: UNANSWERED_LISTING_RETRY_MS,
+      });
+      return lastGood;
     }
+    this.cache.set(key, { version, fetchedAt: this.now(), models });
+    this.store.remember(kind, null, profile, version, models, askedAt);
     return models;
+  }
+
+  private lastGoodModels(
+    kind: AgentKind,
+    key: string,
+    profile: string | null,
+    cached: CacheEntry | undefined,
+  ): AgentModelWire[] {
+    const remembered = [this.cache.get(key), cached].find(
+      (entry) => entry !== undefined && entry.models.length > 0,
+    );
+    return (
+      remembered?.models ??
+      this.store.readAnyVersion(kind, null, profile, isModelList) ??
+      []
+    );
   }
 }
 
