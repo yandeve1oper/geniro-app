@@ -338,7 +338,16 @@ export type UsageReadChannel = 'live-process' | 'session-store' | 'account';
  */
 export type UsageReading =
   | { readonly kind: 'unavailable'; readonly reason: string }
-  | { readonly kind: 'reads'; readonly channel: UsageReadChannel };
+  | {
+      readonly kind: 'reads';
+      readonly channel: UsageReadChannel;
+      /**
+       * A `live-process` reading this CLI can also take from a short-lived
+       * process of its own when no live one is there to ask. Used only for the
+       * readout's refresh press, since each one spawns the CLI.
+       */
+      readonly oneShot?: true;
+    };
 
 /**
  * One line item of the context window, as the CLI itself accounts for it.
@@ -490,6 +499,12 @@ export interface AgentSessionReadInput {
   sessionId: string | null;
   /** The profile the run's agent runs under, null for the CLI's default. */
   configDir: string | null;
+  /**
+   * The caller permits starting a short-lived process of this CLI under
+   * `configDir` when there is no `live` one, for a CLI whose reading declares
+   * `oneShot`.
+   */
+  mayProbe?: boolean;
 }
 
 /** Durable identity used only to read a lost delegate's existing CLI record. */

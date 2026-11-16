@@ -108,6 +108,8 @@ function build(opts: {
   maxSeq?: number;
   readPlanLimits?: (input: {
     live: unknown;
+    configDir: string | null;
+    mayProbe?: boolean;
   }) => Promise<PlanLimitsWire | typeof NO_PLAN_LIMITS | null>;
   planReading?: UsageReading;
   /** Each run's profile — overrides `configDir`. */
@@ -596,6 +598,8 @@ describe('ChatMetricsService — one agent-to-agent call', () => {
       /** The callee's stored bill, per conversation. */
       polledSpend?: string;
       callDao?: CallContextDao;
+      /** The CLI's plan reading may come from a one-shot process. */
+      oneShotPlan?: boolean;
     } = {},
   ) {
     const peek = vi.fn().mockReturnValue(opts.live ?? null);
@@ -665,7 +669,11 @@ describe('ChatMetricsService — one agent-to-agent call', () => {
                 usage: {
                   unavailableReason: null,
                   breakdown: { kind: 'reads', channel: 'live-process' },
-                  planLimits: { kind: 'reads', channel: 'live-process' },
+                  planLimits: {
+                    kind: 'reads',
+                    channel: 'live-process',
+                    ...(opts.oneShotPlan ? { oneShot: true } : {}),
+                  },
                 },
               }),
               readContextUsage,
@@ -721,6 +729,33 @@ describe('ChatMetricsService — one agent-to-agent call', () => {
   }
 
   const PLAN: PlanLimitsWire = { plan: 'max', windows: [], estimated: false };
+
+  it('reads a team member’s plan from a one-shot process on a refresh while its own process is gone', async () => {
+    const built = buildCall({ oneShotPlan: true, plan: PLAN });
+
+    const metrics = await built.service.read('run-1', 'engineer', null, true);
+
+    expect(built.readPlanLimits).toHaveBeenCalledTimes(1);
+    expect(built.readPlanLimits.mock.calls[0]?.[0]).toMatchObject({
+      live: null,
+      mayProbe: true,
+    });
+    expect(metrics.plan).toEqual(PLAN);
+    expect(metrics.planTakenAt).not.toBeNull();
+  });
+
+  it('spawns no one-shot plan reading on a refresh of a conversation whose account is unknown', async () => {
+    const built = buildCall({
+      pooled: true,
+      inFlight: true,
+      liveAgent: AgentKind.Codex,
+      oneShotPlan: true,
+    });
+
+    await built.service.read('run-1', null, 'call-3', true);
+
+    expect(built.readPlanLimits).not.toHaveBeenCalled();
+  });
 
   const billed = (cents: number, spawnedBy?: string) => ({
     settled: { '2026-11-05|model': [cents, 1] },
@@ -2188,5 +2223,201 @@ describe('ChatMetricsService — plan limits are the ACCOUNT’s', () => {
     const sameAccount = await service.read('run-2');
 
     expect(sameAccount.plan?.windows[0]?.percent).toBe(100);
+  });
+
+  describe('a refresh with no live agent on the account', () => {
+    type PlanInput = {
+      live: unknown;
+      configDir: string | null;
+      mayProbe?: boolean;
+    };
+    const ONE_SHOT: UsageReading = {
+      kind: 'reads',
+      channel: 'live-process',
+      oneShot: true,
+    };
+
+    it('takes the reading from a one-shot process and dates it now', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(new Date('2026-11-16T05:42:00Z'));
+        const readPlanLimits = vi
+          .fn<(input: PlanInput) => Promise<PlanLimitsWire | null>>()
+          .mockResolvedValue(reading(41, false));
+        const { service } = build({
+          planReading: ONE_SHOT,
+          peek: () => null,
+          readPlanLimits,
+          lastMetricsReading: JSON.stringify({
+            takenAt: '2026-11-16T04:07:13.121Z',
+            atSeq: 7,
+            configDir: null,
+            context: BREAKDOWN,
+            plan: reading(63, false),
+          }),
+        });
+
+        const pressed = await service.read('run-1', null, null, true);
+
+        expect(readPlanLimits).toHaveBeenCalledTimes(1);
+        expect(readPlanLimits.mock.calls[0]?.[0]).toMatchObject({
+          live: null,
+          configDir: null,
+          mayProbe: true,
+        });
+        expect(pressed.plan?.windows[0]?.percent).toBe(41);
+        expect(pressed.planTakenAt).toBe('2026-11-16T05:42:00.000Z');
+        expect(pressed.planReason).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('shares one one-shot process between refreshes that overlap on an account', async () => {
+      let answer: (reading: PlanLimitsWire) => void = () => undefined;
+      const readPlanLimits = vi
+        .fn<(input: PlanInput) => Promise<PlanLimitsWire | null>>()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              answer = resolve;
+            }),
+        )
+        .mockResolvedValue(reading(52, false));
+      const { service } = build({
+        planReading: ONE_SHOT,
+        peek: () => null,
+        readPlanLimits,
+      });
+
+      const first = service.read('run-1', null, null, true);
+      const second = service.read('run-2', null, null, true);
+      await vi.waitFor(() => expect(readPlanLimits).toHaveBeenCalledTimes(1));
+      answer(reading(41, false));
+      const [a, b] = await Promise.all([first, second]);
+      const later = await service.read('run-1', null, null, true);
+
+      expect(a.plan?.windows[0]?.percent).toBe(41);
+      expect(b.plan?.windows[0]?.percent).toBe(41);
+      expect(readPlanLimits).toHaveBeenCalledTimes(2);
+      expect(later.plan?.windows[0]?.percent).toBe(52);
+    });
+
+    it('runs the one-shot process under the folder’s pinned profile', async () => {
+      const readPlanLimits = vi
+        .fn<(input: PlanInput) => Promise<PlanLimitsWire | null>>()
+        .mockResolvedValue(reading(41, false));
+      const { service } = build({
+        planReading: ONE_SHOT,
+        peek: () => null,
+        pinFor: (runId) => (runId === 'run-1' ? '/Users/x/.claude-team' : null),
+        readPlanLimits,
+      });
+
+      await service.read('run-1', null, null, true);
+
+      expect(readPlanLimits.mock.calls[0]?.[0].configDir).toBe(
+        '/Users/x/.claude-team',
+      );
+    });
+
+    it('asks a live agent on the account rather than spawning one', async () => {
+      const otherProcess = { id: 'other-conversation' };
+      const readPlanLimits = vi
+        .fn<(input: PlanInput) => Promise<PlanLimitsWire | null>>()
+        .mockResolvedValue(reading(64, false));
+      const { service } = build({
+        planReading: ONE_SHOT,
+        peek: () => null,
+        liveSessions: [
+          {
+            key: 'run-9',
+            agent: AgentKind.Claude,
+            cwd: '/proj/run-9',
+            configDir: null,
+            session: otherProcess,
+          },
+        ],
+        readPlanLimits,
+      });
+
+      await service.read('run-1', null, null, true);
+
+      expect(readPlanLimits).toHaveBeenCalledTimes(1);
+      expect(readPlanLimits.mock.calls[0]?.[0].live).toBe(otherProcess);
+      expect(readPlanLimits.mock.calls[0]?.[0].mayProbe).toBeUndefined();
+    });
+
+    it('spawns nothing on the idle farewell', async () => {
+      const readPlanLimits = vi.fn().mockResolvedValue(reading(41, false));
+      const { farewell } = build({
+        planReading: ONE_SHOT,
+        peek: () => null,
+        lastMetricsReading: null,
+        readPlanLimits,
+      });
+
+      await farewell();
+
+      expect(readPlanLimits).not.toHaveBeenCalled();
+    });
+
+    it('spawns nothing on an ordinary open', async () => {
+      const readPlanLimits = vi.fn().mockResolvedValue(reading(41, false));
+      const { service } = build({
+        planReading: ONE_SHOT,
+        peek: () => null,
+        readPlanLimits,
+      });
+
+      await service.read('run-1');
+
+      expect(readPlanLimits).not.toHaveBeenCalled();
+    });
+
+    it('spawns nothing for a CLI whose reading offers no one-shot process', async () => {
+      const readPlanLimits = vi.fn().mockResolvedValue(reading(41, false));
+      const { service } = build({
+        planReading: { kind: 'reads', channel: 'live-process' },
+        peek: () => null,
+        readPlanLimits,
+      });
+
+      await service.read('run-1', null, null, true);
+
+      expect(readPlanLimits).not.toHaveBeenCalled();
+    });
+
+    it('logs an empty one-shot answer and keeps the held reading', async () => {
+      const warn = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      try {
+        const { service } = build({
+          planReading: ONE_SHOT,
+          peek: () => null,
+          readPlanLimits: () => Promise.resolve(null),
+          lastMetricsReading: JSON.stringify({
+            takenAt: '2026-11-16T04:07:13.121Z',
+            atSeq: 7,
+            configDir: null,
+            context: BREAKDOWN,
+            plan: reading(63, false),
+          }),
+        });
+
+        const pressed = await service.read('run-1', null, null, true);
+
+        expect(pressed.plan?.windows[0]?.percent).toBe(63);
+        expect(pressed.planTakenAt).toBe('2026-11-16T04:07:13.121Z');
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'plan limits for run-1: the agent gave no answer',
+          ),
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 });

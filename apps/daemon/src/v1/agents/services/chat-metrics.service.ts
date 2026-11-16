@@ -36,7 +36,8 @@ import {
 import { parseJsonColumn } from '../utils/json-util';
 import { readNodePoolMembers } from '../utils/node-pool-members';
 import {
-  effectiveAccountKey,
+  accountKeyOf,
+  effectiveAccountDir,
   PlanLimitsLedger,
   type PlanReading,
 } from '../utils/plan-limits-ledger';
@@ -123,17 +124,25 @@ interface ReadingTarget {
   /** The profile a stored reading must still describe (null for a member). */
   configDir: string | null;
   /**
-   * The ACCOUNT this agent runs under (`accountKeyOf`) — what its plan limits
-   * are shared across. Unlike {@link configDir} it is resolved for a member too,
-   * off the run's own team copy, since a member names its own profile.
+   * The ACCOUNT this agent runs under — what its plan limits are shared
+   * across. Unlike {@link configDir} it is resolved for a member too, off the
+   * run's own team copy, since a member names its own profile.
    */
-  account: string | null;
+  account: AgentAccount | null;
   /** The last reading filed for this agent, verbatim JSON. */
   storedReading: string | null;
   /** This agent's newest transcript row — what a stored reading is pinned to. */
   atSeq: number;
   /** The bill polled for THIS agent's account, which its turns do not carry. */
   polled: PolledSpend;
+}
+
+/** One CLI account: its ledger key and the config directory it runs from. */
+interface AgentAccount {
+  /** {@link accountKeyOf} of {@link dir}. */
+  key: string;
+  /** The effective config directory, null for the CLI's default login. */
+  dir: string | null;
 }
 
 @Injectable()
@@ -156,6 +165,15 @@ export class ChatMetricsService implements OnModuleInit {
    * keeps two threads on one account from showing two different allowances.
    */
   private readonly planLedger = new PlanLimitsLedger();
+
+  /**
+   * The one-shot plan reading in flight for each account, shared by every
+   * refresh that arrives while it runs, so presses never start a process each.
+   */
+  private readonly planProbes = new Map<
+    string,
+    Promise<PlanLimitsWire | typeof NO_PLAN_LIMITS | null>
+  >();
 
   constructor(
     private readonly em: EntityManager,
@@ -332,7 +350,7 @@ export class ChatMetricsService implements OnModuleInit {
         : null;
     const [agent, payloads] = await Promise.all([
       usable === null
-        ? this.readFromAgent(target, em)
+        ? this.readFromAgent(target, em, refresh)
         : Promise.resolve({
             context: usable.context,
             plan: usable.plan,
@@ -454,7 +472,7 @@ export class ChatMetricsService implements OnModuleInit {
       sessionKey: runId,
       agentKind: run.agentKind,
       configDir: run.configDir,
-      account: this.accountKey(run, run.agentKind, run.configDir),
+      account: this.account(run, run.agentKind, run.configDir),
       storedReading: run.lastMetricsReading,
       atSeq: await this.itemDao.maxSeq(runId, em),
       polled: run,
@@ -501,7 +519,7 @@ export class ChatMetricsService implements OnModuleInit {
       sessionKey: nodeSessionKey(runId, memberId),
       agentKind: state.agentKind,
       configDir,
-      account: this.accountKey(run, state.agentKind, configDir),
+      account: this.account(run, state.agentKind, configDir),
       storedReading: state.lastMetricsReading ?? null,
       atSeq: await this.itemDao.maxSeq(runId, em, memberId),
       polled: nodePolledSpend(
@@ -588,9 +606,9 @@ export class ChatMetricsService implements OnModuleInit {
       // member's CLI names no profile yet, so it shares nobody's reading.
       account:
         profile !== null
-          ? this.accountKey(run, agentKind, profile.configDir)
+          ? this.account(run, agentKind, profile.configDir)
           : agentKind === state.agentKind
-            ? this.nodeAccountKey(run, conversation.calleeMemberId, agentKind)
+            ? this.nodeAccount(run, conversation.calleeMemberId, agentKind)
             : null,
       storedReading: null,
       atSeq: -1,
@@ -793,10 +811,14 @@ export class ChatMetricsService implements OnModuleInit {
    * thing a caller could do about a failure — show the panel without it — is
    * what null already means. Each question is caught SEPARATELY, so a CLI that
    * answers one and not the other loses only that one.
+   *
+   * A `refresh` with no live process on the account takes the plan reading
+   * from a one-shot process under that account, where the CLI offers one.
    */
   private async readFromAgent(
     target: ReadingTarget,
     em: EntityManager,
+    refresh: boolean,
   ): Promise<{
     context: ContextBreakdownWire | null;
     plan: PlanLimitsWire | null;
@@ -884,9 +906,16 @@ export class ChatMetricsService implements OnModuleInit {
     const askedContext =
       usage.breakdown.kind === 'reads' &&
       available(usage.breakdown.channel, live);
-    const askedPlan =
+    const planOneShot =
+      refresh &&
+      planLive === null &&
+      target.account !== null &&
       usage.planLimits.kind === 'reads' &&
-      available(usage.planLimits.channel, planLive);
+      usage.planLimits.oneShot === true;
+    const askedPlan =
+      planOneShot ||
+      (usage.planLimits.kind === 'reads' &&
+        available(usage.planLimits.channel, planLive));
     if (!askedContext && !askedPlan) {
       return nothing;
     }
@@ -900,7 +929,16 @@ export class ChatMetricsService implements OnModuleInit {
         : null,
       askedPlan
         ? this.attempt(runId, 'plan limits', () =>
-            adapter.readPlanLimits({ ...input, live: planLive }),
+            planOneShot && target.account !== null
+              ? this.probePlan(target.account.key, () =>
+                  adapter.readPlanLimits({
+                    ...input,
+                    live: null,
+                    configDir: target.account?.dir ?? null,
+                    mayProbe: true,
+                  }),
+                )
+              : adapter.readPlanLimits({ ...input, live: planLive }),
           )
         : null,
     ]);
@@ -1069,7 +1107,7 @@ export class ChatMetricsService implements OnModuleInit {
       ) {
         return;
       }
-      const agent = await this.readFromAgent(target, em);
+      const agent = await this.readFromAgent(target, em, false);
       // Shared with the account even when nothing is filed below: a prewarm
       // is the commonest moment a fresh allowance is taken at all.
       this.settlePlan(target, {
@@ -1114,7 +1152,7 @@ export class ChatMetricsService implements OnModuleInit {
     },
   ): PlanReading | null {
     if (reading.planNotReported) {
-      this.planLedger.forget(target.account);
+      this.planLedger.forget(target.account?.key ?? null);
       return null;
     }
     const offered: PlanReading | null =
@@ -1122,7 +1160,7 @@ export class ChatMetricsService implements OnModuleInit {
         ? { plan: reading.plan, takenAt: reading.takenAt }
         : reading.stored;
     return this.planLedger.settle(
-      target.account,
+      target.account?.key ?? null,
       // An undatable reading cannot be ranked against another, so it is not
       // offered — it would otherwise outrank or lose to everything at random.
       offered !== null && Number.isFinite(offered.takenAt) ? offered : null,
@@ -1145,28 +1183,29 @@ export class ChatMetricsService implements OnModuleInit {
    * chat's figures would have been served to every unpinned default-profile
    * chat.
    */
-  private accountKey(
+  private account(
     run: Run,
     agentKind: AgentKind | null,
     configDir: string | null,
-  ): string | null {
+  ): AgentAccount | null {
     if (agentKind === null) {
       return null;
     }
-    return this.accountKeyIn(agentKind, configDir, run.cwd);
+    return this.accountIn(agentKind, configDir, run.cwd);
   }
 
-  private accountKeyIn(
+  private accountIn(
     agentKind: AgentKind,
     configDir: string | null,
     cwd: string | null,
-  ): string | null {
-    return effectiveAccountKey(
-      agentKind,
+  ): AgentAccount | null {
+    const dir = effectiveAccountDir(
       configDir,
       this.configDirPins.forRun(agentKind, cwd)?.effective ?? null,
       cwd,
     );
+    const key = accountKeyOf(agentKind, dir);
+    return key === null ? null : { key, dir };
   }
 
   /**
@@ -1174,12 +1213,12 @@ export class ChatMetricsService implements OnModuleInit {
    * copy names for it (none means the CLI's default), under the same folder
    * pin a chat is — every member of a run works in the run's folder.
    */
-  private nodeAccountKey(
+  private nodeAccount(
     run: Run,
     memberId: string,
     agentKind: AgentKind | null,
-  ): string | null {
-    return this.accountKey(
+  ): AgentAccount | null {
+    return this.account(
       run,
       agentKind,
       snapshotNodeConfigDirs(run.teamSnapshot).get(memberId) ?? null,
@@ -1192,20 +1231,35 @@ export class ChatMetricsService implements OnModuleInit {
    */
   private accountSession(
     agentKind: AgentKind,
-    account: string | null,
+    account: AgentAccount | null,
   ): AgentSession | null {
     const onAccount = this.sessions
       .liveSessions()
       .filter(
         (kept) =>
           kept.agent === agentKind &&
-          this.accountKeyIn(agentKind, kept.configDir, kept.cwd) === account,
+          account !== null &&
+          this.accountIn(agentKind, kept.configDir, kept.cwd)?.key ===
+            account.key,
       );
     return (
       onAccount.find((kept) => kept.session.idle)?.session ??
       onAccount[0]?.session ??
       null
     );
+  }
+
+  private probePlan(
+    account: string,
+    read: () => Promise<PlanLimitsWire | typeof NO_PLAN_LIMITS | null>,
+  ): Promise<PlanLimitsWire | typeof NO_PLAN_LIMITS | null> {
+    const running = this.planProbes.get(account);
+    if (running !== undefined) {
+      return running;
+    }
+    const probe = read().finally(() => this.planProbes.delete(account));
+    this.planProbes.set(account, probe);
+    return probe;
   }
 
   /** One adapter question, whose failure is a null reading and a log line. */

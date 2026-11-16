@@ -9,9 +9,18 @@ import type { CodexRateLimitWindow } from '../codex.types';
  * a string id no frame of the session's own (numbered from 1) can share.
  */
 export function codexPlanLimitsRequestLine(requestId: string): string {
-  return encodeRequest(requestId, CODEX_METHODS.rateLimitsRead, {
-    excludeResetCreditDetails: true,
-  });
+  return encodeRequest(
+    requestId,
+    CODEX_METHODS.rateLimitsRead,
+    codexPlanLimitsRequestParams(),
+  );
+}
+
+/** The params of `account/rateLimits/read`, on a live process or a one-shot. */
+export function codexPlanLimitsRequestParams(): {
+  excludeResetCreditDetails: true;
+} {
+  return { excludeResetCreditDetails: true };
 }
 
 /**

@@ -142,6 +142,8 @@ import {
 } from './utils/codex-oneshot.utils';
 import {
   codexPlanLimitsRequestLine,
+  codexPlanLimitsRequestParams,
+  readCodexPlanLimits,
   readCodexPlanLimitsReply,
 } from './utils/codex-plan-limits.utils';
 import {
@@ -408,7 +410,7 @@ export class CodexAdapter extends AgentAdapter {
         // tokens per request and never per kind of content, file or server,
         // so the readout lists those by name with no figure beside them.
         breakdown: { kind: 'reads', channel: 'live-process' },
-        planLimits: { kind: 'reads', channel: 'live-process' },
+        planLimits: { kind: 'reads', channel: 'live-process', oneShot: true },
         polledSpend: false,
         // codex's model ids are OpenAI's API ids (`gpt-6-astra`, `gpt-5.6-sol`
         // — measured against `~/.codex/models_cache.json` on 0.157.1), so the
@@ -1520,13 +1522,16 @@ export class CodexAdapter extends AgentAdapter {
   /**
    * The account's plan limits, asked of the RUNNING process — which runs under
    * the run's own `CODEX_HOME`, so the answer is that account's rather than
-   * whichever one a fresh process would find.
+   * whichever one a fresh process would find — or, when the caller permits
+   * it and none runs, of a one-shot app-server under the same `CODEX_HOME`.
    */
   override readPlanLimits(
     input: AgentSessionReadInput,
   ): Promise<AgentPlanLimits | null> {
     if (!input.live) {
-      return Promise.resolve(null);
+      return input.mayProbe
+        ? this.probePlanLimits(input.configDir)
+        : Promise.resolve(null);
     }
     const requestId = `geniro-limits-${randomUUID()}`;
     return input.live.ask({
@@ -1534,5 +1539,26 @@ export class CodexAdapter extends AgentAdapter {
       read: (obj) => readCodexPlanLimitsReply(obj, requestId),
       timeoutMs: CODEX_PLAN_LIMITS_TIMEOUT_MS,
     });
+  }
+
+  private async probePlanLimits(
+    configDir: string | null,
+  ): Promise<AgentPlanLimits | null> {
+    let cwd = '';
+    try {
+      cwd = this.makeProbeRoot('plan-limits');
+      const result = await this.oneshot(
+        CODEX_METHODS.rateLimitsRead,
+        codexPlanLimitsRequestParams(),
+        { cwd, configDir, timeoutMs: CODEX_PLAN_LIMITS_TIMEOUT_MS },
+      );
+      return result === null ? null : readCodexPlanLimits(result);
+    } catch {
+      return null;
+    } finally {
+      if (cwd !== '') {
+        this.removeProbeRoot(cwd);
+      }
+    }
   }
 }

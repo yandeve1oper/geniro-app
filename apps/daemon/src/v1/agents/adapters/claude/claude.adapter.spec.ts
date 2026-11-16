@@ -54,12 +54,12 @@ import {
   CLAUDE_BROWSER_TOOLS_OPTION,
   CLAUDE_COMMANDS_CHANGED_SUBTYPE,
   CLAUDE_CONFIG_DIR_ENV,
+  CLAUDE_CONTROL_PROBE_ARGS,
   CLAUDE_DISABLE_AUTO_MEMORY_ENV,
   CLAUDE_EMPTY_MCP_CONFIG,
   CLAUDE_FAST_MODE_PARAMETER_ID,
   CLAUDE_MCP_CONFIG_FLAG,
   CLAUDE_MODEL_FLAG,
-  CLAUDE_MODEL_RESOLUTION_ARGS,
   CLAUDE_MODEL_RESOLUTION_REQUEST_ID,
   CLAUDE_RELOAD_COMMANDS_REQUEST_ID,
   CLAUDE_RELOAD_COMMANDS_SUBTYPE,
@@ -4438,7 +4438,7 @@ describe('ClaudeAdapter — what a model name resolves to', () => {
     expect(await adapter.resolveModel(null, '/profiles/work')).toBe(
       'claude-opus-5-5',
     );
-    expect(spawns[0]!.args).toEqual([...CLAUDE_MODEL_RESOLUTION_ARGS]);
+    expect(spawns[0]!.args).toEqual([...CLAUDE_CONTROL_PROBE_ARGS]);
     expect(
       (spawns[0]!.options.env as Record<string, string> | undefined)?.[
         CLAUDE_CONFIG_DIR_ENV
@@ -4659,5 +4659,124 @@ describe('ClaudeAdapter.askOnce', () => {
         configDir: null,
       }),
     ).resolves.toBeNull();
+  });
+});
+
+describe('ClaudeAdapter — plan limits from a one-shot process', () => {
+  const usageReply = (requestId: string): string =>
+    `${JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: requestId,
+        response: {
+          subscription_type: 'max',
+          rate_limits: {
+            limits: [
+              {
+                kind: 'weekly_all',
+                percent: 41,
+                resets_at: '2026-11-22T11:00:00Z',
+              },
+            ],
+          },
+        },
+      },
+    })}\n`;
+
+  interface UsageProbe {
+    args: readonly string[];
+    options: Record<string, unknown>;
+    stdin: string[];
+  }
+
+  /** An adapter whose one-shot process answers the `get_usage` it is sent. */
+  const answering = (
+    reply: (requestId: string) => string = usageReply,
+  ): { adapter: ClaudeAdapter; spawns: UsageProbe[] } => {
+    const spawns: UsageProbe[] = [];
+    const groupSpawnFn = ((
+      _command: string,
+      args: readonly string[],
+      options: Record<string, unknown>,
+    ) => {
+      const fake = fakeGroupChild();
+      spawns.push({ args, options, stdin: fake.stdinChunks });
+      fake.child.stdin?.on('data', (chunk: Buffer) => {
+        const request = JSON.parse(chunk.toString().trim()) as {
+          request_id: string;
+        };
+        setImmediate(() => {
+          fake.writeStdout(reply(request.request_id));
+          fake.close(0);
+        });
+      });
+      return fake.child;
+    }) as unknown as typeof spawn;
+    return { adapter: new ClaudeAdapter({ groupSpawnFn }), spawns };
+  };
+
+  it('asks get_usage of a one-shot process under the profile when there is no live one and the reading may spawn', async () => {
+    const { adapter, spawns } = answering();
+
+    const reading = await adapter.readPlanLimits({
+      live: null,
+      sessionId: null,
+      configDir: '/profiles/work',
+      mayProbe: true,
+    });
+
+    expect(reading).toEqual({
+      plan: 'max',
+      windows: [expect.objectContaining({ key: 'weekly_all', percent: 41 })],
+      estimated: false,
+    });
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0]!.args).toEqual([...CLAUDE_CONTROL_PROBE_ARGS]);
+    expect(
+      (spawns[0]!.options.env as Record<string, string> | undefined)?.[
+        CLAUDE_CONFIG_DIR_ENV
+      ],
+    ).toBe('/profiles/work');
+    const [request] = spawns[0]!.stdin
+      .join('')
+      .split('\n')
+      .filter(Boolean)
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            request: { subtype: string; skip_behaviors: boolean };
+          },
+      );
+    expect(request?.request).toEqual({
+      subtype: 'get_usage',
+      skip_behaviors: true,
+    });
+  });
+
+  it('spawns nothing for a reading that may not spawn, with no live process', async () => {
+    const { adapter, spawns } = answering();
+
+    expect(
+      await adapter.readPlanLimits({
+        live: null,
+        sessionId: null,
+        configDir: null,
+      }),
+    ).toBeNull();
+    expect(spawns).toHaveLength(0);
+  });
+
+  it('answers null when the one-shot process replies to some other question', async () => {
+    const { adapter } = answering(() => usageReply('someone-else'));
+
+    expect(
+      await adapter.readPlanLimits({
+        live: null,
+        sessionId: null,
+        configDir: null,
+        mayProbe: true,
+      }),
+    ).toBeNull();
   });
 });

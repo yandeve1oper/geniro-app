@@ -2105,8 +2105,11 @@ export const CLAUDE_CONTEXT_USAGE_TIMEOUT_MS = 8_000;
 // nothing reaching the API. The account's own extra models are in the same
 // list. It carries no window; the window is looked up by the resolved id.
 
-/** The argv of the one-shot `initialize` probe: no turn, no MCP servers. */
-export const CLAUDE_MODEL_RESOLUTION_ARGS: readonly string[] = [
+/**
+ * The argv of a one-shot control probe — `initialize` here, `get_usage` for a
+ * plan-limits refresh with no live process: no turn, no MCP servers.
+ */
+export const CLAUDE_CONTROL_PROBE_ARGS: readonly string[] = [
   '-p',
   '--output-format',
   'stream-json',

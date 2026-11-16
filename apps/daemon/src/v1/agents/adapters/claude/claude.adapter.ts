@@ -94,6 +94,7 @@ import {
   CLAUDE_CONFIG_LOCK_RETRIES,
   CLAUDE_CONFIG_LOCK_SUFFIX,
   CLAUDE_CONTEXT_USAGE_TIMEOUT_MS,
+  CLAUDE_CONTROL_PROBE_ARGS,
   CLAUDE_CONTROL_REQUEST_ID_PREFIX,
   CLAUDE_COST_TOTALS_FILE,
   CLAUDE_CREDENTIAL_ENV_KEYS,
@@ -128,7 +129,6 @@ import {
   CLAUDE_MCP_TOOL_TIMEOUT_MS,
   CLAUDE_MODEL_CACHE_FILE,
   CLAUDE_MODEL_FLAG,
-  CLAUDE_MODEL_RESOLUTION_ARGS,
   CLAUDE_MODEL_RESOLUTION_RETRY_AFTER_MS,
   CLAUDE_MODEL_RESOLUTION_STORE_MODEL,
   CLAUDE_MODEL_RESOLUTION_TIMEOUT_MS,
@@ -222,6 +222,7 @@ import { claudeModels } from './utils/claude-models.utils';
 import { claudeUpdatedPermissions } from './utils/claude-permission-options.utils';
 import {
   readPlanLimitsReply,
+  readPlanLimitsStdout,
   usageRequestLine,
 } from './utils/claude-plan-limits.utils';
 import { readClaudeSessionPullRequests } from './utils/claude-pr-links.utils';
@@ -922,9 +923,10 @@ export class ClaudeAdapter extends AgentAdapter {
          * `CLAUDE_PLAN_LIMITS_SUBTYPE` in `claude.const.ts`. Same channel as
          * the breakdown above, for the same reason: the account is not a
          * property of the conversation, but the only way to ask about it here
-         * is through the conversation's own process.
+         * is through the conversation's own process — or, on a refresh with
+         * none, a one-shot process under the account's profile.
          */
-        planLimits: { kind: 'reads', channel: 'live-process' },
+        planLimits: { kind: 'reads', channel: 'live-process', oneShot: true },
         // Every `result` line carries `total_cost_usd`, so a turn prices itself.
         polledSpend: false,
         // claude's model ids are Anthropic's API ids once its `[1m]` variant
@@ -1129,7 +1131,7 @@ export class ClaudeAdapter extends AgentAdapter {
 
   /**
    * What `model` runs as under this profile — the CLI's own answer, from a
-   * one-shot `initialize` (see `CLAUDE_MODEL_RESOLUTION_ARGS`), kept per
+   * one-shot `initialize` (see `CLAUDE_CONTROL_PROBE_ARGS`), kept per
    * profile and binary version in memory and in the vocabulary store, so it
    * is asked about once per version rather than per turn. A name the reply
    * does not list (an id such as `claude-opus-5[1m]`) is its own answer.
@@ -1249,7 +1251,7 @@ export class ClaudeAdapter extends AgentAdapter {
     let cwd = '';
     try {
       cwd = this.makeProbeRoot('models');
-      const stdout = await this.runCommand([...CLAUDE_MODEL_RESOLUTION_ARGS], {
+      const stdout = await this.runCommand([...CLAUDE_CONTROL_PROBE_ARGS], {
         cwd,
         stdinWrites: [modelResolutionRequestLine()],
         endStdin: true,
@@ -1321,7 +1323,9 @@ export class ClaudeAdapter extends AgentAdapter {
     // to ask. The account's plan is not a property of the conversation, but
     // the only way to ASK about it here is through the conversation's process.
     if (!input.live) {
-      return Promise.resolve(null);
+      return input.mayProbe
+        ? this.probePlanLimits(input.configDir)
+        : Promise.resolve(null);
     }
     const requestId = randomUUID();
     return input.live.ask({
@@ -1329,6 +1333,31 @@ export class ClaudeAdapter extends AgentAdapter {
       read: (obj) => readPlanLimitsReply(obj, requestId),
       timeoutMs: CLAUDE_PLAN_LIMITS_TIMEOUT_MS,
     });
+  }
+
+  private async probePlanLimits(
+    configDir: string | null,
+  ): Promise<AgentPlanLimits | typeof NO_PLAN_LIMITS | null> {
+    const requestId = randomUUID();
+    let cwd = '';
+    try {
+      cwd = this.makeProbeRoot('plan-limits');
+      const stdout = await this.runCommand([...CLAUDE_CONTROL_PROBE_ARGS], {
+        cwd,
+        stdinWrites: [usageRequestLine(requestId)],
+        endStdin: true,
+        settleWhen: (out) => readPlanLimitsStdout(out, requestId) !== null,
+        timeoutMs: CLAUDE_PLAN_LIMITS_TIMEOUT_MS,
+        ...(configDir ? { env: { [CLAUDE_CONFIG_DIR_ENV]: configDir } } : {}),
+      });
+      return stdout === null ? null : readPlanLimitsStdout(stdout, requestId);
+    } catch {
+      return null;
+    } finally {
+      if (cwd !== '') {
+        this.removeProbeRoot(cwd);
+      }
+    }
   }
 
   /**

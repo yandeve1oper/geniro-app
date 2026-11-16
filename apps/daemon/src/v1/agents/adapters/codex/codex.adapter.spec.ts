@@ -1405,6 +1405,73 @@ describe('plan limits', () => {
       ],
     });
   });
+
+  it('are asked of a one-shot app-server under the profile when the caller permits it and nothing runs', async () => {
+    const { groupSpawnFn, calls } = oneshotSpawn(
+      answered({
+        rateLimits: {
+          primary: { usedPercent: 37, windowDurationMins: 300, resetsAt: null },
+          planType: 'pro',
+        },
+      }),
+    );
+
+    const limits = await adapterWith({ groupSpawnFn }).readPlanLimits({
+      live: null,
+      sessionId: null,
+      configDir: '/profiles/codex',
+      mayProbe: true,
+    });
+
+    expect(limits).toEqual({
+      plan: 'pro',
+      estimated: false,
+      windows: [
+        { key: 'primary', label: '5-hour limit', percent: 37, resetsAt: null },
+      ],
+    });
+    expect(calls).toHaveLength(1);
+    expect(paramsSentFor(calls[0]!.stdin, 'account/rateLimits/read')).toEqual({
+      excludeResetCreditDetails: true,
+    });
+    expect(calls[0]!.env.CODEX_HOME).toBe('/profiles/codex');
+  });
+
+  it('answer null when the one-shot app-server refuses, as an expired login does', async () => {
+    const { groupSpawnFn } = oneshotSpawn(
+      `{"id":1,"result":{"userAgent":"codex"}}\n${JSON.stringify({ id: 2, error: { code: -32603, message: 'failed to fetch codex rate limits: 401 Unauthorized' } })}\n`,
+    );
+
+    await expect(
+      adapterWith({ groupSpawnFn }).readPlanLimits({
+        live: null,
+        sessionId: null,
+        configDir: null,
+        mayProbe: true,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('spawn nothing without a live process when the caller does not permit it', async () => {
+    const { groupSpawnFn, calls } = oneshotSpawn(answered({}));
+
+    await expect(
+      adapterWith({ groupSpawnFn }).readPlanLimits({
+        live: null,
+        sessionId: null,
+        configDir: null,
+      }),
+    ).resolves.toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('declare that a refresh may read them from a one-shot process', () => {
+    expect(adapterWith().getConfig().usage.planLimits).toEqual({
+      kind: 'reads',
+      channel: 'live-process',
+      oneShot: true,
+    });
+  });
 });
 
 describe('naming a chat', () => {

@@ -238,6 +238,29 @@ export function readPlanLimitsReply(
 }
 
 /**
+ * {@link readPlanLimitsReply} over a one-shot process's whole stdout: the
+ * reply to `requestId` on any of its lines, or null while none has arrived.
+ */
+export function readPlanLimitsStdout(
+  stdout: string,
+  requestId: string,
+): AgentPlanLimits | typeof NO_PLAN_LIMITS | null {
+  for (const raw of stdout.split('\n')) {
+    let line: unknown;
+    try {
+      line = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const reading = readPlanLimitsReply(line, requestId);
+    if (reading !== null) {
+      return reading;
+    }
+  }
+  return null;
+}
+
+/**
  * What one parsed stdout line says about the cost question `requestId` asked:
  * the process's running total in dollars, `'refused'` when the CLI answered
  * and the answer cannot be used, or null for "not my reply, keep waiting".

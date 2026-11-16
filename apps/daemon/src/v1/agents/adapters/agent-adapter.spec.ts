@@ -520,12 +520,13 @@ describe('AgentAdapter context breakdown — the seam is per adapter', () => {
     ).resolves.toBeNull();
   });
 
-  it('claude reads plan limits from its process, and cursor from the account', () => {
+  it('claude reads plan limits from its process or a one-shot one, and cursor from the account', () => {
     const { spawn } = fakeSpawn();
 
     expect(new ClaudeAdapter({ spawn }).getConfig().usage.planLimits).toEqual({
       kind: 'reads',
       channel: 'live-process',
+      oneShot: true,
     });
     expect(
       new CursorAcpAdapter({
