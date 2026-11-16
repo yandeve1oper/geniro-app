@@ -6980,6 +6980,171 @@ describe('CallBroker — a call waits for the calls its callee made', () => {
   });
 });
 
+describe('CallBroker — a callee question asked through a tool call that already returned', () => {
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  function released<T>(promise: Promise<T>): () => T | undefined {
+    let value: T | undefined;
+    void promise.then((v) => {
+      value = v;
+    });
+    return () => value;
+  }
+
+  async function askedDeferred(ttlMs?: number) {
+    const h = harness({
+      launch: 'defer',
+      isNodeLive: (caller) => caller === 'orch',
+    });
+    await h.broker.callAgent('run-1', 'orch', {
+      title: 'work',
+      agent: 'helper',
+      message: 'build it',
+      mode: 'async',
+    });
+    const parked = h.broker.parkQuestion('run-1', 'call-1', {
+      question: 'Which branch?',
+      options: ['main', 'dev'],
+      payload: null,
+      deferred: true,
+      ...(ttlMs === undefined ? {} : { ttlMs }),
+    });
+    return { h, parked };
+  }
+
+  it('keeps the call open past the callee’s turn and continues it there with the answer', async () => {
+    const { h, parked } = await askedDeferred();
+    expect(parked).toBe(true);
+    const release = released(h.broker.holdCall('run-1', 'call-1')!);
+    await flush();
+    expect(release()).toBeUndefined();
+    expect(
+      await h.broker.awaitAgent('run-1', 'orch', {
+        call_id: 'call-1',
+        timeout_ms: 10,
+      }),
+    ).toMatchObject({ status: 'question', call_id: 'call-1' });
+
+    expect(
+      h.broker.answerAgent('run-1', 'orch', {
+        call_id: 'call-1',
+        answer: 'dev',
+      }),
+    ).toMatchObject({ status: 'ok' });
+    await flush();
+
+    const wake = release() as { kind: 'wake'; prompt: string; note: string };
+    expect(wake.kind).toBe('wake');
+    expect(wake.prompt).toContain('answered your question:\n\ndev');
+    expect(wake.note).toContain('stayed open while your question waited');
+  });
+
+  it('hands over an answer that landed while the callee was still working the moment its turn ends', async () => {
+    const { h } = await askedDeferred();
+    h.broker.answerAgent('run-1', 'orch', {
+      call_id: 'call-1',
+      answer: 'main',
+    });
+    const release = released(h.broker.holdCall('run-1', 'call-1')!);
+    await flush();
+    expect((release() as { prompt: string }).prompt).toContain('main');
+  });
+
+  it('never blocks the asking callee, which is still working', async () => {
+    const { h } = await askedDeferred();
+    expect(h.blockedReports).toEqual([]);
+  });
+
+  it('continues the callee without an answer when its question times out, rather than failing the call', async () => {
+    const { h } = await askedDeferred(20);
+    const release = released(h.broker.holdCall('run-1', 'call-1')!);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await flush();
+    expect((release() as { prompt: string }).prompt).toContain(
+      'was never answered',
+    );
+    expect(
+      h.items.find((item) => item.kind === 'call_answer')?.payload,
+    ).toMatchObject({ callId: 'call-1', outcome: 'timeout' });
+
+    h.deferred[0]!.resolve({
+      status: 'completed',
+      finalText: 'built it on main',
+      error: null,
+      failureClass: null,
+      resetsAt: null,
+      sessionId: null,
+    });
+    await flush();
+    expect(
+      await h.broker.awaitAgent('run-1', 'orch', { call_id: 'call-1' }),
+    ).toMatchObject({ status: 'ok', result: { text: 'built it on main' } });
+  });
+
+  it('tells the caller a deferred asker goes on, never that it was stopped, when no caller turn is left', async () => {
+    const h = harness({ launch: 'defer', isNodeLive: () => false });
+    await h.broker.callAgent('run-1', 'orch', {
+      title: 'work',
+      agent: 'helper',
+      message: 'build it',
+      mode: 'async',
+    });
+    h.broker.parkQuestion('run-1', 'call-1', {
+      question: 'Which branch?',
+      options: [],
+      payload: null,
+      deferred: true,
+    });
+    const said = h.items
+      .filter((item) => item.kind === 'system')
+      .map((item) => String(item.payload.message));
+    expect(
+      said.some((line) => line.includes('goes on without an answer')),
+    ).toBe(true);
+    expect(said.some((line) => line.includes('was stopped'))).toBe(false);
+  });
+});
+
+describe('CallBroker — a callee question whose asker keeps its turn', () => {
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('answers the asker on a timeout without failing its call', async () => {
+    const h = harness({ launch: 'defer', isNodeLive: (c) => c === 'orch' });
+    await h.broker.callAgent('run-1', 'orch', {
+      title: 'work',
+      agent: 'helper',
+      message: 'build it',
+      mode: 'async',
+    });
+    const failed = { count: 0 };
+    h.broker.parkQuestion('run-1', 'call-1', {
+      question: 'Which branch?',
+      options: [],
+      payload: null,
+      ttlMs: 20,
+      keepsTurn: true,
+      deliver: () => true,
+      fail: () => {
+        failed.count += 1;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(failed.count).toBe(1);
+
+    h.deferred[0]!.resolve({
+      status: 'completed',
+      finalText: 'went with main',
+      error: null,
+      failureClass: null,
+      resetsAt: null,
+      sessionId: null,
+    });
+    await flush();
+    expect(
+      await h.broker.awaitAgent('run-1', 'orch', { call_id: 'call-1' }),
+    ).toMatchObject({ status: 'ok', result: { text: 'went with main' } });
+  });
+});
+
 describe('CallBroker — prompt-cache-aware continuations', () => {
   const HOUR = 60 * 60_000;
   const START = Date.UTC(2026, 9, 11, 9, 0, 0);

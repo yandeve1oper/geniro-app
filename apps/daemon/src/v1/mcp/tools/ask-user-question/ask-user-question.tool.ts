@@ -1,6 +1,7 @@
 import { HOST_QUESTION_TOOL } from '../../../agents/chat.types';
 import type { UserQuestionBroker } from '../../../agents/services/user-question.broker';
 import { readHostQuestions } from '../../../agents/utils/host-question';
+import { callerKey } from '../../../teams/utils/caller-key';
 import type {
   McpCallContext,
   McpListContext,
@@ -14,7 +15,13 @@ import {
 } from './ask-user-question.reader';
 import { askUserQuestionSchema } from './ask-user-question.schema';
 
-/** `ask_user_question` — put a multiple-choice question to the USER and wait for the answer. */
+/**
+ * `ask_user_question` — put a multiple-choice question to the USER and wait for the answer.
+ *
+ * Asked per CONVERSATION: a team member's callee conversations each register
+ * their own asker under `callerKey(member, conversation)`, which is the bare
+ * member id for its own conversation and for a chat.
+ */
 export class AskUserQuestionTool extends BaseMcpTool {
   readonly name = HOST_QUESTION_TOOL;
 
@@ -22,12 +29,16 @@ export class AskUserQuestionTool extends BaseMcpTool {
     super();
   }
 
-  protected isOffered({ runId, memberId }: McpListContext): boolean {
-    return this.questions.canAsk(runId, memberId);
+  protected isOffered({
+    runId,
+    memberId,
+    conversationId,
+  }: McpListContext): boolean {
+    return this.questions.canAsk(runId, callerKey(memberId, conversationId));
   }
 
-  protected instructions(): string {
-    return askUserQuestionInstructions();
+  protected instructions({ conversationId }: McpListContext): string {
+    return askUserQuestionInstructions(conversationId !== null);
   }
 
   protected inputSchema(): Record<string, unknown> {
@@ -38,7 +49,7 @@ export class AskUserQuestionTool extends BaseMcpTool {
     args: Record<string, unknown>,
     context: McpCallContext,
   ): Promise<McpToolResult> {
-    const { runId, memberId } = context;
+    const { runId, caller } = context;
     // Answered ahead of the call tools and in its OWN shape: the call
     // envelope is a contract between two AGENTS, and a question put to a
     // person has no status, no call_id and nothing to collect later. The
@@ -51,7 +62,7 @@ export class AskUserQuestionTool extends BaseMcpTool {
     }
     const title = readHostQuestionTitle(args);
     const outcome = await context.whileCancellable((signal) =>
-      this.questions.ask(runId, memberId, questions, title, signal),
+      this.questions.ask(runId, caller, questions, title, signal),
     );
     // None of the three outcomes is a tool FAILURE: a dismissal and an
     // unavailable channel are both answers the agent carries on from,

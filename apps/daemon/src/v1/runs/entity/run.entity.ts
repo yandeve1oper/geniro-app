@@ -445,6 +445,15 @@ export class Run extends TimestampsEntity {
   pendingTeamProjectCard: string | null = null;
 
   /**
+   * A team run's standing `ask_user_question` cards, one per member's own
+   * conversation, raised for a CLI that will not hold the call open
+   * (`TeamCardsService`), or null. A card leaves it BEFORE its answer is sent,
+   * on {@link pendingTeamProposal}'s terms.
+   */
+  @Property({ type: 'text', nullable: true })
+  pendingMemberQuestions: string | null = null;
+
+  /**
    * The library team this chat EDITS — the slug of a `*.team.yaml` file
    * the builder's chat panel opened a conversation about; null for every other
    * run.

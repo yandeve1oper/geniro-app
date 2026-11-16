@@ -39,11 +39,14 @@ import {
   type ChatTotalsWire,
   type FollowUpBackgroundWork,
   HOST_BROWSER_HOST_CARD,
+  HOST_QUESTION_TOOL,
   type HostArtifact,
   type HostArtifactOutcome,
   type HostArtifactRow,
   type HostProjectInstructions,
   type HostProjectInstructionsOutcome,
+  type HostQuestion,
+  type HostQuestionOutcome,
   type HostRowWire,
   type HostWakeOpener,
   type ItemWire,
@@ -52,6 +55,7 @@ import {
   type RunListPage,
   type RunWire,
   type SendMessageImage,
+  type StandingHostQuestion,
 } from '../../agents/chat.types';
 import {
   CALL_CONTEXT_SNAPSHOT_LIMIT,
@@ -106,6 +110,7 @@ import { SkillHarvestStore } from '../../agents/services/skill-harvest.store';
 import { TeamNoteBroker } from '../../agents/services/team-note.broker';
 import { TeamProposalBroker } from '../../agents/services/team-proposal.broker';
 import { ThreadInboxService } from '../../agents/services/thread-inbox.service';
+import { UserQuestionBroker } from '../../agents/services/user-question.broker';
 import { WallWorkService } from '../../agents/services/wall-work.service';
 import { SPAN_ROW_KINDS } from '../../agents/utils/active-spans';
 import {
@@ -130,7 +135,10 @@ import {
   callNumber,
   readCallSeed,
 } from '../../agents/utils/call-seed';
-import { asksForSecret } from '../../agents/utils/card-questions';
+import {
+  adapterQuestionOf,
+  asksForSecret,
+} from '../../agents/utils/card-questions';
 import { withCarriedContext } from '../../agents/utils/carried-context';
 import { CompactionRows } from '../../agents/utils/compaction-rows';
 import { effortListed } from '../../agents/utils/effort-listed';
@@ -147,7 +155,12 @@ import { hostEndpointPath } from '../../agents/utils/host-endpoint';
 import { isHostKnowledgeCall } from '../../agents/utils/host-knowledge';
 import { isHostMemoryCall } from '../../agents/utils/host-memory';
 import { isHostProjectInstructionsCall } from '../../agents/utils/host-project-instructions';
-import { hostMcpServerName } from '../../agents/utils/host-question';
+import {
+  hostCardQuestions,
+  hostMcpServerName,
+  hostQuestionCardInput,
+  isHostQuestionCall,
+} from '../../agents/utils/host-question';
 import {
   isHostTeamProposalCall,
   standingProposalCardId,
@@ -206,6 +219,11 @@ import {
   snapshotNodePoolProfiles,
   snapshotPoolKinds,
 } from '../../agents/utils/snapshot-config-dirs';
+import {
+  askThroughStanding,
+  hostQuestionOutcomeOf,
+  StandingQuestions,
+} from '../../agents/utils/standing-questions';
 import { teamProjectCardId } from '../../agents/utils/team-project-card';
 import {
   threadMessagesPrompt,
@@ -242,6 +260,7 @@ import type {
   CalleePoolPlan,
   CalleeTurnOutcome,
   CallHoldRelease,
+  MemberQuestionCards,
   NodeStateWire,
   PoolSkip,
   ResetWakesCancelled,
@@ -275,7 +294,6 @@ import {
 } from '../utils/caller-key';
 import {
   callToolsAdmitted,
-  holdsCallTools,
   instructionBlocksByMember,
   memberInstructionFields,
 } from '../utils/member-instructions';
@@ -921,6 +939,8 @@ export class TeamExecutorService
     @Optional() private readonly goalWriters?: GoalWritersBroker,
     /** Wakes for members' commands that end between turns, optional on `artifacts`' terms. */
     @Optional() private readonly commandEndWakes?: CommandEndWakeService,
+    /** geniro's own `ask_user_question`, optional on `artifacts`' terms. */
+    @Optional() private readonly userQuestions?: UserQuestionBroker,
   ) {
     this.parallelism = parallelism ?? MAX_PARALLEL_AGENTS;
   }
@@ -971,6 +991,9 @@ export class TeamExecutorService
         change: HostProjectInstructions,
       ) => Promise<HostProjectInstructionsOutcome>)
     | null = null;
+
+  /** How a member's deferred question card is raised and retired — set by `TeamCardsService`. */
+  private memberQuestionCards: MemberQuestionCards | null = null;
 
   /**
    * How a monitor's output reaches one of a run's conversations — installed by
@@ -1925,6 +1948,9 @@ export class TeamExecutorService
     const run = await this.assertRunTakesMessage(em, runId, text, images);
     this.commandEndWakes?.userSpoke(runId);
     return this.messageSends.send(runId, text, clientMessageId, async () => {
+      // Not awaited: the message must reach the run in this same tick, ahead
+      // of any wake already scheduled for it.
+      void this.memberQuestionCards?.retireForUserMessage(runId);
       const live = this.liveRuns.get(runId);
       if (live) {
         const item = await live.deliver(text, images, backgroundWork);
@@ -2756,6 +2782,26 @@ export class TeamExecutorService
     ) => Promise<HostProjectInstructionsOutcome>,
   ): void {
     this.leadProjectCards = propose;
+  }
+
+  useMemberQuestionCards(cards: MemberQuestionCards): void {
+    this.memberQuestionCards = cards;
+  }
+
+  /** A member's own question on a CLI that will not hold the call open. */
+  private askMemberDeferred(
+    runId: string,
+    memberId: string,
+    questions: HostQuestion[],
+    title: string | null,
+  ): Promise<HostQuestionOutcome> {
+    return (
+      this.memberQuestionCards?.ask(runId, memberId, questions, title) ??
+      Promise.resolve({
+        status: 'unavailable',
+        reason: 'no question card can be put up in this run',
+      })
+    );
   }
 
   /** Who leads a team run now, or null for no team run or no lead. */
@@ -4835,13 +4881,6 @@ export class TeamExecutorService
     const callCapable = (node: TeamMember): boolean =>
       callToolsAdmitted(this.adapterFor(node.agent).getConfig());
 
-    /** Nodes that hold the call tools in THIS run (callers, not callees). */
-    const isCaller = (node: TeamMember): boolean =>
-      holdsCallTools(
-        calleesOf.get(node.id),
-        this.adapterFor(node.agent).getConfig(),
-      );
-
     /**
      * Nodes handed the MCP endpoint: EVERY call-capable agent, not callers
      * alone — otherwise a callee, and any member of an ordinary run, has none of
@@ -5054,6 +5093,161 @@ export class TeamExecutorService
         return this.approvals.abandon(runId, cardId);
       };
 
+      /**
+       * geniro's own `ask_user_question`, for a turn whose CLI hands its model
+       * no question tool (`AdapterConfig.hostQuestionToolReason`). A CLI that
+       * will not hold the call open for a person is answered at once and
+       * continued with the answer later.
+       */
+      const deferQuestions =
+        adapter.getConfig().hostQuestionDeferredReason !== null;
+      /** The question cards this turn has up, swept when it ends. */
+      const standingQuestions = new StandingQuestions();
+      /**
+       * A callee's question goes to its CALLER, as a claude callee's own
+       * AskUserQuestion does: parked on its call and answered with
+       * `answer_agent`.
+       */
+      const askCaller = (
+        callId: string,
+        questions: HostQuestion[],
+        title: string | null,
+        signal?: AbortSignal,
+      ): Promise<HostQuestionOutcome> => {
+        const asked = adapterQuestionOf(hostCardQuestions(questions), title);
+        const unparked: HostQuestionOutcome = {
+          status: 'unavailable',
+          reason:
+            'the call you are answering has ended, or a question of yours in it is still waiting',
+        };
+        if (asked === null) {
+          return Promise.resolve(unparked);
+        }
+        const payload = hostQuestionCardInput(title, questions);
+        if (deferQuestions) {
+          return Promise.resolve(
+            this.callBroker.parkQuestion(runId, callId, {
+              question: asked.text,
+              options: asked.options,
+              payload,
+              deferred: true,
+            })
+              ? { status: 'posted' }
+              : unparked,
+          );
+        }
+        const key = StandingQuestions.keyFor(title, questions);
+        let parkedCard: StandingHostQuestion | null = null;
+        return askThroughStanding(
+          standingQuestions,
+          key,
+          signal,
+          () =>
+            Promise.resolve(
+              this.callBroker.parkQuestion(runId, callId, {
+                question: asked.text,
+                options: asked.options,
+                payload,
+                keepsTurn: true,
+                deliver: (answer) => {
+                  if (parkedCard === null || parkedCard.closed) {
+                    return false;
+                  }
+                  standingQuestions.deliver(key, parkedCard, {
+                    status: 'answered',
+                    answer,
+                  });
+                  return true;
+                },
+                fail: () => {
+                  if (parkedCard !== null) {
+                    standingQuestions.deliver(key, parkedCard, {
+                      status: 'unavailable',
+                      reason: 'the agent that called you never answered it',
+                    });
+                  }
+                },
+              })
+                ? callId
+                : unparked,
+            ),
+          (_requestId, card) => {
+            parkedCard = card;
+          },
+        );
+      };
+      /**
+       * A member's own question, on a CLI that holds the call open: one card in
+       * its flow, closed with the turn like every card this turn raises.
+       */
+      const askUser = (
+        questions: HostQuestion[],
+        title: string | null,
+        signal?: AbortSignal,
+      ): Promise<HostQuestionOutcome> => {
+        const key = StandingQuestions.keyFor(title, questions);
+        const input = hostQuestionCardInput(title, questions);
+        return askThroughStanding(
+          standingQuestions,
+          key,
+          signal,
+          async () => {
+            const cardId = this.approvals.mintCardId(randomUUID(), sessionKey);
+            try {
+              await persistItem(node.id, 'approval_request', null, {
+                id: cardId,
+                toolName: HOST_QUESTION_TOOL,
+                input,
+                questions: hostCardQuestions(questions),
+                nodeId: node.id,
+              });
+            } catch (err) {
+              return {
+                status: 'unavailable',
+                reason: err instanceof Error ? err.message : String(err),
+              };
+            }
+            return cardId;
+          },
+          (cardId, card) => {
+            const blockerId = `${sessionKey}#${cardId}`;
+            this.callBroker.noteCallerBlocked(runId, caller, blockerId);
+            openCards.set(cardId, blockerId);
+            this.approvals.track({
+              runId,
+              memberId: node.id,
+              requestId: cardId,
+              toolName: HOST_QUESTION_TOOL,
+              input,
+              question: true,
+              respond: (allow, answer) => {
+                if (card.closed) {
+                  return false;
+                }
+                openCards.delete(cardId);
+                this.callBroker.noteCallerUnblocked(runId, caller, blockerId);
+                standingQuestions.deliver(
+                  key,
+                  card,
+                  hostQuestionOutcomeOf(allow, answer),
+                );
+                enqueue(async () => {
+                  await persistItem(node.id, 'approval_verdict', null, {
+                    id: cardId,
+                    nodeId: node.id,
+                    allow,
+                    ...(allow && answer !== undefined ? { answer } : {}),
+                  });
+                });
+                this.announceAwaiting(runId);
+                return true;
+              },
+            });
+            this.announceAwaiting(runId);
+          },
+        );
+      };
+
       // A member a pass starts owns a separate conversation. Its call
       // turns must never overwrite that conversation's session or context.
       // A call-only member keeps pool member 1's readings on its member row.
@@ -5086,19 +5280,17 @@ export class TeamExecutorService
         separateCallState,
       );
       /**
-       * Turns that can raise or relay a question — call-initiated callees AND
-       * caller members — spawn in the CLI's ask mode (stdin control protocol,
-       * stdin held open): headless claude strips its question tool entirely
-       * under --dangerously-skip-permissions (probe-verified on 2.1.202), so
-       * without this an 'auto' callee could never ask and an 'auto' caller
-       * could never escalate. The daemon auto-approves the plain permission
-       * requests in onEvent below, so an 'auto' member keeps today's unattended
-       * semantics. A CLI with no question channel is never question-capable,
-       * so it keeps its requested mode.
+       * Every member's turn can raise a question — a callee's goes to its
+       * caller, any other to the user's card — so every turn spawns in the
+       * CLI's ask mode (stdin control protocol, stdin held open): headless
+       * claude strips its question tool entirely under
+       * --dangerously-skip-permissions (probe-verified on 2.1.202). The daemon
+       * auto-approves the plain permission requests in onEvent below, so an
+       * 'auto' member keeps today's unattended semantics. A CLI with no
+       * question channel is never question-capable, so it keeps its requested
+       * mode.
        */
-      const questionCapable =
-        adapter.getConfig().questionToolName !== null &&
-        (callContext !== undefined || isCaller(node));
+      const questionCapable = adapter.getConfig().questionToolName !== null;
       const approval = resolveApproval(node).mode;
       const nodeWindow = separateCallState
         ? null
@@ -5785,6 +5977,7 @@ export class TeamExecutorService
             if (
               !isQuestion &&
               (isHostMemoryCall(hostMcpServerName(runId), event.toolName) ||
+                isHostQuestionCall(hostMcpServerName(runId), event.toolName) ||
                 isHostKnowledgeCall(hostMcpServerName(runId), event.toolName) ||
                 isHostBrowserCall(hostMcpServerName(runId), event.toolName) ||
                 isHostTeamProposalCall(
@@ -6168,6 +6361,7 @@ export class TeamExecutorService
             request.toolName,
           )) ||
         isHostMemoryCall(hostMcpServerName(runId), request.toolName) ||
+        isHostQuestionCall(hostMcpServerName(runId), request.toolName) ||
         isHostKnowledgeCall(hostMcpServerName(runId), request.toolName) ||
         isHostBrowserCall(hostMcpServerName(runId), request.toolName) ||
         isHostTeamProposalCall(hostMcpServerName(runId), request.toolName) ||
@@ -6209,6 +6403,22 @@ export class TeamExecutorService
       // across a restart) is the CLI's to bill on this session's next
       // `result`, not still owed beside it.
       this.partials.startTurn(runId, ownerKey);
+      const disposeQuestions =
+        input.mcpEndpoint !== null &&
+        this.userQuestions !== undefined &&
+        adapter.getConfig().hostQuestionToolReason !== null
+          ? this.userQuestions.register(
+              runId,
+              caller,
+              (questions, title, signal) =>
+                callContext !== undefined
+                  ? askCaller(callContext.callId, questions, title, signal)
+                  : deferQuestions
+                    ? this.askMemberDeferred(runId, node.id, questions, title)
+                    : askUser(questions, title, signal),
+              { answersAtOnce: deferQuestions },
+            )
+          : null;
       let handle: AgentTurnHandle;
       try {
         handle = this.sessions.startTurn(
@@ -6220,8 +6430,19 @@ export class TeamExecutorService
           onOffTurnEvent,
         );
       } catch (err) {
+        disposeQuestions?.();
         restoreCarried();
         throw err;
+      }
+      if (disposeQuestions !== null) {
+        const endQuestions = (): void => {
+          disposeQuestions();
+          standingQuestions.sweep({
+            status: 'unavailable',
+            reason: 'the turn ended before the question was answered',
+          });
+        };
+        void handle.done.then(endQuestions, endQuestions);
       }
       // The registry may close this process at any time — reaped as unused,
       // evicted, replaced as stale, or ended by the run's archive — during this

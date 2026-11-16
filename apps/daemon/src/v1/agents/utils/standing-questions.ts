@@ -172,3 +172,65 @@ export class StandingQuestions {
     }
   }
 }
+
+/** What a card's verdict tells the agent that asked. */
+export function hostQuestionOutcomeOf(
+  allow: boolean,
+  answer: string | undefined,
+): HostQuestionOutcome {
+  return allow
+    ? { status: 'answered', answer: answer ?? '' }
+    : { status: 'declined' };
+}
+
+/**
+ * One BLOCKING ask through a turn's standing cards: an answer held for a
+ * retry is handed over, a card already up is adopted, otherwise `raise` puts
+ * one up — returning its request id, or the outcome to answer with when it
+ * could not — and `arm` routes its verdict, which reaches `standing.deliver`.
+ * The caller giving up detaches its call and leaves the card standing.
+ */
+export async function askThroughStanding(
+  standing: StandingQuestions,
+  key: string,
+  signal: AbortSignal | undefined,
+  raise: () => Promise<string | HostQuestionOutcome>,
+  arm: (requestId: string, card: StandingHostQuestion) => void,
+): Promise<HostQuestionOutcome> {
+  const detachOnAbort = (
+    card: StandingHostQuestion,
+    resolve: HostQuestionResolver,
+  ): void => {
+    if (signal === undefined) {
+      return;
+    }
+    const detach = (): void => {
+      standing.detach(card, resolve);
+    };
+    if (signal.aborted) {
+      detach();
+      return;
+    }
+    signal.addEventListener('abort', detach, { once: true });
+  };
+  const up = standing.peek(key);
+  if (up !== undefined) {
+    const held = standing.collectHeld(key);
+    if (held !== null) {
+      return held;
+    }
+    return await new Promise<HostQuestionOutcome>((resolve) => {
+      standing.adopt(up, resolve);
+      detachOnAbort(up, resolve);
+    });
+  }
+  const raised = await raise();
+  if (typeof raised !== 'string') {
+    return raised;
+  }
+  return await new Promise<HostQuestionOutcome>((resolve) => {
+    const card = standing.open(key, raised, resolve);
+    arm(raised, card);
+    detachOnAbort(card, resolve);
+  });
+}

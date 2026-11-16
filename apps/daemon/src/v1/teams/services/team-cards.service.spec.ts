@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   HOST_PROJECT_INSTRUCTIONS_TOOL,
   HOST_PROPOSE_TEAM_TOOL,
+  HOST_QUESTION_TOOL,
   type HostProjectInstructions,
   type HostProjectInstructionsOutcome,
 } from '../../agents/chat.types';
@@ -26,6 +27,7 @@ interface FakeRun {
   teamId: string | null;
   archivedAt: Date | null;
   pendingTeamProjectCard: string | null;
+  pendingMemberQuestions: string | null;
 }
 
 interface Row {
@@ -66,6 +68,7 @@ function harness(
         teamId: 'team',
         archivedAt: null,
         pendingTeamProjectCard: null,
+        pendingMemberQuestions: null,
       },
     ],
   ]);
@@ -94,6 +97,14 @@ function harness(
     listRunsWithPendingTeamProjectCard: () =>
       Promise.resolve(
         [...runs.values()].filter((run) => run.pendingTeamProjectCard !== null),
+      ),
+    setPendingMemberQuestions: (id: string, value: string | null) => {
+      runs.get(id)!.pendingMemberQuestions = value;
+      return Promise.resolve();
+    },
+    listRunsWithPendingMemberQuestions: () =>
+      Promise.resolve(
+        [...runs.values()].filter((run) => run.pendingMemberQuestions !== null),
       ),
   };
   const itemDao = {
@@ -142,6 +153,7 @@ function harness(
       currentLead: () => Promise.resolve('lead'),
       announceAwaiting,
       useLeadProjectCards,
+      useMemberQuestionCards: vi.fn(),
     } as unknown as TeamExecutorService,
     { wakeLead } as unknown as StageWakeService,
     { write: writeChange } as unknown as ProjectInstructionsChangeService,
@@ -460,5 +472,177 @@ describe('TeamCardsService', () => {
       'The user approved the team change.',
       expect.any(String),
     );
+  });
+});
+
+describe('TeamCardsService — a member’s own question', () => {
+  const QUESTIONS = [
+    { question: 'Which database?', options: [{ label: 'Postgres' }] },
+  ];
+
+  it('puts the card in the asking member’s flow, answers at once and keeps one per member', async () => {
+    const { service, runs, rowsOf, approvals } = harness();
+
+    expect(
+      await service.askMember(RUN, 'worker', QUESTIONS, 'Storage'),
+    ).toEqual({ status: 'posted' });
+    const [row] = rowsOf('approval_request');
+    expect(row).toMatchObject({
+      memberId: 'worker',
+      payload: {
+        nodeId: 'worker',
+        toolName: HOST_QUESTION_TOOL,
+        input: { title: 'Storage', questions: QUESTIONS },
+        questions: [{ question: 'Which database?' }],
+      },
+    });
+    expect(approvals.listByRun(RUN)).toMatchObject([
+      { memberId: 'worker', question: true, deferred: true, standing: true },
+    ]);
+    expect(runs.get(RUN)!.pendingMemberQuestions).toContain(
+      row!.payload.id as string,
+    );
+
+    expect(
+      await service.askMember(RUN, 'worker', QUESTIONS, 'Storage'),
+    ).toEqual({ status: 'posted' });
+    expect(
+      await service.askMember(RUN, 'worker', QUESTIONS, 'Something else'),
+    ).toEqual({ status: 'unavailable', reason: QUESTION_ALREADY_STANDING });
+    expect(await service.askMember(RUN, 'other', QUESTIONS, null)).toEqual({
+      status: 'posted',
+    });
+    expect(rowsOf('approval_request')).toHaveLength(2);
+  });
+
+  it('records the answer under the asker, takes the card out of the run and wakes that member with the user’s words', async () => {
+    const { service, runs, rowsOf, approvals, wakeLead } = harness();
+    await service.askMember(RUN, 'worker', QUESTIONS, null);
+    const id = rowsOf('approval_request')[0]!.payload.id as string;
+
+    expect(approvals.resolve(RUN, id, true, 'Postgres')).toBe(true);
+    await settle(wakeLead);
+
+    expect(runs.get(RUN)!.pendingMemberQuestions).toBeNull();
+    expect(rowsOf('approval_verdict')[0]).toMatchObject({
+      memberId: 'worker',
+      payload: { id, nodeId: 'worker', allow: true, answer: 'Postgres' },
+    });
+    expect(wakeLead).toHaveBeenCalledWith(
+      RUN,
+      'worker',
+      `card:${RUN}:${id}`,
+      'Postgres',
+      expect.any(String),
+    );
+  });
+
+  it('closes every standing member question when the user writes instead of answering', async () => {
+    const { service, runs, rowsOf, approvals } = harness();
+    await service.askMember(RUN, 'worker', QUESTIONS, null);
+    await service.askMember(RUN, 'other', QUESTIONS, null);
+
+    await service.retireMemberQuestions(RUN);
+
+    expect(approvals.listByRun(RUN)).toEqual([]);
+    expect(runs.get(RUN)!.pendingMemberQuestions).toBeNull();
+    expect(rowsOf('unanswerable').map((row) => row.payload.toolName)).toEqual([
+      HOST_QUESTION_TOOL,
+      HOST_QUESTION_TOOL,
+    ]);
+  });
+
+  it('puts a standing member question back in the registry at boot, and closes one the transcript already answered', async () => {
+    const first = harness();
+    await first.service.askMember(RUN, 'worker', QUESTIONS, null);
+    const column = first.runs.get(RUN)!.pendingMemberQuestions;
+
+    const booted = harness();
+    booted.runs.get(RUN)!.pendingMemberQuestions = column;
+    await booted.service.rehydrate();
+    expect(booted.approvals.listByRun(RUN)).toMatchObject([
+      { memberId: 'worker', toolName: HOST_QUESTION_TOOL, deferred: true },
+    ]);
+
+    const answered = harness();
+    answered.runs.get(RUN)!.pendingMemberQuestions = column;
+    const id = first.rowsOf('approval_request')[0]!.payload.id as string;
+    answered.rows.push({
+      runId: RUN,
+      memberId: 'worker',
+      kind: 'approval_verdict',
+      payload: { id },
+    });
+    await answered.service.rehydrate();
+    expect(answered.approvals.listByRun(RUN)).toEqual([]);
+    expect(answered.runs.get(RUN)!.pendingMemberQuestions).toBeNull();
+  });
+
+  it('draws one card for two identical asks racing in one tick', async () => {
+    const { service, rowsOf } = harness();
+    const [one, two] = await Promise.all([
+      service.askMember(RUN, 'worker', QUESTIONS, null),
+      service.askMember(RUN, 'worker', QUESTIONS, null),
+    ]);
+    expect([one, two]).toEqual([{ status: 'posted' }, { status: 'posted' }]);
+    expect(rowsOf('approval_request')).toHaveLength(1);
+  });
+
+  it('records a Deny under the asker and wakes it with the dismissal', async () => {
+    const { service, rowsOf, approvals, wakeLead } = harness();
+    await service.askMember(RUN, 'worker', QUESTIONS, null);
+    const id = rowsOf('approval_request')[0]!.payload.id as string;
+
+    approvals.resolve(RUN, id, false);
+    await settle(wakeLead);
+
+    expect(rowsOf('approval_verdict')[0]!.payload).toEqual({
+      id,
+      nodeId: 'worker',
+      allow: false,
+    });
+    expect(wakeLead).toHaveBeenCalledWith(
+      RUN,
+      'worker',
+      `card:${RUN}:${id}`,
+      expect.stringContaining('dismissed the question'),
+      expect.any(String),
+    );
+  });
+
+  it('never closes a card whose answer is being carried out when the user writes at the same moment', async () => {
+    const { service, rowsOf, approvals, wakeLead } = harness();
+    await service.askMember(RUN, 'worker', QUESTIONS, null);
+    const id = rowsOf('approval_request')[0]!.payload.id as string;
+
+    approvals.resolve(RUN, id, true, 'Postgres');
+    await service.retireMemberQuestions(RUN);
+    await settle(wakeLead);
+
+    expect(rowsOf('unanswerable')).toEqual([]);
+    expect(rowsOf('approval_verdict')).toHaveLength(1);
+  });
+
+  it('answers unavailable and leaves nothing standing when the card cannot be written', async () => {
+    const { service, runs, approvals } = harness();
+    const failing = service as unknown as {
+      persist: (...args: unknown[]) => Promise<unknown>;
+    };
+    failing.persist = () => Promise.reject(new Error('SQLITE_BUSY'));
+    expect(await service.askMember(RUN, 'worker', QUESTIONS, null)).toEqual({
+      status: 'unavailable',
+      reason: 'the question card could not be written',
+    });
+    expect(approvals.listByRun(RUN)).toEqual([]);
+    expect(runs.get(RUN)!.pendingMemberQuestions).toBeNull();
+  });
+
+  it('refuses a card on an archived run', async () => {
+    const { service, rowsOf, knobs } = harness();
+    knobs.archived = () => true;
+    expect(
+      await service.askMember(RUN, 'worker', QUESTIONS, null),
+    ).toMatchObject({ status: 'unavailable' });
+    expect(rowsOf('approval_request')).toEqual([]);
   });
 });

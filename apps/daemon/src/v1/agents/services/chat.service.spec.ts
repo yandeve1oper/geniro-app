@@ -286,6 +286,15 @@ class FakeRunDao {
       run.pendingTeamProjectCard = value;
     }
   }
+  async setPendingMemberQuestions(
+    id: string,
+    value: string | null,
+  ): Promise<void> {
+    const run = this.runs.get(id);
+    if (run) {
+      run.pendingMemberQuestions = value;
+    }
+  }
   async listRunsWithPendingQuestion(): Promise<Run[]> {
     return [...this.runs.values()].filter(
       (run) =>
@@ -4968,6 +4977,31 @@ describe('ChatService', () => {
         ).toEqual([{ id: 'card-2', toolName: HOST_PROJECT_INSTRUCTIONS_TOOL }]);
         expect(approvals.listByRun(run.id)).toEqual([]);
         expect(runDao.runs.get(run.id)?.pendingTeamProjectCard).toBeNull();
+      });
+
+      it("closes a team member's standing question card too when the run is archived", async () => {
+        const { service, cursor, itemDao, runDao } = setup();
+        const run = await chat(service, cursor);
+        runDao.runs.get(run.id)!.pendingMemberQuestions = JSON.stringify([
+          {
+            memberId: 'worker',
+            kind: 'question',
+            requestId: 'card-3',
+            title: null,
+            questions: [{ question: 'Which?', options: [{ label: 'A' }] }],
+          },
+        ]);
+
+        await service.archive(run.id);
+
+        expect(
+          itemDao.items
+            .filter((i) => i.kind === 'unanswerable')
+            .map(
+              (i) => JSON.parse(i.payload) as { id: string; toolName: string },
+            ),
+        ).toEqual([{ id: 'card-3', toolName: HOST_QUESTION_TOOL }]);
+        expect(runDao.runs.get(run.id)?.pendingMemberQuestions).toBeNull();
       });
 
       it('counts the card again when a turn fails to start', async () => {

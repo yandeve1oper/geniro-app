@@ -12,6 +12,8 @@ import {
   ChatApprovalModeSchema,
   ChatTotalsWireSchema,
   CustomInstructionsSchema,
+  type HostQuestion,
+  type HostQuestionOutcome,
   PendingOwnedCardSchema,
   type PersistedResetWake,
   type StageActor,
@@ -1765,15 +1767,44 @@ export type CallEnvelope =
  * channel (allow + `updatedInput.response` — the probe-verified free-text
  * channel); `fail` cancels the parked callee turn (TTL / orphan drain).
  * `payload` is the raw AskUserQuestion input for the transcript row.
+ *
+ * A DEFERRED question carries no closures: the callee's tool call has already
+ * returned, so the callee keeps working, its call is held open once its turn
+ * ends, and the broker continues it inside that call with the answer — or
+ * with word that none came.
  */
-export interface ParkQuestionInput {
+export type ParkQuestionInput = {
   question: string;
   options: string[];
   payload: unknown;
   /** Test seam; the executor omits it (broker default applies). */
   ttlMs?: number;
-  deliver(answer: string): boolean;
-  fail(): void;
+} & (
+  | {
+      deferred?: false;
+      deliver(answer: string): boolean;
+      fail(): void;
+      /** `fail` only answers the asker, whose turn goes on — the call is not failed with it. */
+      keepsTurn?: true;
+    }
+  | { deferred: true }
+);
+
+/**
+ * A member's own `ask_user_question` card on a CLI that will not hold the call
+ * open: raised in its flow, standing past its turn, its verdict waking that
+ * member's own conversation. Kept by `TeamCardsService`, handed to the
+ * executor, which may not import it.
+ */
+export interface MemberQuestionCards {
+  ask(
+    runId: string,
+    memberId: string,
+    questions: HostQuestion[],
+    title: string | null,
+  ): Promise<HostQuestionOutcome>;
+  /** The user wrote to the run instead of answering: close every standing one. */
+  retireForUserMessage(runId: string): Promise<void>;
 }
 
 /**

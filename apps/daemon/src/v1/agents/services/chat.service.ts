@@ -98,7 +98,6 @@ import {
   type RunWire,
   type SendMessageImage,
   SINGLE_AGENT_NODE,
-  type StandingHostQuestion,
   type TeamProposalOutcome,
   type UnanswerableWire,
 } from '../chat.types';
@@ -179,6 +178,7 @@ import {
   deferredAnswerMessage,
   hostCardQuestions,
   hostMcpServerName,
+  hostQuestionCardInput,
   isHostQuestionCall,
 } from '../utils/host-question';
 import {
@@ -225,7 +225,12 @@ import { teamRunSnapshots } from '../utils/run-snapshots';
 import { type RunStatusAnnounce, writeRunStatus } from '../utils/run-status';
 import { isSlashCommand } from '../utils/session-replacement-notes';
 import { createSessionIdSaver } from '../utils/session-saver';
-import { StandingQuestions } from '../utils/standing-questions';
+import {
+  askThroughStanding,
+  hostQuestionOutcomeOf,
+  StandingQuestions,
+} from '../utils/standing-questions';
+import { memberQuestionIds } from '../utils/team-member-questions';
 import { teamProjectCardId } from '../utils/team-project-card';
 import {
   threadMessageReturnedRow,
@@ -377,10 +382,7 @@ function deferredPatchKey(patch: HostPatch): string {
 function deferredCardInput(snapshot: PendingCardSnapshot): unknown {
   switch (snapshot.kind) {
     case 'question':
-      return {
-        ...(snapshot.title === null ? {} : { title: snapshot.title }),
-        questions: snapshot.questions,
-      };
+      return hostQuestionCardInput(snapshot.title, snapshot.questions);
     case 'plan':
       return { title: snapshot.title, steps: snapshot.steps };
     case 'patch':
@@ -1969,6 +1971,15 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
           HOST_PROJECT_INSTRUCTIONS_TOOL,
         );
         await this.runDao.setPendingTeamProjectCard(runId, null, em);
+      }
+      const memberQuestions = memberQuestionIds(
+        run?.pendingMemberQuestions ?? null,
+      );
+      for (const requestId of memberQuestions) {
+        await this.retireOwnedCard(runId, requestId, HOST_QUESTION_TOOL);
+      }
+      if (memberQuestions.length > 0) {
+        await this.runDao.setPendingMemberQuestions(runId, null, em);
       }
       for (const entry of this.approvals.listByRun(runId)) {
         if (entry.toolName === HOST_BROWSER_HOST_CARD) {
@@ -6706,39 +6717,6 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
         signal.addEventListener('abort', close, { once: true });
       };
       /**
-       * The QUESTION channel's own cancel handling, and the one place it parts
-       * company with {@link abandonOnCancel} above.
-       *
-       * That one closes the card, which is right for a patch or a plan: those
-       * are decisions about work the agent is holding, and a caller that has
-       * given up is no longer holding it. A question is different — the person
-       * is mid-answer, and the deadline that just lapsed is 60 seconds long. So
-       * this DETACHES the call and leaves the card standing: the buttons still
-       * work, the badge still says the run is waiting on the user, and the
-       * answer is held for the agent's retry.
-       *
-       * The identity check is what keeps an OLD call's abort from detaching a
-       * NEWER one: by the time a client's deadline fires, its retry may already
-       * have adopted this record.
-       */
-      const detachAskOnCancel = (
-        signal: AbortSignal | undefined,
-        record: StandingHostQuestion,
-        resolve: (outcome: HostQuestionOutcome) => void,
-      ): void => {
-        if (signal === undefined) {
-          return;
-        }
-        const detach = (): void => {
-          standingQuestions.detach(record, resolve);
-        };
-        if (signal.aborted) {
-          detach();
-          return;
-        }
-        signal.addEventListener('abort', detach, { once: true });
-      };
-      /**
        * geniro's own question channel, for a CLI that hands its model none
        * (`AdapterConfig.hostQuestionToolReason`).
        *
@@ -6770,89 +6748,70 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
         if (adapter.getConfig().hostQuestionDeferredReason !== null) {
           return await this.askUserDeferred(em, runId, key, questions, title);
         }
-        const standing = standingQuestions.peek(key);
-        if (standing !== undefined) {
-          // The user answered while the agent had nothing in flight. Hand it
-          // over at once — this is the collection the retry came for.
-          const held = standingQuestions.collectHeld(key);
-          if (held !== null) {
-            return held;
-          }
-          // Still unanswered: ADOPT the card rather than raise a second one.
-          // Two cards for one question is the older defect this whole path was
-          // written for, and it is what a naive retry produces.
-          return await new Promise<HostQuestionOutcome>((resolve) => {
-            standingQuestions.adopt(standing, resolve);
-            detachAskOnCancel(signal, standing, resolve);
-          });
-        }
-        const requestId = randomUUID();
-        const input = {
-          ...(title === null ? {} : { title }),
-          questions,
-        };
-        try {
-          await this.persist(
-            em,
-            runId,
-            await this.seqs.reserve(runId),
-            'approval_request',
-            null,
-            {
-              id: requestId,
+        const input = hostQuestionCardInput(title, questions);
+        return await askThroughStanding(
+          standingQuestions,
+          key,
+          signal,
+          async () => {
+            const requestId = randomUUID();
+            try {
+              await this.persist(
+                em,
+                runId,
+                await this.seqs.reserve(runId),
+                'approval_request',
+                null,
+                {
+                  id: requestId,
+                  toolName: HOST_QUESTION_TOOL,
+                  input,
+                  questions: hostCardQuestions(questions),
+                },
+              );
+            } catch (err) {
+              // The card is what the user answers through, so a card that was
+              // never written is a question nobody can ever see — reported
+              // back as unavailable rather than left parked forever on a
+              // verdict that cannot arrive.
+              return {
+                status: 'unavailable',
+                reason: err instanceof Error ? err.message : String(err),
+              };
+            }
+            return requestId;
+          },
+          (requestId, record) => {
+            this.approvals.track({
+              runId,
+              memberId: SINGLE_AGENT_NODE,
+              requestId,
               toolName: HOST_QUESTION_TOOL,
               input,
-              questions: hostCardQuestions(questions),
-            },
-          );
-        } catch (err) {
-          // The card is what the user answers through, so a card that was
-          // never written is a question nobody can ever see — reported back
-          // as unavailable rather than left parked forever on a verdict that
-          // cannot arrive.
-          return {
-            status: 'unavailable',
-            reason: err instanceof Error ? err.message : String(err),
-          };
-        }
-        return await new Promise<HostQuestionOutcome>((resolve) => {
-          const record = standingQuestions.open(key, requestId, resolve);
-          this.approvals.track({
-            runId,
-            memberId: SINGLE_AGENT_NODE,
-            requestId,
-            toolName: HOST_QUESTION_TOOL,
-            input,
-            // The badge's whole reason for existing: this is the agent asking
-            // the user something, not a tool held at a permission gate.
-            question: true,
-            respond: (allow, answer) => {
-              if (record.closed) {
-                return false;
-              }
-              const outcome: HostQuestionOutcome =
-                allow && answer !== undefined
-                  ? { status: 'answered', answer }
-                  : allow
-                    ? // Approved with nothing said — the card's own arity can
-                      // produce this, and an empty answer is not the same as
-                      // a refusal.
-                      { status: 'answered', answer: '' }
-                    : { status: 'declined' };
-              // Reaches the agent when one is still on the line; otherwise the
-              // client's 60s deadline lapsed while the user was answering and
-              // the outcome is HELD for the retry, which is the whole point of
-              // the card outliving the call.
-              standingQuestions.deliver(key, record, outcome);
-              // Either way the verdict is recorded and reported delivered: a
-              // held answer reaches the agent a moment later, and the answer IS
-              // the tool's result, so there is no fold that could drop it.
-              const delivered = true;
-              this.announceAwaiting(
-                runId,
-                runningToolActivity() ?? idleActivity(),
-              );
-              if (delivered) {
+              // The badge's whole reason for existing: this is the agent
+              // asking the user something, not a tool held at a permission
+              // gate.
+              question: true,
+              respond: (allow, answer) => {
+                if (record.closed) {
+                  return false;
+                }
+                // Reaches the agent when one is still on the line; otherwise
+                // the client's 60s deadline lapsed while the user was
+                // answering and the outcome is HELD for the retry, which is
+                // the whole point of the card outliving the call.
+                standingQuestions.deliver(
+                  key,
+                  record,
+                  hostQuestionOutcomeOf(allow, answer),
+                );
+                this.announceAwaiting(
+                  runId,
+                  runningToolActivity() ?? idleActivity(),
+                );
+                // Recorded whenever it reached the agent, which for this
+                // channel is whenever there was one — the answer IS the tool's
+                // result, so there is no fold that could silently drop it.
                 enqueue(async () => {
                   await this.persist(
                     em,
@@ -6863,21 +6822,16 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
                     {
                       id: requestId,
                       allow,
-                      // Recorded whenever it reached the agent, which for this
-                      // channel is whenever there was one — the answer IS the
-                      // tool's result, so there is no fold that could silently
-                      // drop it.
                       ...(allow && answer !== undefined ? { answer } : {}),
                     },
                   );
                 });
-              }
-              return delivered;
-            },
-          });
-          detachAskOnCancel(signal, record, resolve);
-          this.announceAwaiting(runId);
-        });
+                return true;
+              },
+            });
+            this.announceAwaiting(runId);
+          },
+        );
       };
       /**
        * A card whose Apply runs a write: put on screen as an

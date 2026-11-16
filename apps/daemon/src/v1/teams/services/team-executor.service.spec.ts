@@ -57,6 +57,7 @@ import {
   HOST_MEMORY_SAVE_TOOL,
   HOST_PROJECT_INSTRUCTIONS_TOOL,
   HOST_PROPOSE_TEAM_TOOL,
+  HOST_QUESTION_TOOL,
   type OwnToolCallCount,
   type RunCreatedEvent,
   type RunDeltaEvent,
@@ -110,6 +111,7 @@ import type { SkillHarvestStore } from '../../agents/services/skill-harvest.stor
 import { TeamNoteBroker } from '../../agents/services/team-note.broker';
 import { TeamProposalBroker } from '../../agents/services/team-proposal.broker';
 import type { ThreadInboxService } from '../../agents/services/thread-inbox.service';
+import { UserQuestionBroker } from '../../agents/services/user-question.broker';
 import { WallWorkService } from '../../agents/services/wall-work.service';
 import { readAgentOptions } from '../../agents/utils/agent-options';
 import {
@@ -852,8 +854,15 @@ class FakeAdapter {
   catalogWindow(model: string): number | null {
     return this.real.catalogWindow(model);
   }
+  /**
+   * When true, this CLI's MCP client is modelled as holding a call open for a
+   * person — a codex-like CLI, which neither shipped double is.
+   */
+  holdsQuestionCallsOpen = false;
   getConfig(): AdapterConfig {
-    return this.real.getConfig();
+    return this.holdsQuestionCallsOpen
+      ? { ...this.real.getConfig(), hostQuestionDeferredReason: null }
+      : this.real.getConfig();
   }
   /** Answered from the SHIPPED config rather than by running `--help`: the
    *  double fakes the spawn, and a CLI with a partial stream declares it. */
@@ -1184,6 +1193,8 @@ function setup(
     goalWriters?: GoalWritersBroker;
     /** Wakes for members' commands that end after their turn, when a test drives them. */
     commandEndWakes?: CommandEndWakeService;
+    /** geniro's own `ask_user_question`, when a test drives it. */
+    userQuestions?: UserQuestionBroker;
     /** What the run's project tells it; no project when absent. */
     projectScope?: Partial<
       Pick<ProjectScopeService, 'placeNewRun' | 'liveNamesOf'>
@@ -1690,6 +1701,7 @@ function setup(
     opts.projectInstructionCards,
     opts.goalWriters,
     opts.commandEndWakes,
+    opts.userQuestions,
   );
   // What Nest does at boot, done by hand: the executor's session-close hook.
   service.onModuleInit();
@@ -12461,18 +12473,56 @@ describe('TeamExecutorService — Q&A bridge (M4)', () => {
     await drain();
   });
 
-  it('leaves a lone auto member on plain auto — no ask-mode override when there is no one to call', async () => {
-    const { service, claude } = setup();
-    await service.startRun({
+  it('gives a lone auto member that can call nobody its question tool: ask posture, silent permissions, an answerable card', async () => {
+    const { service, claude, approvals, itemDao } = setup();
+    const run = await service.startRun({
       slug: 'plain',
       team: teamOf([member('a')], { name: 'plain' }),
       cwd: dir,
       prompt: 'go',
     });
     await drain();
-    expect(claude.starts[0]!.input.approvalMode).toBe('auto');
-    expect(claude.starts[0]!.input.callSurfacePrompt ?? null).toBeNull();
-    completeTurn(claude.starts[0]!, 'done');
+    const lone = claude.starts[0]!;
+    expect(lone.input.approvalMode).toBe('ask');
+    expect(lone.input.callSurfacePrompt ?? null).toBeNull();
+
+    lone.emit({
+      type: 'approval_request',
+      id: 'p-lone',
+      toolName: 'Bash',
+      input: { command: 'ls' },
+    });
+    await drain();
+    expect(lone.respondApproval).toHaveBeenCalledWith('p-lone', true, {
+      command: 'ls',
+    });
+    expect(approvals.listByRun(run.id)).toEqual([]);
+    expect(itemDao.items.some((i) => i.kind === 'approval_request')).toBe(
+      false,
+    );
+
+    lone.emit({
+      type: 'approval_request',
+      id: 'q-lone',
+      toolName: 'AskUserQuestion',
+      input: QUESTION_INPUT,
+      requiresUserInteraction: true,
+    });
+    await drain();
+    expect(approvals.listByRun(run.id)).toHaveLength(1);
+    expect(
+      approvals.resolve(
+        run.id,
+        cardIdFor(approvals, run.id, 'q-lone'),
+        true,
+        'Blue',
+      ),
+    ).toBe(true);
+    expect(lone.respondApproval).toHaveBeenCalledWith('q-lone', true, {
+      ...QUESTION_INPUT,
+      answers: { 'Which color?': 'Blue' },
+    });
+    completeTurn(lone, 'done');
     await drain();
   });
 
@@ -20128,6 +20178,298 @@ describe('TeamExecutorService — a cursor member’s command that ends after it
 
     expect(harness.cursor.starts).toHaveLength(1);
     completeTurn(harness.claude.starts[0]!, 'done');
+    await drain();
+  });
+});
+
+describe("TeamExecutorService — geniro's own question tool", () => {
+  const QUESTIONS = [
+    { question: 'Which database?', options: [{ label: 'Postgres' }] },
+  ];
+
+  function questionSetup() {
+    const userQuestions = new UserQuestionBroker();
+    const harness = setup(4870, { userQuestions });
+    const deferred: { memberId: string; title: string | null }[] = [];
+    const retired: string[] = [];
+    harness.service.useMemberQuestionCards({
+      ask: async (_runId, memberId, _questions, title) => {
+        deferred.push({ memberId, title });
+        return { status: 'posted' };
+      },
+      retireForUserMessage: async (runId) => {
+        retired.push(runId);
+      },
+    });
+    return { ...harness, userQuestions, deferred, retired };
+  }
+
+  it('offers it to a member whose CLI has no question tool of its own, never to a claude member', async () => {
+    const { service, userQuestions } = questionSetup();
+    const run = await service.startRun({
+      slug: 'q',
+      team: teamOf([member('a', { agent: 'cursor-agent' })], { name: 'q' }),
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    expect(userQuestions.canAsk(run.id, 'a')).toBe(true);
+
+    const claudeRun = await service.startRun({
+      slug: 'q2',
+      team: teamOf([member('a')], { name: 'q2' }),
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    expect(userQuestions.canAsk(claudeRun.id, 'a')).toBe(false);
+  });
+
+  it('puts a cursor member’s own question up as a standing card and stops offering the tool once the turn ends', async () => {
+    const { service, cursor, userQuestions, deferred } = questionSetup();
+    const run = await service.startRun({
+      slug: 'q',
+      team: teamOf([member('a', { agent: 'cursor-agent' })], { name: 'q' }),
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    expect(await userQuestions.ask(run.id, 'a', QUESTIONS, 'Storage')).toEqual({
+      status: 'posted',
+    });
+    expect(deferred).toEqual([{ memberId: 'a', title: 'Storage' }]);
+
+    completeTurn(cursor.starts[0]!, 'asked');
+    await drain();
+    expect(userQuestions.canAsk(run.id, 'a')).toBe(false);
+  });
+
+  it('retires a standing card when the user writes to the run instead of answering', async () => {
+    const { service, cursor, retired } = questionSetup();
+    const run = await service.startRun({
+      slug: 'q',
+      team: teamOf([member('a', { agent: 'cursor-agent' })], { name: 'q' }),
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    completeTurn(cursor.starts[0]!, 'asked');
+    await drain();
+    await service.sendMessage(run.id, 'never mind, use SQLite');
+    await drain();
+    expect(retired).toEqual([run.id]);
+  });
+
+  it('on a CLI that holds the call open, raises one card in the member’s flow and answers the call with the user’s words', async () => {
+    const { service, cursor, userQuestions, approvals, itemDao } =
+      questionSetup();
+    cursor.holdsQuestionCallsOpen = true;
+    const run = await service.startRun({
+      slug: 'q',
+      team: teamOf([member('a', { agent: 'cursor-agent' })], { name: 'q' }),
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const answer = userQuestions.ask(run.id, 'a', QUESTIONS, null);
+    await drain();
+    const row = itemDao.items.find((i) => i.kind === 'approval_request');
+    const card = JSON.parse(row!.payload) as {
+      id: string;
+      toolName: string;
+      nodeId: string;
+      questions: { question: string }[];
+    };
+    expect(card).toMatchObject({
+      toolName: HOST_QUESTION_TOOL,
+      nodeId: 'a',
+      questions: [{ question: 'Which database?' }],
+    });
+    expect(approvals.listByRun(run.id)).toMatchObject([
+      { requestId: card.id, question: true, memberId: 'a' },
+    ]);
+
+    expect(approvals.resolve(run.id, card.id, true, 'Postgres')).toBe(true);
+    expect(await answer).toEqual({ status: 'answered', answer: 'Postgres' });
+    await drain();
+    expect(
+      JSON.parse(
+        itemDao.items.find((i) => i.kind === 'approval_verdict')!.payload,
+      ),
+    ).toMatchObject({ id: card.id, allow: true, answer: 'Postgres' });
+    completeTurn(cursor.starts[0]!, 'done');
+    await drain();
+  });
+
+  it('sends a callee’s question to its caller, offered only in that callee conversation', async () => {
+    const { service, cursor, userQuestions, callBroker, itemDao } =
+      questionSetup();
+    const run = await service.startRun({
+      slug: 'q',
+      team: teamOf([member('a'), member('callee', { agent: 'cursor-agent' })], {
+        name: 'q',
+      }),
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    void callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'work',
+      mode: 'async',
+    });
+    await drain();
+    const inCall = callerKey('callee', 'call-1');
+    expect(userQuestions.canAsk(run.id, inCall)).toBe(true);
+    expect(userQuestions.canAsk(run.id, 'callee')).toBe(false);
+
+    expect(await userQuestions.ask(run.id, inCall, QUESTIONS, null)).toEqual({
+      status: 'posted',
+    });
+    await drain();
+    expect(
+      JSON.parse(
+        itemDao.items.find((i) => i.kind === 'call_question')!.payload,
+      ),
+    ).toMatchObject({ callId: 'call-1', question: 'Which database?' });
+    expect(itemDao.items.some((i) => i.kind === 'approval_request')).toBe(
+      false,
+    );
+    completeTurn(cursor.starts[0]!, 'waiting on my question');
+    await drain();
+  });
+
+  it.each(['ask', 'acceptEdits', 'auto'] as const)(
+    'approves a %s member’s permission request for the tool without a card, in a turn and between turns',
+    async (approval) => {
+      const { service, cursor, approvals } = questionSetup();
+      const run = await service.startRun({
+        slug: 'q',
+        team: teamOf([member('a', { agent: 'cursor-agent', approval })], {
+          name: 'q',
+        }),
+        cwd: dir,
+        prompt: 'go',
+      });
+      await drain();
+      const toolName = `${hostMcpServerName(run.id)}-${HOST_QUESTION_TOOL}: ${HOST_QUESTION_TOOL}`;
+      const turn = cursor.starts[0]!;
+      turn.emit({
+        type: 'approval_request',
+        id: 'p-1',
+        toolName,
+        input: { questions: QUESTIONS },
+      });
+      await drain();
+      expect(turn.respondApproval).toHaveBeenCalledWith('p-1', true, {
+        questions: QUESTIONS,
+      });
+      expect(approvals.listByRun(run.id)).toEqual([]);
+      completeTurn(turn, 'done');
+      await drain();
+      expect(turn.betweenTurnApproval({ toolName })).toBe(true);
+    },
+  );
+
+  it('on a CLI that holds the call open, answers a Deny with declined', async () => {
+    const { service, cursor, userQuestions, approvals, itemDao } =
+      questionSetup();
+    cursor.holdsQuestionCallsOpen = true;
+    const run = await service.startRun({
+      slug: 'q',
+      team: teamOf([member('a', { agent: 'cursor-agent' })], { name: 'q' }),
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const answer = userQuestions.ask(run.id, 'a', QUESTIONS, null);
+    await drain();
+    const id = (
+      JSON.parse(
+        itemDao.items.find((i) => i.kind === 'approval_request')!.payload,
+      ) as { id: string }
+    ).id;
+    approvals.resolve(run.id, id, false);
+    expect(await answer).toEqual({ status: 'declined' });
+    completeTurn(cursor.starts[0]!, 'done');
+    await drain();
+  });
+
+  it('keeps the card standing when the call is abandoned, and hands its answer to an identical re-ask instead of raising a second card', async () => {
+    const { service, cursor, userQuestions, approvals, itemDao } =
+      questionSetup();
+    cursor.holdsQuestionCallsOpen = true;
+    const run = await service.startRun({
+      slug: 'q',
+      team: teamOf([member('a', { agent: 'cursor-agent' })], { name: 'q' }),
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const gaveUp = new AbortController();
+    const first = userQuestions.ask(
+      run.id,
+      'a',
+      QUESTIONS,
+      null,
+      gaveUp.signal,
+    );
+    await drain();
+    gaveUp.abort();
+    expect(await first).toMatchObject({ status: 'unavailable' });
+    const id = (
+      JSON.parse(
+        itemDao.items.find((i) => i.kind === 'approval_request')!.payload,
+      ) as { id: string }
+    ).id;
+    expect(approvals.resolve(run.id, id, true, 'Postgres')).toBe(true);
+
+    expect(await userQuestions.ask(run.id, 'a', QUESTIONS, null)).toEqual({
+      status: 'answered',
+      answer: 'Postgres',
+    });
+    expect(
+      itemDao.items.filter((i) => i.kind === 'approval_request'),
+    ).toHaveLength(1);
+    completeTurn(cursor.starts[0]!, 'done');
+    await drain();
+  });
+
+  it('on a CLI that holds the call open, answers a callee’s question with its caller’s answer_agent', async () => {
+    const { service, cursor, userQuestions, callBroker } = questionSetup();
+    cursor.holdsQuestionCallsOpen = true;
+    const run = await service.startRun({
+      slug: 'q',
+      team: teamOf([member('a'), member('callee', { agent: 'cursor-agent' })], {
+        name: 'q',
+      }),
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    void callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'work',
+      mode: 'async',
+    });
+    await drain();
+    const answer = userQuestions.ask(
+      run.id,
+      callerKey('callee', 'call-1'),
+      QUESTIONS,
+      null,
+    );
+    await drain();
+    expect(
+      callBroker.answerAgent(run.id, 'a', {
+        call_id: 'call-1',
+        answer: 'MySQL',
+      }),
+    ).toMatchObject({ status: 'ok' });
+    expect(await answer).toEqual({ status: 'answered', answer: 'MySQL' });
+    completeTurn(cursor.starts[0]!, 'done');
     await drain();
   });
 });

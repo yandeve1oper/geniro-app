@@ -196,6 +196,14 @@ export function hostCardQuestions(
   );
 }
 
+/** A question card's input, spelled the way its row and its registry entry are. */
+export function hostQuestionCardInput(
+  title: string | null,
+  questions: HostQuestion[],
+): { title?: string; questions: HostQuestion[] } {
+  return { ...(title === null ? {} : { title }), questions };
+}
+
 /**
  * The message a DEFERRED card's verdict is delivered as — the run's next user
  * turn, since the call that asked is long gone.

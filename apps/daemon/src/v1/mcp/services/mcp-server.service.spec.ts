@@ -1617,6 +1617,54 @@ describe('McpServerService', () => {
     expect(result.isError).toBe(false);
   });
 
+  it('asks through the CONVERSATION that called, offering the tool only where its asker is registered', async () => {
+    const questions = new UserQuestionBroker();
+    const asked: string[] = [];
+    questions.register('run-1', callerKey('worker', 'call-3'), async (qs) => {
+      asked.push(qs[0]?.question ?? '');
+      return { status: 'answered', answer: 'From the caller' };
+    });
+    const listed = async (
+      conversationId: string | null,
+    ): Promise<{ name: string; description: string }[]> => {
+      const { json } = await post(
+        service(new CallBroker(), questions),
+        'run-1',
+        'worker',
+        rpc('tools/list', {}),
+        conversationId,
+      );
+      return (
+        json().result as { tools: { name: string; description: string }[] }
+      ).tools;
+    };
+    const inCall = (await listed('call-3')).find(
+      (t) => t.name === HOST_QUESTION_TOOL,
+    );
+    expect(inCall?.description).toContain('the agent that called you');
+    expect((await listed(null)).map((t) => t.name)).not.toContain(
+      HOST_QUESTION_TOOL,
+    );
+    const { json } = await post(
+      service(new CallBroker(), questions),
+      'run-1',
+      'worker',
+      rpc('tools/call', {
+        name: HOST_QUESTION_TOOL,
+        arguments: {
+          questions: [
+            { question: 'Which branch?', options: [{ label: 'main' }] },
+          ],
+        },
+      }),
+      'call-3',
+    );
+    expect(asked).toEqual(['Which branch?']);
+    expect(
+      (json().result as { content: { text: string }[] }).content[0]!.text,
+    ).toContain('From the caller');
+  });
+
   it('bounds the card’s TITLE before it reaches the asker', async () => {
     // The title went through raw while every other field of the call was
     // read — and it is written onto the card, the row and the run.

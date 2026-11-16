@@ -228,6 +228,13 @@ interface ParkedQuestion {
    * five-minute one.
    */
   ttlMs: number;
+  /**
+   * Asked through a tool call that has already returned: the callee is not
+   * blocked on it, and its call is held open until it is answered.
+   */
+  deferred: boolean;
+  /** Whether `fail` stops the callee's turn, failing its call with the reason. */
+  stopsTurn: boolean;
   deliver(answer: string): boolean;
   fail(): void;
   /**
@@ -351,6 +358,12 @@ interface ActiveCall {
    * `release` hands the executor what to do next.
    */
   hold: { release: (release: CallHoldRelease) => void } | null;
+  /**
+   * The prompt a DEFERRED question's outcome continues the callee with, kept
+   * while its turn is still running and handed over the moment the call is
+   * held — or null when nothing is owed.
+   */
+  answerOwed: string | null;
   /**
    * The call its OWNER was answering when it made this one, or null for a call
    * made from a member's own conversation. A conversation outlives its calls — a
@@ -734,6 +747,22 @@ const HELD_MONITOR_NOTE =
   "[geniro] You are still answering your caller's call: it stays open while your monitors run. " +
   'The reply you end this turn with is the result your caller receives — write it in full, as the answer to the task you were given, not as a reply to this message. ' +
   'If a monitor is still running when you end this turn, you are continued here again with its output; stop one you no longer need with stop_monitor.';
+
+/** Said last when a held callee is continued with the answer to its own question. */
+const HELD_QUESTION_NOTE =
+  "[geniro] You are still answering your caller's call: it stayed open while your question waited. " +
+  'The reply you end this turn with is the result your caller receives — write it in full, as the answer to the task you were given, not as a reply to this message.';
+
+/** What a callee whose question was deferred is continued with. */
+function deferredQuestionPrompt(answer: string | null): string {
+  if (answer === null) {
+    return '(Your question was never answered: the agent that called you timed out or ended first. Continue without its answer.)';
+  }
+  const said = answer.trim();
+  return said.length === 0
+    ? '(The agent that called you answered your question without saying anything. Continue.)'
+    : `The agent that called you answered your question:\n\n${said}`;
+}
 
 /**
  * The transcript's account of a wake, filed under the caller that was woken.
@@ -1509,6 +1538,7 @@ export class CallBroker implements OnModuleInit {
       // A fresh call opens a conversation of its own, named after itself.
       conversationId: conversationId ?? callId,
       hold: null,
+      answerOwed: null,
       madeIn: callEntryInConversation(state, caller)?.[0] ?? null,
       everHeld: false,
       cancelledOwing: false,
@@ -2961,6 +2991,7 @@ export class CallBroker implements OnModuleInit {
       return false;
     }
     const ttlMs = input.ttlMs ?? QUESTION_TTL_MS;
+    const deferred = input.deferred === true;
     call.parked = {
       question: input.question,
       options: input.options,
@@ -2969,15 +3000,29 @@ export class CallBroker implements OnModuleInit {
       // caller that cannot answer.
       timer: null,
       ttlMs,
-      deliver: input.deliver,
-      fail: input.fail,
+      deferred,
+      stopsTurn: input.deferred !== true && input.keepsTurn !== true,
+      deliver:
+        input.deferred === true
+          ? (answer) =>
+              this.continueAsked(runId, callId, deferredQuestionPrompt(answer))
+          : input.deliver,
+      fail:
+        input.deferred === true
+          ? () => {
+              this.continueAsked(runId, callId, deferredQuestionPrompt(null));
+            }
+          : input.fail,
       ownerTold: false,
       envelopeDelivered: false,
     };
     this.rearmQuestionTtl(runId, callId);
     // The callee is now waiting on ITS caller, so it cannot answer the
-    // questions its own callees park — theirs wait with it.
-    this.blockOwner(state, calleeKeyOf(call), parkBlocker(callId));
+    // questions its own callees park — theirs wait with it. A deferred asker
+    // is not waiting: its tool call returned and it carries on.
+    if (!deferred) {
+      this.blockOwner(state, calleeKeyOf(call), parkBlocker(callId));
+    }
     // A parked callee emits nothing by construction — it is waiting on its
     // caller — so its silence window stands down exactly as it does behind an
     // approval card, and restarts when the answer lands.
@@ -3861,6 +3906,16 @@ export class CallBroker implements OnModuleInit {
     if (call.hold === null) {
       return;
     }
+    if (call.answerOwed !== null) {
+      const prompt = call.answerOwed;
+      call.answerOwed = null;
+      this.releaseHold(call, {
+        kind: 'wake',
+        prompt,
+        note: HELD_QUESTION_NOTE,
+      });
+      return;
+    }
     const key = calleeKeyOf(call);
     const open = openSubCalls(state, key);
     const questions = open
@@ -3892,7 +3947,8 @@ export class CallBroker implements OnModuleInit {
       // (`wakeHeldCallee`).
       if (
         !hasPendingResetWake(state, key) &&
-        state.capability.monitorsOwed?.(key) !== true
+        state.capability.monitorsOwed?.(key) !== true &&
+        call.parked?.deferred !== true
       ) {
         this.releaseHold(call, { kind: 'settle' });
       }
@@ -3945,6 +4001,26 @@ export class CallBroker implements OnModuleInit {
       monitor: true,
     });
     return 'woken';
+  }
+
+  /**
+   * Hand a deferred question's outcome to its callee: at once when its call
+   * is held, else when its turn ends and the hold begins. False once the call
+   * is gone.
+   */
+  private continueAsked(
+    runId: string,
+    callId: string,
+    prompt: string,
+  ): boolean {
+    const state = this.runs.get(runId);
+    const call = state?.activeCalls.get(callId);
+    if (state === undefined || call === undefined) {
+      return false;
+    }
+    call.answerOwed = prompt;
+    this.reviewHold(runId, state, callId, call);
+    return true;
   }
 
   /** A held callee's monitor ended unannounced: settle the call if nothing else is owed. */
@@ -4174,8 +4250,12 @@ export class CallBroker implements OnModuleInit {
     if (entry) {
       entry.told = true;
     }
+    const callee = this.calleeName(state, call.owner, call.calleeId);
     state.capability.persistItem(callerNodeOf(call.owner), 'system', null, {
-      message: `${this.calleeName(state, call.owner, call.calleeId)} was stopped: it asked a question in ${callId} and no turn of this agent was left to answer it.`,
+      message:
+        call.parked?.stopsTurn === false
+          ? `${callee} asked a question in ${callId} and no turn of this agent was left to answer it, so it goes on without an answer.`
+          : `${callee} was stopped: it asked a question in ${callId} and no turn of this agent was left to answer it.`,
     });
     this.failParked(state, callId, call, reason, 'orphaned');
   }
@@ -4210,7 +4290,9 @@ export class CallBroker implements OnModuleInit {
     if (!parked) {
       return;
     }
-    call.failReason = reason;
+    if (parked.stopsTurn) {
+      call.failReason = reason;
+    }
     state.capability.persistItem(
       callerNodeOf(call.owner),
       'call_answer',
@@ -5226,12 +5308,15 @@ function heldCallOf(
 
 /**
  * Whether `call`'s conversation is still owed work a hold would wait for: a
- * call of its own still running, a result it has not been woken for, or a
- * usage-limit continue promised to it.
+ * call of its own still running, a result it has not been woken for, a
+ * usage-limit continue promised to it, or the outcome of its own deferred
+ * question.
  */
 function owesHold(state: RunCallState, call: ActiveCall): boolean {
   const key = calleeKeyOf(call);
   return (
+    call.answerOwed !== null ||
+    call.parked?.deferred === true ||
     openSubCalls(state, key).length > 0 ||
     untoldResults(state, key).length > 0 ||
     hasPendingResetWake(state, key) ||
