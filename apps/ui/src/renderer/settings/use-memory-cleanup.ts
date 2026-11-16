@@ -98,6 +98,24 @@ export function reviewRequest(
   };
 }
 
+async function listEveryRow(
+  api: Pick<CleanupClient, 'listMemoryReview'>,
+  query: MemoriesApiListMemoryReviewRequest,
+): Promise<MemoryReviewRow[]> {
+  const rows: MemoryReviewRow[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await api.listMemoryReview({
+      ...query,
+      limit: CLEANUP_PAGE_MAX,
+      ...(cursor === null ? {} : { cursor }),
+    });
+    rows.push(...page.rows);
+    cursor = page.next;
+  } while (cursor !== null);
+  return rows;
+}
+
 /**
  * The Clean up panel's figures and the review dialog's state: which tab and
  * filters, the rows loaded so far, what is ticked, and every press — keep,
@@ -127,9 +145,15 @@ export function useMemoryCleanup(
   const [batches, setBatches] = useState<MemoryForgetBatch[]>([]);
   const [notice, setNotice] = useState<MemoryCleanupNotice | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [everyRow, setEveryRow] = useState<readonly MemoryReviewRow[] | null>(
+    null,
+  );
+  const [readingEvery, setReadingEvery] = useState(false);
   const generation = useRef(0);
   const picks = useRef(0);
   const depth = useRef(0);
+  const everyView = useRef(0);
+  const everyRead = useRef(0);
 
   const readSummary = useLatestCallback(() => {
     if (api === null) {
@@ -182,10 +206,43 @@ export function useMemoryCleanup(
       });
   }, [api, open, tab, filters]);
 
+  const readEvery = useLatestCallback(async (): Promise<
+    readonly MemoryReviewRow[] | null
+  > => {
+    if (api === null || !open || tab === 'checks') {
+      return null;
+    }
+    const view = everyView.current;
+    const read = ++everyRead.current;
+    setReadingEvery(true);
+    try {
+      const rows = await listEveryRow(api, reviewRequest(tab, filters));
+      if (view !== everyView.current) {
+        return null;
+      }
+      if (read === everyRead.current) {
+        setEveryRow(rows);
+      }
+      return rows;
+    } catch (err: unknown) {
+      if (view === everyView.current) {
+        setError(describeDaemonError(err));
+      }
+      return null;
+    } finally {
+      if (read === everyRead.current) {
+        setReadingEvery(false);
+      }
+    }
+  }, [api, open, tab, filters]);
+
   const refresh = useLatestCallback(() => {
     readSummary();
     readPage();
-  }, [readSummary, readPage]);
+    if (everyRow !== null) {
+      void readEvery();
+    }
+  }, [readSummary, readPage, readEvery]);
 
   useEffect(() => {
     readSummary();
@@ -222,6 +279,12 @@ export function useMemoryCleanup(
     setTickSkipped(null);
   };
 
+  const dropEvery = (): void => {
+    everyView.current += 1;
+    setEveryRow(null);
+    setReadingEvery(false);
+  };
+
   const setTab = (nextTab: MemoryCleanupTab): void => {
     if (nextTab === tab) {
       return;
@@ -230,12 +293,14 @@ export function useMemoryCleanup(
     setNotice(null);
     setRows([]);
     clearPicks();
+    dropEvery();
   };
 
   const setFilters = (nextFilters: MemoryCleanupFilters): void => {
     setFiltersState(nextFilters);
     setRows([]);
     clearPicks();
+    dropEvery();
   };
 
   const openDialog = (): void => {
@@ -246,6 +311,7 @@ export function useMemoryCleanup(
   const closeDialog = (): void => {
     setOpen(false);
     clearPicks();
+    dropEvery();
   };
 
   const loadMore = (): void => {
@@ -507,6 +573,9 @@ export function useMemoryCleanup(
     autoForgetFigure,
     refreshSummary: readSummary,
     loadMore,
+    everyRow,
+    readingEvery,
+    readEvery,
     batches,
     notice,
     announce: setNotice,

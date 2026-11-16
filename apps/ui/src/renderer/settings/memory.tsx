@@ -27,6 +27,7 @@ import {
   type MemoryImportPreviewRequestDtoProfilesInner,
   type MemoryImportResultDto,
   type MemoryIndexPreviewDto,
+  type MemoryReviewRow,
   type MemoryReviewSummaryDto,
   type MemoryTrackRecord,
   type Team,
@@ -353,6 +354,17 @@ function listRequest(
     ...(type === undefined ? {} : { type }),
     ...(q === '' ? {} : { q }),
   };
+}
+
+function mergeReviewRows(
+  loaded: readonly MemoryReviewRow[],
+  every: readonly MemoryReviewRow[] | null,
+): MemoryReviewRow[] {
+  const byId = new Map<string, MemoryReviewRow>();
+  for (const row of [...loaded, ...(every ?? [])]) {
+    byId.set(row.entry.id, row);
+  }
+  return [...byId.values()];
 }
 
 /** The Clean up panel's line: what the memory holds and what Least used proposes. */
@@ -838,12 +850,13 @@ export function Memory({
     setImporting(false);
   };
 
-  const sortedRows = cleanup.rows.filter((row) =>
-    cleanupSort.verdicts.has(row.entry.id),
+  const sortedRows = mergeReviewRows(cleanup.rows, cleanup.everyRow).filter(
+    (row) => cleanupSort.verdicts.has(row.entry.id),
   );
   const unsorted = cleanup.rows.filter(
     (row) => !cleanupSort.verdicts.has(row.entry.id),
   );
+  const unsortedEvery = Math.max(0, cleanup.total - sortedRows.length);
   const toForget = sortedRows.filter(
     (row) => cleanupSort.verdicts.get(row.entry.id)?.keep === false,
   );
@@ -851,6 +864,29 @@ export function Memory({
     (row) => row.warning === null && !cleanup.selected.has(row.entry.id),
   );
   const warnedPicks = toForget.filter((row) => row.warning !== null).length;
+
+  const sortNotes = (rows: readonly MemoryReviewRow[]): void => {
+    cleanupSort.start(
+      rows.map(({ entry }) => ({
+        key: entry.id,
+        title: entry.title,
+        body: entry.body,
+        folder: teamName(entry.teamSlug) ?? projectName(entry.projectId),
+      })),
+    );
+  };
+
+  const sortEvery = async (): Promise<void> => {
+    const every = await cleanup.readEvery();
+    if (every === null) {
+      return;
+    }
+    sortNotes(
+      mergeReviewRows(cleanup.rows, every).filter(
+        (row) => !cleanupSort.verdicts.has(row.entry.id),
+      ),
+    );
+  };
 
   const previewWhere = (() => {
     const place = previewPlace(filters.scope);
@@ -1465,18 +1501,32 @@ export function Memory({
                   ? 'All listed entries sorted'
                   : `Sort ${unsorted.length.toLocaleString('en-US')} listed`
               }
-              startDisabled={checkChoice === null || unsorted.length === 0}
+              startDisabled={
+                checkChoice === null ||
+                unsorted.length === 0 ||
+                cleanup.readingEvery
+              }
               sorted={sortedRows.length > 0}
-              onStart={() =>
-                cleanupSort.start(
-                  unsorted.map(({ entry }) => ({
-                    key: entry.id,
-                    title: entry.title,
-                    body: entry.body,
-                    folder:
-                      teamName(entry.teamSlug) ?? projectName(entry.projectId),
-                  })),
-                )
+              onStart={() => sortNotes(unsorted)}
+              moreActions={
+                cleanup.total > cleanup.rows.length ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={
+                      checkChoice === null ||
+                      cleanup.readingEvery ||
+                      unsortedEvery === 0
+                    }
+                    onClick={() => void sortEvery()}>
+                    {cleanup.readingEvery
+                      ? 'Reading entries…'
+                      : unsortedEvery === 0
+                        ? 'All entries sorted'
+                        : `Sort all ${unsortedEvery.toLocaleString('en-US')} unsorted`}
+                  </Button>
+                ) : null
               }
               summary={
                 sortedRows.length === 0 ? null : (

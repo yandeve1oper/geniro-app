@@ -41,6 +41,7 @@ export function MemorySortPanel({
   startDisabled,
   sorted,
   summary = null,
+  moreActions = null,
   onStart,
   slot,
 }: {
@@ -53,6 +54,7 @@ export function MemorySortPanel({
   /** Whether some notes already have a verdict, which turns the start button secondary. */
   sorted: boolean;
   summary?: React.ReactNode;
+  moreActions?: React.ReactNode;
   onStart: () => void;
   slot: string;
 }): React.JSX.Element {
@@ -99,6 +101,7 @@ export function MemorySortPanel({
             onClick={onStart}>
             {startLabel}
           </Button>
+          {moreActions}
           {summary}
         </div>
       )}

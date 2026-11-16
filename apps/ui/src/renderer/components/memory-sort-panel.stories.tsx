@@ -39,6 +39,16 @@ type Story = StoryObj<typeof meta>;
 
 export const AtRest: Story = {};
 
+export const WithSortAll: Story = {
+  args: {
+    moreActions: (
+      <Button type="button" size="sm" variant="outline">
+        Sort all 746 unsorted
+      </Button>
+    ),
+  },
+};
+
 export const Running: Story = {
   args: { sort: sort({ running: true, done: 12, total: 30 }) },
 };

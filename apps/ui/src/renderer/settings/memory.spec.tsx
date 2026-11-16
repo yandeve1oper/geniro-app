@@ -1488,6 +1488,137 @@ describe('Memory clean up', () => {
     expect(api.forgetMemoryBatch).not.toHaveBeenCalled();
   });
 
+  const PAGE_TWO_A = reviewRow(
+    memoryEntry({ id: 'c3', handle: 'm23', title: 'Deploys go on Tuesday' }),
+  );
+  const PAGE_TWO_B = reviewRow(
+    memoryEntry({ id: 'c4', handle: 'm24', title: 'Friday deploy freeze' }),
+  );
+
+  function twoPages(
+    request: MemoriesApiListMemoryReviewRequest,
+  ): MemoryReviewPageDto {
+    return request.cursor === 'page-2'
+      ? { rows: [PAGE_TWO_A, PAGE_TWO_B], total: 4, younger: 0, next: null }
+      : { rows: [COLD, COLD_RULE], total: 4, younger: 0, next: 'page-2' };
+  }
+
+  function sortPanel(): HTMLElement {
+    const panel = inDialog().querySelector<HTMLElement>(
+      '[data-slot="memory-cleanup-sort"]',
+    );
+    if (!panel) {
+      throw new Error('no Sort with AI panel in the cleanup dialog');
+    }
+    return panel;
+  }
+
+  function sortSummary(): string | undefined {
+    return (
+      sortPanel().querySelector('[data-slot="memory-cleanup-sort-summary"]')
+        ?.textContent ?? undefined
+    );
+  }
+
+  async function sortEveryMatch(): Promise<ReturnType<typeof fakeApi>> {
+    const api = fakeApi(undefined, twoPages);
+    api.triageMemoryImport
+      .mockResolvedValueOnce({
+        verdicts: [
+          { key: 'c1', keep: false, reason: 'one sprint’s status' },
+          { key: 'c2', keep: false, reason: 'stale' },
+        ],
+      })
+      .mockResolvedValueOnce({
+        verdicts: [
+          { key: 'c3', keep: false, reason: 'a one-off date' },
+          { key: 'c4', keep: true, reason: 'a durable rule' },
+        ],
+      });
+    await render({ api });
+    await press(button(container, 'Review…'));
+    await settle();
+    await press(button(sortPanel(), 'Sort 2 listed'));
+    await settle();
+    await press(button(sortPanel(), 'Sort all 2 unsorted'));
+    await settle();
+    return api;
+  }
+
+  it('sorts every entry the cleanup matches, not only the loaded page, and sends no entry already judged', async () => {
+    const api = await sortEveryMatch();
+
+    expect(api.listMemoryReview).toHaveBeenCalledWith({
+      tab: 'cold',
+      sort: 'leastUsed',
+      minAgeDays: 14,
+      warnings: 'any',
+      limit: 100,
+      cursor: 'page-2',
+    });
+    expect(api.triageMemoryImport).toHaveBeenCalledTimes(2);
+    expect(api.triageMemoryImport).toHaveBeenLastCalledWith(
+      {
+        memoryImportTriageRequestDto: expect.objectContaining({
+          purpose: 'cleanup',
+          notes: [
+            expect.objectContaining({
+              key: 'c3',
+              title: 'Deploys go on Tuesday',
+            }),
+            expect.objectContaining({ key: 'c4' }),
+          ],
+        }),
+      },
+      expect.anything(),
+    );
+  });
+
+  it('counts and ticks every sorted entry, including the ones off the page, and skips the warned ones', async () => {
+    const api = await sortEveryMatch();
+
+    expect(sortSummary()).toContain('3 to forget · 1 to keep');
+    await press(button(inDialog(), 'Tick the 2 to forget'));
+
+    expect(pick('m21').getAttribute('aria-pressed')).toBe('true');
+    expect(pick('m22').getAttribute('aria-pressed')).toBe('false');
+    expect(inDialog().textContent).toContain('1 with a warning left for you');
+
+    await press(button(inDialog(), 'Forget 2…'));
+    expect(lastQuestion()?.textContent).toContain('Forget 2 entries?');
+    await press(confirmInDialog('Forget 2'));
+
+    expect(api.forgetMemoryBatch).toHaveBeenCalledWith({
+      forgetMemoryBatchDto: { ids: ['c1', 'c3'] },
+    });
+  });
+
+  it('offers no sort-all button once every matching entry is loaded', async () => {
+    const api = fakeApi(undefined, () => ({
+      rows: [COLD, COLD_RULE],
+      total: 2,
+      younger: 0,
+      next: null,
+    }));
+    await render({ api });
+    await press(button(container, 'Review…'));
+    await settle();
+
+    expect(sortPanel().textContent).toContain('Sort 2 listed');
+    expect(sortPanel().textContent).not.toContain('Sort all');
+  });
+
+  it('drops the every-entry read when the filters change', async () => {
+    await sortEveryMatch();
+    expect(sortSummary()).toContain('3 to forget · 1 to keep');
+
+    await choose('Warnings', 'Hide warnings');
+    await settle();
+
+    expect(sortSummary()).toContain('2 to forget · 0 to keep');
+    expect(sortPanel().textContent).toContain('Sort all 2 unsorted');
+  });
+
   it('Tick shown skips warned rows and the confirm names the count', async () => {
     const api = await render({
       api: fakeApi(undefined, () => ({
