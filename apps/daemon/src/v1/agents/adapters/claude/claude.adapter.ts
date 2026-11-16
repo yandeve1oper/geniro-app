@@ -88,6 +88,7 @@ import {
   CLAUDE_BASE_ARGS,
   CLAUDE_BROWSER_TOOLS_ENV,
   CLAUDE_BROWSER_TOOLS_OPTION,
+  CLAUDE_BUILT_IN_MCP_SERVERS,
   CLAUDE_CONFIG_DIR_ENV,
   CLAUDE_CONFIG_FILE_FALLBACK_MODE,
   CLAUDE_CONFIG_LOCK_RETRIES,
@@ -145,6 +146,7 @@ import {
   CLAUDE_PROJECT_SETTINGS_FILES,
   CLAUDE_PROVIDER_ENV_KEYS,
   CLAUDE_QUESTION_TOOL_NAME,
+  CLAUDE_READ_ONLY_TOOLS,
   CLAUDE_RELOAD_COMMANDS_REQUEST_ID,
   CLAUDE_RESUME_FLAG,
   CLAUDE_SESSION_STATE_EVENTS_ENV,
@@ -158,6 +160,7 @@ import {
   CLAUDE_TITLE_MODEL,
   CLAUDE_TITLE_TIMEOUT_MS,
   CLAUDE_TODO_TOOLS_ENV,
+  CLAUDE_TOOLS_FLAG,
   CLAUDE_USER_DATA_TMP_DIR_NAME,
 } from './claude.const';
 import type { ClaudeAdapterOptions, ClaudeModeProbe } from './claude.types';
@@ -2283,9 +2286,14 @@ export class ClaudeAdapter extends AgentAdapter {
     // claude's own tools geniro replaces, and a team member's switched-off
     // servers, ride one variadic `--disallowedTools`; geniro's own server is
     // filtered out inside.
+    if (input.readOnly === true) {
+      args.push(CLAUDE_TOOLS_FLAG, CLAUDE_READ_ONLY_TOOLS.join(','));
+    }
     args.push(
       ...claudeDisallowedToolArgs(
-        input.mcpDisabled,
+        input.readOnly === true
+          ? [...(input.mcpDisabled ?? []), ...CLAUDE_BUILT_IN_MCP_SERVERS]
+          : input.mcpDisabled,
         input.mcpEndpoint?.serverName ?? null,
       ),
     );
@@ -2307,6 +2315,9 @@ export class ClaudeAdapter extends AgentAdapter {
       // two unambiguous is the NAME: geniro's server carries this run's id, so
       // it cannot be one the user has already given a server of their own.
       args.push(CLAUDE_MCP_CONFIG_FLAG, mcpConfigPath);
+      if (input.readOnly === true) {
+        args.push(CLAUDE_STRICT_MCP_CONFIG_FLAG);
+      }
     }
     return args;
   }

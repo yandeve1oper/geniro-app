@@ -5068,7 +5068,9 @@ export const ItemKind = {
     TeamNote: 'team_note',
     RunOutcome: 'run_outcome',
     StageChange: 'stage_change',
-    ThreadOutcome: 'thread_outcome'
+    ThreadOutcome: 'thread_outcome',
+    Lessons: 'lessons',
+    LessonOutcome: 'lesson_outcome'
 } as const;
 export type ItemKind = typeof ItemKind[keyof typeof ItemKind];
 
@@ -5894,6 +5896,442 @@ export interface LabelInstructionDto {
      * @memberof LabelInstructionDto
      */
     updatedAt: string;
+}
+/**
+ * 
+ * @export
+ * @interface LessonDedup
+ */
+export interface LessonDedup {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonDedup
+     */
+    verdict: LessonDedupVerdictEnum;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonDedup
+     */
+    handle: string | null;
+}
+
+
+/**
+ * @export
+ */
+export const LessonDedupVerdictEnum = {
+    New: 'new',
+    Refines: 'refines',
+    BrokenAgain: 'broken_again'
+} as const;
+export type LessonDedupVerdictEnum = typeof LessonDedupVerdictEnum[keyof typeof LessonDedupVerdictEnum];
+
+/**
+ * 
+ * @export
+ * @interface LessonEvidence
+ */
+export interface LessonEvidence {
+    /**
+     * 
+     * @type {number}
+     * @memberof LessonEvidence
+     */
+    seq: number;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonEvidence
+     */
+    quote: string;
+}
+/**
+ * 
+ * @export
+ * @interface LessonMemoryTarget
+ */
+export interface LessonMemoryTarget {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonMemoryTarget
+     */
+    kind: LessonMemoryTargetKindEnum;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonMemoryTarget
+     */
+    scope: LessonMemoryTargetScopeEnum;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonMemoryTarget
+     */
+    type: LessonMemoryTargetTypeEnum;
+}
+
+
+/**
+ * @export
+ */
+export const LessonMemoryTargetKindEnum = {
+    Memory: 'memory'
+} as const;
+export type LessonMemoryTargetKindEnum = typeof LessonMemoryTargetKindEnum[keyof typeof LessonMemoryTargetKindEnum];
+
+/**
+ * @export
+ */
+export const LessonMemoryTargetScopeEnum = {
+    Project: 'project',
+    Team: 'team',
+    Global: 'global'
+} as const;
+export type LessonMemoryTargetScopeEnum = typeof LessonMemoryTargetScopeEnum[keyof typeof LessonMemoryTargetScopeEnum];
+
+/**
+ * @export
+ */
+export const LessonMemoryTargetTypeEnum = {
+    User: 'user',
+    Feedback: 'feedback',
+    Project: 'project',
+    Reference: 'reference'
+} as const;
+export type LessonMemoryTargetTypeEnum = typeof LessonMemoryTargetTypeEnum[keyof typeof LessonMemoryTargetTypeEnum];
+
+/**
+ * 
+ * @export
+ * @interface LessonProposal
+ */
+export interface LessonProposal {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    id: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    sourceRunId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    sourceTitle: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    reflectionRunId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    projectId: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    teamSlug: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    title: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    rule: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    why: string;
+    /**
+     * 
+     * @type {LessonSignalKind}
+     * @memberof LessonProposal
+     */
+    signalKind: LessonSignalKind;
+    /**
+     * 
+     * @type {LessonEvidence}
+     * @memberof LessonProposal
+     */
+    evidence: LessonEvidence;
+    /**
+     * 
+     * @type {LessonMemoryTarget}
+     * @memberof LessonProposal
+     */
+    target: LessonMemoryTarget;
+    /**
+     * 
+     * @type {LessonDedup}
+     * @memberof LessonProposal
+     */
+    dedup: LessonDedup;
+    /**
+     * 
+     * @type {LessonProposalStatus}
+     * @memberof LessonProposal
+     */
+    status: LessonProposalStatus;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    rejectReason: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    memoryHandle: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    createdAt: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    decidedAt: string | null;
+}
+
+
+/**
+ * 
+ * @export
+ * @interface LessonProposalListDto
+ */
+export interface LessonProposalListDto {
+    /**
+     * 
+     * @type {Array<LessonProposal>}
+     * @memberof LessonProposalListDto
+     */
+    proposals: Array<LessonProposal>;
+}
+
+/**
+ * 
+ * @export
+ */
+export const LessonProposalStatus = {
+    Proposed: 'proposed',
+    Saved: 'saved',
+    Rejected: 'rejected',
+    Failed: 'failed'
+} as const;
+export type LessonProposalStatus = typeof LessonProposalStatus[keyof typeof LessonProposalStatus];
+
+/**
+ * 
+ * @export
+ * @interface LessonReflectionFactsDto
+ */
+export interface LessonReflectionFactsDto {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonReflectionFactsDto
+     */
+    reflectionRunId: string;
+    /**
+     * 
+     * @type {AgentKind}
+     * @memberof LessonReflectionFactsDto
+     */
+    agentKind: AgentKind;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonReflectionFactsDto
+     */
+    model: string | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof LessonReflectionFactsDto
+     */
+    working: boolean;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonReflectionFactsDto
+     */
+    startedAt: string;
+    /**
+     * 
+     * @type {number}
+     * @memberof LessonReflectionFactsDto
+     */
+    durationMs: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof LessonReflectionFactsDto
+     */
+    costUsd: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof LessonReflectionFactsDto
+     */
+    tokens: number | null;
+}
+
+
+
+/**
+ * 
+ * @export
+ */
+export const LessonSignalKind = {
+    UserCorrection: 'user_correction',
+    ApprovalRefused: 'approval_refused',
+    ErrorThenSuccess: 'error_then_success',
+    OutcomeFailed: 'outcome_failed',
+    StageReopened: 'stage_reopened',
+    ReviewFinding: 'review_finding'
+} as const;
+export type LessonSignalKind = typeof LessonSignalKind[keyof typeof LessonSignalKind];
+
+/**
+ * 
+ * @export
+ * @interface LessonsConfigAckDto
+ */
+export interface LessonsConfigAckDto {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsConfigAckDto
+     */
+    mode: LessonsConfigAckDtoModeEnum;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsConfigAckDto
+     */
+    agentKind: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsConfigAckDto
+     */
+    model: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsConfigAckDto
+     */
+    effort: string | null;
+}
+
+
+/**
+ * @export
+ */
+export const LessonsConfigAckDtoModeEnum = {
+    Off: 'off',
+    Offer: 'offer'
+} as const;
+export type LessonsConfigAckDtoModeEnum = typeof LessonsConfigAckDtoModeEnum[keyof typeof LessonsConfigAckDtoModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface LessonsConfigDto
+ */
+export interface LessonsConfigDto {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsConfigDto
+     */
+    mode: LessonsConfigDtoModeEnum;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsConfigDto
+     */
+    agentKind: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsConfigDto
+     */
+    model: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsConfigDto
+     */
+    effort: string | null;
+}
+
+
+/**
+ * @export
+ */
+export const LessonsConfigDtoModeEnum = {
+    Off: 'off',
+    Offer: 'offer'
+} as const;
+export type LessonsConfigDtoModeEnum = typeof LessonsConfigDtoModeEnum[keyof typeof LessonsConfigDtoModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface LessonsReflectStartedDto
+ */
+export interface LessonsReflectStartedDto {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsReflectStartedDto
+     */
+    reflectionRunId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonsReflectStartedDto
+     */
+    segmentId: string;
+    /**
+     * 
+     * @type {number}
+     * @memberof LessonsReflectStartedDto
+     */
+    fromSeq: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof LessonsReflectStartedDto
+     */
+    toSeq: number;
 }
 /**
  * 
@@ -9859,6 +10297,52 @@ export interface ReconcileTasksDto {
 /**
  * 
  * @export
+ * @interface ReflectLessonsDto
+ */
+export interface ReflectLessonsDto {
+    /**
+     * 
+     * @type {AgentKind}
+     * @memberof ReflectLessonsDto
+     */
+    agentKind?: AgentKind;
+    /**
+     * 
+     * @type {string}
+     * @memberof ReflectLessonsDto
+     */
+    model?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof ReflectLessonsDto
+     */
+    effort?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof ReflectLessonsDto
+     */
+    configDir?: string;
+}
+
+
+/**
+ * 
+ * @export
+ * @interface RejectLessonDto
+ */
+export interface RejectLessonDto {
+    /**
+     * 
+     * @type {string}
+     * @memberof RejectLessonDto
+     */
+    reason?: string;
+}
+/**
+ * 
+ * @export
  * @interface RenameRunDto
  */
 export interface RenameRunDto {
@@ -12430,6 +12914,31 @@ export const RunWorkStatus = {
 } as const;
 export type RunWorkStatus = typeof RunWorkStatus[keyof typeof RunWorkStatus];
 
+/**
+ * 
+ * @export
+ * @interface SaveLessonDto
+ */
+export interface SaveLessonDto {
+    /**
+     * 
+     * @type {string}
+     * @memberof SaveLessonDto
+     */
+    title?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof SaveLessonDto
+     */
+    rule?: string;
+    /**
+     * 
+     * @type {LessonMemoryTarget}
+     * @memberof SaveLessonDto
+     */
+    target?: LessonMemoryTarget;
+}
 /**
  * 
  * @export
@@ -15928,6 +16437,31 @@ export interface ThreadAnalysisDto {
 /**
  * 
  * @export
+ * @interface ThreadLessonsStateDto
+ */
+export interface ThreadLessonsStateDto {
+    /**
+     * Something past the last reflection exists and the thread may be reflected on
+     * @type {boolean}
+     * @memberof ThreadLessonsStateDto
+     */
+    reflectable: boolean;
+    /**
+     * 
+     * @type {string}
+     * @memberof ThreadLessonsStateDto
+     */
+    reflectionRunId: string | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof ThreadLessonsStateDto
+     */
+    reflectedThroughSeq: number | null;
+}
+/**
+ * 
+ * @export
  * @interface ThreadMetrics
  */
 export interface ThreadMetrics {
@@ -17267,6 +17801,12 @@ export interface UsageStatsDto {
      * @memberof UsageStatsDto
      */
     byTeam: Array<UsageGroup>;
+    /**
+     * spend the app made for itself, keyed by purpose: `lessons` is the hidden lessons reflections; the user's own work is in no row
+     * @type {Array<UsageGroup>}
+     * @memberof UsageStatsDto
+     */
+    byPurpose: Array<UsageGroup>;
     /**
      * the threads started in the period: goals, outcomes, and every tool and MCP server called in it
      * @type {ThreadMetrics}

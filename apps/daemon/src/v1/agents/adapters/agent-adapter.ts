@@ -2636,6 +2636,7 @@ export abstract class AgentAdapter {
       // isolated its MCP set cannot be served by a process spawned without
       // that restriction, or the reverse.
       input.isolateMcpServers === true,
+      input.readOnly === true,
       // Applied at spawn by every CLI that honours it (argv, a thread config,
       // a per-turn data directory), so a process started with one set cannot
       // serve a turn that switched off another. Sorted and de-duplicated: the

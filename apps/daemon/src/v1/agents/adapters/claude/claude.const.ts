@@ -366,6 +366,33 @@ export const CLAUDE_WITHHELD_TOOLS: readonly string[] = [
 ];
 
 /**
+ * The built-in tools a read-only turn (`AgentTurnInput.readOnly`) keeps, through
+ * `--tools`: no shell, no write or edit, no sub-agent. MEASURED on 2.1.316
+ * (2026-11-13), read to `system/init`: `--tools Read,Grep,Glob` lists only
+ * `Glob`, `Grep`, `Read` and the MCP tools, where `--disallowedTools` for the
+ * shell and write tools still left `Workflow`, `Skill`, `EnterWorktree`,
+ * `CronCreate`, `RemoteTrigger` and the rest.
+ */
+export const CLAUDE_READ_ONLY_TOOLS: readonly string[] = [
+  'Read',
+  'Grep',
+  'Glob',
+];
+
+/** The flag naming the only built-in tools a process offers its model. */
+export const CLAUDE_TOOLS_FLAG = '--tools';
+
+/**
+ * The MCP server claude loads on its own even under `--strict-mcp-config`.
+ * MEASURED on 2.1.316 (2026-11-13): with `--strict-mcp-config` and a config
+ * holding one server, `system/init` still connected `claude-in-chrome`, while
+ * the claude.ai connectors were gone. A read-only turn switches it off by name.
+ */
+export const CLAUDE_BUILT_IN_MCP_SERVERS: readonly string[] = [
+  'claude-in-chrome',
+];
+
+/**
  * The settings key and value that stop another claude session writing into a
  * geniro turn: such a message opens a turn the daemon never sees the text of.
  * MEASURED on 2.1.316 (2026-11-06): with `accept` a peer's `SendMessage` opened

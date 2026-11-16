@@ -351,6 +351,11 @@ class FakeRunDao {
       .filter((run) => run.analysisSourceRunId === sourceRunId)
       .reverse();
   }
+  async listReviewAnalysesOf(sourceRunId: string): Promise<Run[]> {
+    return (await this.listAnalysesOf(sourceRunId)).filter(
+      (run) => run.analysisPurpose !== 'lessons',
+    );
+  }
   /** Newest first, as the real one orders by `createdAt` (insertion here). */
   async newestTeamRuns(slug: string, limit: number): Promise<Run[]> {
     return [...this.runs.values()]
@@ -6339,6 +6344,29 @@ describe('ChatService', () => {
     });
   });
 
+  describe('findAnalysis — lessons reflections', () => {
+    it('never answers a lessons reflection as the thread’s analysis, newer or not', async () => {
+      const { service } = setup();
+      const review = await service.createChat({
+        agentKind: 'claude',
+        cwd: dir,
+        analysisSource: { runId: 'source', seq: 3, working: false },
+      });
+      await service.createChat({
+        agentKind: 'claude',
+        cwd: dir,
+        analysisSource: {
+          runId: 'source',
+          seq: 5,
+          working: false,
+          purpose: 'lessons',
+        },
+      });
+
+      expect((await service.findAnalysis('source'))?.id).toBe(review.id);
+    });
+  });
+
   describe('findTeamAnalysis', () => {
     it("answers the team's newest analysis, or the caller's own while it exists", async () => {
       const { service } = setup();
@@ -12132,6 +12160,59 @@ describe('ChatService — approval modes (parity M1)', () => {
     expect(respond).not.toHaveBeenCalledWith('p-save', true, {});
     // Only the save is left waiting on the user.
     expect(approvals.listByRun(run.id)).toHaveLength(1);
+  });
+
+  it('refuses at once whatever a lessons reflection asks beyond its own tools, raising no card', async () => {
+    const { service, claude, approvals, itemDao } = setup();
+    const run = await service.createChat({
+      agentKind: 'claude',
+      cwd: dir,
+      approval: 'ask',
+      analysisSource: {
+        runId: 'source',
+        seq: 5,
+        working: false,
+        purpose: 'lessons',
+      },
+    });
+    await service.sendMessage(run.id, 'hi');
+    const server = hostMcpServerName(run.id);
+    for (const [id, tool] of [
+      ['p-read', `mcp__${server}__read_analyzed_thread`],
+      ['p-lessons', `mcp__${server}__propose_lessons`],
+      ['p-write', 'Write'],
+      ['p-bash', 'Bash'],
+    ] as const) {
+      claude.emit({ type: 'approval_request', id, toolName: tool, input: {} });
+    }
+    await drain();
+
+    expect((claude.start.mock.calls[0]?.[0] as AgentTurnInput).readOnly).toBe(
+      true,
+    );
+    const respond = claude.handles[0]!.respondApproval;
+    expect(respond).toHaveBeenCalledWith('p-read', true, {});
+    expect(respond).toHaveBeenCalledWith('p-lessons', true, {});
+    expect(respond).toHaveBeenCalledWith('p-write', false, undefined);
+    expect(respond).toHaveBeenCalledWith('p-bash', false, undefined);
+    expect(approvals.listByRun(run.id)).toEqual([]);
+    expect(itemDao.items.some((i) => i.kind === 'approval_request')).toBe(
+      false,
+    );
+  });
+
+  it('leaves an ordinary chat’s turns with their full toolset', async () => {
+    const { service, claude } = setup();
+    const run = await service.createChat({
+      agentKind: 'claude',
+      cwd: dir,
+      approval: 'ask',
+    });
+    await service.sendMessage(run.id, 'hi');
+
+    expect(
+      (claude.start.mock.calls[0]?.[0] as AgentTurnInput).readOnly,
+    ).toBeUndefined();
   });
 
   it('auto-approves the four shared-memory tools on an ASK chat', async () => {

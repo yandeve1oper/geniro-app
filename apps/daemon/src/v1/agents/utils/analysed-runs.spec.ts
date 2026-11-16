@@ -43,6 +43,7 @@ describe('analysisTurnOf', () => {
     analysisSourceWorking: null,
     analysisTeamSlug: null,
     analysisRuns: null,
+    analysisPurpose: null,
   };
 
   it('answers null for a chat that is not an analysis', () => {
@@ -63,6 +64,22 @@ describe('analysisTurnOf', () => {
       snapshotSeq: 9,
       sourceWorking: true,
     });
+  });
+
+  it('marks a lessons reflection on its turn, and only a lessons reflection', () => {
+    const thread = {
+      ...none,
+      analysisSourceRunId: 'src',
+      analysisSourceSeq: 9,
+      analysisSourceWorking: false,
+    };
+
+    expect(
+      analysisTurnOf('a', { ...thread, analysisPurpose: 'lessons' })?.purpose,
+    ).toBe('lessons');
+    expect(
+      analysisTurnOf('a', { ...thread, analysisPurpose: 'review' }),
+    ).not.toHaveProperty('purpose');
   });
 
   it('reads a team analysis as its runs, the newest standing as the source', () => {

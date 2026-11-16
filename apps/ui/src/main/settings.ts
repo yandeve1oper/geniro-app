@@ -12,11 +12,13 @@ import { app } from 'electron';
 
 import {
   DEFAULT_KNOWLEDGE,
+  DEFAULT_LESSONS,
   DEFAULT_MEMORY,
   DEFAULT_RESOURCE_ALERTS,
   DEFAULT_SETTINGS,
   DEFAULT_SHARING,
   type KnowledgeSettings,
+  type LessonsSettings,
   MAX_CONFIG_PROFILES,
   MAX_FAST_ACTIONS,
   MAX_RUN_CONFIGS,
@@ -29,6 +31,7 @@ import {
 import {
   autoRevokeAfterDaysSchema,
   knowledgeSchema,
+  lessonsSchema,
   MAX_SHARE_DESTINATIONS,
   memorySchema,
   resourceAlertsSchema,
@@ -133,6 +136,10 @@ export function readSettings(): Settings {
       }
       if (key === 'memory') {
         salvaged[key] = salvageMemory(record[key]);
+        continue;
+      }
+      if (key === 'lessons') {
+        salvaged[key] = salvageLessons(record[key]);
         continue;
       }
       if (key === 'knowledge') {
@@ -297,6 +304,28 @@ function salvageMemory(value: unknown): MemorySettings {
     nativeMemoryOff: memorySchema.shape.nativeMemoryOff
       .catch(DEFAULT_MEMORY.nativeMemoryOff)
       .parse(record.nativeMemoryOff),
+  };
+}
+
+/** The lessons settings field by field: one bad value keeps the others. */
+function salvageLessons(value: unknown): LessonsSettings {
+  if (typeof value !== 'object' || value === null) {
+    return DEFAULT_LESSONS;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    mode: lessonsSchema.shape.mode
+      .catch(DEFAULT_LESSONS.mode)
+      .parse(record.mode),
+    agentKind: lessonsSchema.shape.agentKind
+      .catch(DEFAULT_LESSONS.agentKind)
+      .parse(record.agentKind ?? null),
+    model: lessonsSchema.shape.model
+      .catch(DEFAULT_LESSONS.model)
+      .parse(record.model ?? null),
+    effort: lessonsSchema.shape.effort
+      .catch(DEFAULT_LESSONS.effort)
+      .parse(record.effort ?? null),
   };
 }
 

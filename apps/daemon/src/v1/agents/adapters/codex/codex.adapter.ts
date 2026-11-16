@@ -94,6 +94,7 @@ import {
   CODEX_QUESTION_TOOL_NAME,
   CODEX_REASONING_EFFORT_KEY,
   CODEX_SESSION_SEARCH_PAGE,
+  CODEX_SHELL_TOOL_FEATURE_KEY,
   CODEX_THREAD_FACTS_MAX,
   CODEX_THREAD_ID_PATTERN,
   CODEX_TITLE_ARGS,
@@ -142,7 +143,10 @@ import {
   codexPlanLimitsRequestLine,
   readCodexPlanLimitsReply,
 } from './utils/codex-plan-limits.utils';
-import { codexTurnPolicy } from './utils/codex-policy.utils';
+import {
+  CODEX_READ_ONLY_TURN_POLICY,
+  codexTurnPolicy,
+} from './utils/codex-policy.utils';
 import {
   codexModelParameterListing,
   codexServiceTierArgs,
@@ -651,12 +655,18 @@ export class CodexAdapter extends AgentAdapter {
       ...(input.nativeMemoryOff === true
         ? { [CODEX_MEMORIES_FEATURE_KEY]: false }
         : {}),
+      ...(input.readOnly === true
+        ? { [CODEX_SHELL_TOOL_FEATURE_KEY]: false }
+        : {}),
     };
     return {
       input,
       developerInstructions: this.composeSystemPrompt(input, endpoint !== null),
       config: Object.keys(config).length > 0 ? config : null,
-      policy: codexTurnPolicy(input.approvalMode),
+      policy:
+        input.readOnly === true
+          ? CODEX_READ_ONLY_TURN_POLICY
+          : codexTurnPolicy(input.approvalMode),
       autoCompactTokens: this.autoCompactTokens(input),
       // geniro's own server is never switched off, whatever the member lists:
       // the turn's instructions may tell it to use those tools.

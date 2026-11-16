@@ -57,6 +57,9 @@ export type AnalysisRowWriter = (
   payload: object,
 ) => Promise<ItemWire>;
 
+const LESSONS_REFLECTION_REFUSAL =
+  'LESSONS_REFLECTION — a lessons reflection files lessons with propose_lessons, never recommendations';
+
 function refused(reason: string): AnalysisFiled {
   return { status: 'refused', reason };
 }
@@ -110,6 +113,9 @@ export class AnalysisReportsService {
     return {
       turn,
       report: async (call, versionIndex, population) => {
+        if (turn.purpose === 'lessons') {
+          return refused(LESSONS_REFLECTION_REFUSAL);
+        }
         let card: Record<string, unknown>;
         if ('patch' in call) {
           if (kept === null) {
@@ -138,7 +144,10 @@ export class AnalysisReportsService {
         }
         return filed;
       },
-      mark: (marks) => this.mark(turn, marks, write),
+      mark: (marks) =>
+        turn.purpose === 'lessons'
+          ? Promise.resolve(refused(LESSONS_REFLECTION_REFUSAL))
+          : this.mark(turn, marks, write),
     };
   }
 

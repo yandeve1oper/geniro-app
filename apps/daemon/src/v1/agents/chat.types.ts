@@ -7,6 +7,7 @@ import type { Run } from '../runs/entity/run.entity';
 import {
   type AgentKind,
   AgentKindSchema,
+  type AnalysisPurpose,
   type ItemKind,
   ItemKindSchema,
   type RunStatus,
@@ -395,6 +396,8 @@ export type HostFindingsOutcome =
  */
 export const HOST_ANALYZED_THREAD_TOOL = 'read_analyzed_thread';
 export const HOST_RECOMMENDATIONS_TOOL = 'report_recommendations';
+/** A lessons reflection's lessons about the thread it read. */
+export const HOST_LESSONS_TOOL = 'propose_lessons';
 export const HOST_RECOMMENDATION_MARKS_TOOL = 'mark_recommendations';
 export const HOST_TEAM_CHANGE_TOOL = 'save_team_change';
 /** An analysis's write of applied project-instructions (`P-`) items. */
@@ -1388,6 +1391,8 @@ export interface AnalysisTurn {
   sourceWorking: boolean;
   /** Set only for a team analysis ("Analyze & improve"). */
   team?: AnalysedTeam | null;
+  /** `Run.analysisPurpose`; absent is the user's own review. */
+  purpose?: AnalysisPurpose;
 }
 
 /** What the reader needs of an analysis turn: its source and snapshot. */

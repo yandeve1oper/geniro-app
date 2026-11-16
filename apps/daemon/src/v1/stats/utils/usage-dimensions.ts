@@ -8,13 +8,13 @@ import type { UsageEventInput } from '../stats.types';
 /** The run columns {@link usageDimensions} reads. */
 export type UsageDimensionRun = Pick<
   Run,
-  'agentKind' | 'model' | 'cwd' | 'teamId' | 'teamSnapshot'
+  'agentKind' | 'model' | 'cwd' | 'teamId' | 'teamSnapshot' | 'analysisPurpose'
 >;
 
 /** The denormalized half of a ledger row — what the turn ran AS. */
 export type UsageDimensions = Pick<
   UsageEventInput,
-  'agentKind' | 'model' | 'cwd' | 'teamName'
+  'agentKind' | 'model' | 'cwd' | 'teamName' | 'purpose'
 >;
 
 /**
@@ -58,6 +58,7 @@ export function usageDimensions(
       model: state?.model ?? run?.model ?? null,
       cwd: run?.cwd ?? null,
       teamName: teamNameOf(run),
+      purpose: run?.analysisPurpose === 'lessons' ? 'lessons' : null,
     },
     reportedModel,
     member,

@@ -39,6 +39,7 @@ import { registerIpc } from './ipc';
 import { KeepAwake } from './keep-awake';
 import { KeptSessionConfigPush } from './kept-session-config-push';
 import { KnowledgeConfigPush } from './knowledge-config-push';
+import { LessonsConfigPush } from './lessons-config-push';
 import { flushWindowsThen } from './line-measurement-flush';
 import { memoryConfigOf, MemoryConfigPush } from './memory-config-push';
 import {
@@ -199,6 +200,11 @@ const memoryConfigPush = new MemoryConfigPush((message) => {
     source: 'memory-config',
   });
 });
+const lessonsConfigPush = new LessonsConfigPush((message) => {
+  void reportMainLog(supervisor.getHandle(), 'warn', message, {
+    source: 'lessons-config',
+  });
+});
 const knowledgeConfigPush = new KnowledgeConfigPush((message) => {
   void reportMainLog(supervisor.getHandle(), 'warn', message, {
     source: 'knowledge-config',
@@ -218,6 +224,10 @@ onSettingsWritten((settings) => {
   void memoryConfigPush.pushIfChanged(
     supervisor.getHandle(),
     memoryConfigOf(settings),
+  );
+  void lessonsConfigPush.pushIfChanged(
+    supervisor.getHandle(),
+    settings.lessons,
   );
   void knowledgeConfigPush.pushIfChanged(
     supervisor.getHandle(),
@@ -724,6 +734,7 @@ function pushDaemonConfig(handle: DaemonHandle): void {
     idleMinutes: settings.keptSessionIdleMinutes,
   });
   void memoryConfigPush.push(handle, memoryConfigOf(settings));
+  void lessonsConfigPush.push(handle, settings.lessons);
   void knowledgeConfigPush.push(handle, settings.knowledge);
   void resourceAlertsConfigPush.push(handle, settings.resourceAlerts);
 }

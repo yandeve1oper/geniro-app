@@ -503,6 +503,16 @@ export const CODEX_APPS_FEATURE_KEY = 'features.apps';
 export const CODEX_MEMORIES_FEATURE_KEY = 'features.memories';
 
 /**
+ * Takes the shell away from a read-only turn's model (`AgentTurnInput.readOnly`).
+ * MEASURED on 0.166.0 with `codex debug prompt-input` in a throwaway
+ * `CODEX_HOME`: `features.shell_tool = false` removes `exec_command` and
+ * `write_stdin` and leaves the MCP tools. `apply_patch` has no key of its own;
+ * such a turn runs in the read-only sandbox under `untrusted`, so a patch asks,
+ * and the daemon refuses it.
+ */
+export const CODEX_SHELL_TOOL_FEATURE_KEY = 'features.shell_tool';
+
+/**
  * Switches off, in one thread, each of the user's own hooks that runs when
  * codex asks for a permission (`hooks/list` names them by `key` and
  * `eventName`). geniro's card is the approval, and codex runs those hooks

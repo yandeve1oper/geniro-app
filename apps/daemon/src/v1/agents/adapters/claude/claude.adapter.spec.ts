@@ -3057,6 +3057,51 @@ describe('ClaudeAdapter — fast mode', () => {
     );
   });
 
+  it('gives a read-only turn only Read, Grep and Glob, and no MCP server but geniro’s own', () => {
+    const { spawn, captured } = fakeSpawn();
+    new ClaudeAdapter({ spawn, waitForMcpServers: false }).start(
+      {
+        prompt: 'go',
+        cwd: '/proj',
+        readOnly: true,
+        mcpEndpoint: {
+          url: 'http://127.0.0.1:1/v1/mcp/r/n',
+          token: 't',
+          serverName: 'geniro-run-1',
+        },
+      },
+      () => {},
+    );
+    const args = captured.args!;
+    expect(
+      args.slice(args.indexOf('--tools'), args.indexOf('--tools') + 2),
+    ).toEqual(['--tools', 'Read,Grep,Glob']);
+    const at = args.indexOf('--disallowedTools');
+    expect(args.slice(at + 1, at + 4)).toEqual([
+      'Monitor',
+      'ListAgents',
+      'mcp__claude-in-chrome',
+    ]);
+    expect(args).toContain('--mcp-config');
+    expect(args).toContain('--strict-mcp-config');
+
+    const open = fakeSpawn();
+    new ClaudeAdapter({ spawn: open.spawn, waitForMcpServers: false }).start(
+      {
+        prompt: 'go',
+        cwd: '/proj',
+        mcpEndpoint: {
+          url: 'http://127.0.0.1:1/v1/mcp/r/n',
+          token: 't',
+          serverName: 'geniro-run-1',
+        },
+      },
+      () => {},
+    );
+    expect(open.captured.args).not.toContain('--tools');
+    expect(open.captured.args).not.toContain('--strict-mcp-config');
+  });
+
   it('respawns the kept process when the switched-off servers change, not when only their order does', async () => {
     const { spawn, child } = fakeSpawn();
     const input: AgentTurnInput = {

@@ -3144,6 +3144,19 @@ export class ItemDao extends BaseDao<Item> {
     return last ? last.seq : -1;
   }
 
+  /** Highest seq of a run's rows other than `kinds`, or -1 when it has none. */
+  async maxSeqExcept(
+    runId: string,
+    kinds: readonly ItemKind[],
+    txEm?: EntityManager,
+  ): Promise<number> {
+    const last = await this.getRepo(txEm).findOne(
+      { runId, kind: { $nin: [...kinds] } },
+      { orderBy: { seq: 'desc' }, fields: ['seq'], disableIdentityMap: true },
+    );
+    return last ? last.seq : -1;
+  }
+
   /**
    * The base contract — every matching row gone, soft-deleted ones included,
    * and how many — WITHOUT reading any of them. What the run teardown purges a

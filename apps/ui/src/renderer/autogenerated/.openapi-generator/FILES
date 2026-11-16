@@ -8,6 +8,7 @@ apis/GroupsApi.ts
 apis/HandoffApi.ts
 apis/KnowledgeApi.ts
 apis/LabelInstructionsApi.ts
+apis/LessonsApi.ts
 apis/MemoriesApi.ts
 apis/ProjectsApi.ts
 apis/SharesApi.ts

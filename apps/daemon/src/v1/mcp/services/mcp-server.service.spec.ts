@@ -15,6 +15,7 @@ import { chatSearchDb } from '../../agents/__tests__/chat-search-db';
 import { goalsDb } from '../../agents/__tests__/goals-db';
 import { GENIRO_MCP_CALL_TOOLS } from '../../agents/adapters/adapter.types';
 import {
+  type AnalysisTurn,
   type BrowserRunOutcome,
   HISTORY_RESULT_PREFACE,
   HOST_ANALYZED_THREAD_TOOL,
@@ -39,6 +40,7 @@ import {
   HOST_KNOWLEDGE_SAVE_TOOL,
   HOST_KNOWLEDGE_SEARCH_TOOL,
   HOST_KNOWLEDGE_TOOLS,
+  HOST_LESSONS_TOOL,
   HOST_LIST_MONITORS_TOOL,
   HOST_LIST_THREADS_TOOL,
   HOST_MEMORY_SAVE_TOOL,
@@ -119,6 +121,7 @@ import { MAX_HOST_QUESTION_TITLE_LENGTH } from '../../agents/utils/host-question
 import { RemoteImageError } from '../../agents/utils/remote-image';
 import type { BrowserOp } from '../../browser/browser.types';
 import type { KnowledgeService } from '../../knowledge/services/knowledge.service';
+import type { LessonFilingService } from '../../lessons/services/lesson-filing.service';
 import { memoryDb } from '../../memory/__tests__/memory-db';
 import type {
   MemoryActor,
@@ -301,6 +304,7 @@ function service(
       memory,
       knowledge,
       knowledgeItems: {} as KnowledgeItemsService,
+      lessons: {} as LessonFilingService,
     }),
     {
       token: 'launch',
@@ -376,46 +380,63 @@ async function everyHostTool(): Promise<ToolListing[]> {
     report: noop,
     mark: noop,
   });
-  const { json } = await post(
-    service(
-      new CallBroker(),
-      questions,
-      findings,
-      charts,
-      patches,
-      plans,
-      metrics,
-      comparisons,
-      galleries,
-      artifacts,
-      notices,
-      board,
-      undefined,
-      analysis,
-      undefined,
-      undefined,
-      undefined,
-      actions,
-      teamGate,
-      undefined,
-      monitors.broker,
-      teamNotes,
-      undefined,
-      runOutcomes,
-      stageService({ runId: 'run-1', memberId: 'agent' }),
-      undefined,
-      fakeMemory(true).service,
-      undefined,
-      projectCards,
-      undefined,
-      fakeKnowledge(true).service,
-      fakeBrowser({ status: 'done', text: '' }, true).broker,
-    ),
-    'run-1',
-    'agent',
-    rpc('tools/list', {}),
+  analysis.register('run-lessons', 'agent', {
+    turn: {
+      analysisRunId: 'run-lessons',
+      sourceRunId: 'source',
+      snapshotSeq: 0,
+      sourceWorking: false,
+      purpose: 'lessons',
+    },
+    report: noop,
+    mark: noop,
+  });
+  const server = service(
+    new CallBroker(),
+    questions,
+    findings,
+    charts,
+    patches,
+    plans,
+    metrics,
+    comparisons,
+    galleries,
+    artifacts,
+    notices,
+    board,
+    undefined,
+    analysis,
+    undefined,
+    undefined,
+    undefined,
+    actions,
+    teamGate,
+    undefined,
+    monitors.broker,
+    teamNotes,
+    undefined,
+    runOutcomes,
+    stageService({ runId: 'run-1', memberId: 'agent' }),
+    undefined,
+    fakeMemory(true).service,
+    undefined,
+    projectCards,
+    undefined,
+    fakeKnowledge(true).service,
+    fakeBrowser({ status: 'done', text: '' }, true).broker,
   );
-  return (json().result as { tools: ToolListing[] }).tools;
+  const listedOn = async (runId: string): Promise<ToolListing[]> =>
+    (
+      (await post(server, runId, 'agent', rpc('tools/list', {}))).json()
+        .result as { tools: ToolListing[] }
+    ).tools;
+  const review = await listedOn('run-1');
+  const reflection = await listedOn('run-lessons');
+  return [
+    ...new Map(
+      [...review, ...reflection].map((tool) => [tool.name, tool]),
+    ).values(),
+  ];
 }
 
 function stageService(
@@ -3550,6 +3571,7 @@ const PREAMBLE_EXEMPT: Readonly<Record<string, string>> = {
   [HOST_RECOMMENDATION_MARKS_TOOL]: 'analysis chats only; their brief names it',
   [HOST_TEAM_CHANGE_TOOL]:
     'analysis and builder chats only; their brief names it',
+  [HOST_LESSONS_TOOL]: 'lessons reflections only; their brief names it',
   ...Object.fromEntries(
     HOST_BROWSER_TOOLS.filter(
       (name) => !BROWSER_TOOLS_IN_PREAMBLE.includes(name),
@@ -3968,6 +3990,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       memory: fakeMemory(false).service,
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
+      lessons: {} as LessonFilingService,
       monitors: monitorBroker().broker,
       teamNotes: teamNoteBroker(),
     }).find((t) => t.handles(HOST_RECORD_OUTCOME_TOOL))!;
@@ -4592,6 +4615,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       memory: fakeMemory(false).service,
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
+      lessons: {} as LessonFilingService,
       monitors: monitorBroker().broker,
       teamNotes: teamNoteBroker(),
       runOutcomes: runOutcomeBroker(),
@@ -4694,6 +4718,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       memory: fakeMemory(false).service,
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
+      lessons: {} as LessonFilingService,
       monitors: monitorBroker().broker,
       teamNotes: teamNoteBroker(),
       runOutcomes: runOutcomeBroker(),
@@ -4906,6 +4931,53 @@ describe('McpServerService — what the descriptions tell a model', () => {
     );
   });
 
+  it('lists a lessons reflection propose_lessons and none of the review tools, and a review analysis the reverse', () => {
+    const REVIEW_TOOLS = [
+      HOST_RECOMMENDATIONS_TOOL,
+      HOST_RECOMMENDATION_MARKS_TOOL,
+      HOST_TEAM_CHANGE_TOOL,
+    ];
+    const listedFor = (purpose: AnalysisTurn['purpose']): string[] => {
+      const analysis = new AnalysisBroker();
+      analysis.register('run-1', 'agent', {
+        turn: {
+          analysisRunId: 'run-1',
+          sourceRunId: 'source',
+          snapshotSeq: 0,
+          sourceWorking: false,
+          purpose,
+        },
+        report: () => Promise.reject(new Error('unused')),
+        mark: () => Promise.reject(new Error('unused')),
+      });
+      return projectChatTools(
+        new ProjectChatBroker(),
+        {} as TeamProposalService,
+        {} as TeamStoreService,
+        {} as TeamOverlayService,
+        analysis,
+      )
+        .flatMap((tool) =>
+          tool.list({
+            runId: 'run-1',
+            memberId: 'agent',
+            conversationId: null,
+          }),
+        )
+        .map((tool) => tool.name);
+    };
+    const reflection = listedFor('lessons');
+    const review = listedFor('review');
+
+    expect(reflection).toContain(HOST_LESSONS_TOOL);
+    expect(reflection).toContain(HOST_ANALYZED_THREAD_TOOL);
+    expect(reflection.filter((name) => REVIEW_TOOLS.includes(name))).toEqual(
+      [],
+    );
+    expect(review).not.toContain(HOST_LESSONS_TOOL);
+    expect(review).toEqual(expect.arrayContaining(REVIEW_TOOLS));
+  });
+
   it('answers a builder chat turn its read_teams call', async () => {
     const builders = new TeamBuilderBroker();
     builders.register('run-1', 'agent', {
@@ -4980,6 +5052,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       memory: fakeMemory(false).service,
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
+      lessons: {} as LessonFilingService,
       monitors: monitorBroker().broker,
       teamNotes: teamNoteBroker(),
       runOutcomes: runOutcomeBroker(),
@@ -5097,6 +5170,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
         memory: fakeMemory(false).service,
         knowledge: fakeKnowledge(false).service,
         knowledgeItems: {} as KnowledgeItemsService,
+        lessons: {} as LessonFilingService,
         monitors: monitorBroker().broker,
         teamNotes: teamNoteBroker(),
         runOutcomes: runOutcomeBroker(),
@@ -5241,6 +5315,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       memory: fakeMemory(false).service,
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
+      lessons: {} as LessonFilingService,
     } as Parameters<typeof createMcpTools>[0]);
     const tool = tools.find((t) => t.handles(HOST_PROPOSE_TEAM_TOOL))!;
 
@@ -5323,6 +5398,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
         memory: fakeMemory(false).service,
         knowledge: fakeKnowledge(false).service,
         knowledgeItems: {} as KnowledgeItemsService,
+        lessons: {} as LessonFilingService,
         monitors: monitorBroker().broker,
         teamNotes: teamNoteBroker(),
         runOutcomes: runOutcomeBroker(),

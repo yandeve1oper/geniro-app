@@ -63,6 +63,7 @@ import {
 import { type DaemonApis, describeDaemonError } from '../daemon-api';
 import type { DaemonClient } from '../daemon-client';
 import { isRemoteRuntime } from '../remote/remote-session';
+import { LessonsSettingsPanel } from './lessons-settings';
 import { MemoryAutoForgetRow } from './memory-auto-forget';
 import { MemoryCheckPanel } from './memory-check-panel';
 import {
@@ -1002,6 +1003,12 @@ export function Memory({
           />
         )}
       </SettingsPanel>
+
+      <LessonsSettingsPanel
+        agentsApi={agentsApi}
+        capabilities={capabilities}
+        remote={remote}
+      />
 
       <section aria-label="Entries" className="flex flex-col gap-3">
         <div className="flex min-h-8 items-center justify-between gap-2">

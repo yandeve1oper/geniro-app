@@ -7,6 +7,7 @@ import type { Item } from '../../runs/entity/item.entity';
 import type { Run } from '../../runs/entity/run.entity';
 import {
   type AnalysedRun,
+  type AnalysisTurn,
   type FoldedRun,
   type ItemWire,
   MAX_RECOMMENDATIONS_PER_TARGET,
@@ -66,6 +67,7 @@ function sink(
   cardAt: number | null,
   card: unknown = CARD,
   applied: readonly string[] = [],
+  purpose: AnalysisTurn['purpose'] = undefined,
 ) {
   const written: { kind: string; payload: object }[] = [];
   const service = new AnalysisReportsService(
@@ -106,21 +108,20 @@ function sink(
     {} as ThreadReaderService,
     {} as ProjectScopeService,
   );
-  return {
-    written,
-    mark: service.sinkFor(
-      {
-        analysisRunId: 'analysis',
-        sourceRunId: 'source',
-        snapshotSeq: 9,
-        sourceWorking: false,
-      },
-      (kind, payload) => {
-        written.push({ kind, payload });
-        return Promise.resolve({ seq: 20 } as ItemWire);
-      },
-    ).mark,
-  };
+  const analysis = service.sinkFor(
+    {
+      analysisRunId: 'analysis',
+      sourceRunId: 'source',
+      snapshotSeq: 9,
+      sourceWorking: false,
+      purpose,
+    },
+    (kind, payload) => {
+      written.push({ kind, payload });
+      return Promise.resolve({ seq: 20 } as ItemWire);
+    },
+  );
+  return { written, report: analysis.report, mark: analysis.mark };
 }
 
 describe('AnalysisReportsService — outcomes', () => {
@@ -181,6 +182,39 @@ describe('AnalysisReportsService — outcomes', () => {
       await mark({ cardSeq: 8, outcomes: [{ id: 'W-1', status: 'applied' }] }),
     ).toMatchObject({ status: 'refused' });
     expect(written).toEqual([]);
+  });
+});
+
+describe('AnalysisReportsService — a lessons reflection', () => {
+  it('refuses a card a reflection sends, recording nothing', async () => {
+    const { report, written } = sink(7, CARD, [], 'lessons');
+
+    expect(await report({ whole: CARD }, null, null)).toEqual({
+      status: 'refused',
+      reason: expect.stringContaining('LESSONS_REFLECTION'),
+    });
+    expect(written).toEqual([]);
+  });
+
+  it('refuses an outcome a reflection marks, recording nothing', async () => {
+    const { mark, written } = sink(7, CARD, [], 'lessons');
+
+    expect(
+      await mark({ cardSeq: 7, outcomes: [{ id: 'W-1', status: 'applied' }] }),
+    ).toEqual({
+      status: 'refused',
+      reason: expect.stringContaining('LESSONS_REFLECTION'),
+    });
+    expect(written).toEqual([]);
+  });
+
+  it('still records an outcome a review analysis marks', async () => {
+    const { mark, written } = sink(7, CARD, [], 'review');
+
+    expect(
+      await mark({ cardSeq: 7, outcomes: [{ id: 'W-1', status: 'applied' }] }),
+    ).toMatchObject({ status: 'recorded' });
+    expect(written).toHaveLength(1);
   });
 });
 

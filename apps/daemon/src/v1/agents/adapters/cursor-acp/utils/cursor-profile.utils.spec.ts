@@ -261,6 +261,41 @@ describe('seedCursorProfile', () => {
     }
   });
 
+  it('replaces the user’s permissions with a hard deny on shell and writes for a read-only turn', () => {
+    const base = tempDir('cursor-profiles-');
+    const home = fakeHome(
+      '{"approvalMode":"unrestricted","permissions":{"allow":["Shell(ls)","Mcp(github:*)"]}}',
+    );
+
+    const dir = seedCursorProfile({
+      baseDir: base,
+      homeDir: home,
+      askForApprovals: true,
+      readOnly: true,
+    });
+
+    expect(
+      JSON.parse(readFileSync(join(dir, 'cli-config.json'), 'utf8')),
+    ).toEqual({
+      approvalMode: 'allowlist',
+      autoAcceptWebSearch: false,
+      permissions: { allow: [], deny: ['Shell(*)', 'Write(**)'] },
+    });
+  });
+
+  it('fails a read-only turn whose profile cannot be written', () => {
+    const base = tempDir('cursor-profiles-');
+    const home = fakeHome('{"approvalMode":"allowlist"}');
+    fsFaults.failWrites = true;
+    try {
+      expect(() =>
+        seedCursorProfile({ baseDir: base, homeDir: home, readOnly: true }),
+      ).toThrow(/could not write the turn profile/);
+    } finally {
+      fsFaults.failWrites = false;
+    }
+  });
+
   it('keeps the user’s own approval mode when the turn does not ask', () => {
     // An `auto` turn approves every request in the driver, and a probe runs no
     // tools — neither has a reason to rewrite the user's setting.

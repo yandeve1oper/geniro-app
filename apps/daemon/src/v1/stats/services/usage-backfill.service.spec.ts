@@ -157,6 +157,30 @@ describe('UsageBackfillService (in-memory sqlite)', () => {
     expect(run!.updatedAt.toISOString()).toBe(old.toISOString());
   });
 
+  it('recovers a lessons reflection’s turn under the lessons purpose, and a thread’s turn under none', async () => {
+    await runDao.create({
+      id: 'run-a',
+      agentKind: 'claude',
+      model: 'claude-opus-5',
+    });
+    await runDao.create({
+      id: 'reflection',
+      agentKind: 'claude',
+      model: 'claude-opus-5',
+      analysisSourceRunId: 'run-a',
+      analysisPurpose: 'lessons',
+    });
+    await turn('reflection', 2);
+    await turn('run-a', 1);
+
+    await service.backfill();
+
+    const rows = await usageDao.getAll({});
+    expect(
+      Object.fromEntries(rows.map((row) => [row.runId, row.purpose])),
+    ).toEqual({ reflection: 'lessons', 'run-a': null });
+  });
+
   it('dates each turn by its transcript row, not by when the sweep ran', async () => {
     await runDao.create({ id: 'run-a', agentKind: 'claude' });
     const item = await turn('run-a', 0);

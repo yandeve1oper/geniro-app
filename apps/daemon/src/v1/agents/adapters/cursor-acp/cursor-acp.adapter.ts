@@ -2954,6 +2954,7 @@ export class CursorAcpAdapter extends AgentAdapter {
       // so OFF has to be written as much as ON.
       maxMode: this.agentOption(input, CURSOR_MAX_MODE_OPTION),
       askForApprovals: cursorTurnAsks(input.approvalMode),
+      ...(input.readOnly === true ? { readOnly: true } : {}),
       ...this.profileSeed(input.configDir),
     });
     this.turnProfiles.set(input, dir);

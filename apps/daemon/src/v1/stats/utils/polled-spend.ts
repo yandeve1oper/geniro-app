@@ -22,6 +22,7 @@ export const POLLED_SPEND_RUN_FIELDS = [
   'cwd',
   'teamId',
   'teamSnapshot',
+  'analysisPurpose',
   'polledSpendBuckets',
 ] as const satisfies readonly (keyof Run)[];
 

@@ -10,6 +10,7 @@ import {
   HandoffApi,
   KnowledgeApi,
   LabelInstructionsApi,
+  LessonsApi,
   MemoriesApi,
   type Middleware,
   ProjectsApi,
@@ -260,6 +261,8 @@ export interface DaemonApis {
   memories: MemoriesApi;
   /** The documents agents read on demand (`/v1/knowledge`). */
   knowledge: KnowledgeApi;
+  /** Lessons reflections and the user's save or reject of their lessons (`/v1/lessons`). */
+  lessons: LessonsApi;
   /** What the data folder holds and its clean-ups (`/v1/storage`) — desktop only. */
   storage: StorageApi;
 }
@@ -320,6 +323,7 @@ export function createDaemonApis(handle: DaemonHandle): DaemonApis {
     shares: new SharesApi(config),
     memories: new MemoriesApi(config),
     knowledge: new KnowledgeApi(config),
+    lessons: new LessonsApi(config),
     storage: new StorageApi(config),
   };
 }

@@ -45,6 +45,7 @@ import {
   TokenSplitChart,
 } from './charts/time-charts';
 import { DAILY_METRIC_OPTIONS, type DailyMetricId } from './daily-metrics';
+import { LessonsSpendLine } from './lessons-spend-line';
 import { StatCell, StatGrid } from './stat-card';
 import {
   cacheHitRate,
@@ -433,6 +434,7 @@ export function Stats({
                 emptyLabel="No thread activity in this period."
               />
             </StatGrid>
+            <LessonsSpendLine groups={data.byPurpose} />
 
             <GoalCells metrics={data.metrics} />
 

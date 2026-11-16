@@ -180,6 +180,17 @@ describe('usageDimensions', () => {
       model: null,
       cwd: null,
       teamName: null,
+      purpose: null,
     });
+  });
+
+  it('files a lessons reflection’s turns under the lessons purpose, and no other run’s', () => {
+    expect(
+      usageDimensions(run({ analysisPurpose: 'lessons' }), null).purpose,
+    ).toBe('lessons');
+    expect(
+      usageDimensions(run({ analysisPurpose: 'review' }), null).purpose,
+    ).toBeNull();
+    expect(usageDimensions(run(), null).purpose).toBeNull();
   });
 });

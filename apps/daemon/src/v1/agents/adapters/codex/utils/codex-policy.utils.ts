@@ -21,6 +21,19 @@ const WORKSPACE_WRITE: CodexSandboxPolicy = {
 };
 
 /**
+ * A read-only turn's posture (`AgentTurnInput.readOnly`), whatever its mode:
+ * the read-only sandbox under `untrusted`, so every write fails and every
+ * command or patch outside codex's safe reads asks, outside plan mode.
+ */
+export const CODEX_READ_ONLY_TURN_POLICY: CodexTurnPolicy = {
+  approvalPolicy: 'untrusted',
+  sandbox: 'read-only',
+  sandboxPolicy: READ_ONLY,
+  plan: false,
+  autoAcceptFileChanges: false,
+};
+
+/**
  * What one geniro approval mode means to codex.
  *
  * - `auto` — `never` asks, and no sandbox: the unattended posture, as claude's

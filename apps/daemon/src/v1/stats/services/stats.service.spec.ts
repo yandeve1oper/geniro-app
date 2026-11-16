@@ -476,6 +476,27 @@ describe('StatsService (in-memory sqlite)', () => {
       expect(stats.totals.costUsd).toBeNull();
       expect(stats.totals.costedTurns).toBe(0);
     });
+
+    it('counts a reflection’s polled spend under lessons, and a chat’s under none', async () => {
+      await recordPolled(
+        pricedRun({
+          id: 'reflection-poll',
+          analysisPurpose: 'lessons',
+          polledCostCents: 300,
+        }),
+      );
+      await recordPolled(pricedRun({ id: 'chat-poll', polledCostCents: 250 }));
+
+      const stats = await readUsage(
+        new Date(2026, 7, 10),
+        new Date(2026, 7, 11),
+      );
+
+      expect(
+        stats.byPurpose.map((row) => [row.key, row.totals.costUsd]),
+      ).toEqual([['lessons', 3]]);
+      expect(stats.totals.costUsd).toBe(5.5);
+    });
   });
 
   describe('totals', () => {
@@ -904,6 +925,43 @@ describe('StatsService (in-memory sqlite)', () => {
       );
 
       expect(stats.byTeam).toEqual([]);
+    });
+  });
+
+  describe('by purpose', () => {
+    it('sums every lessons reflection turn of the period into one lessons row, and keeps the user’s own work out', async () => {
+      await record(new Date(2026, 7, 10, 9), {
+        runId: 'reflection-1',
+        purpose: 'lessons',
+        costUsd: 0.02,
+      });
+      await record(new Date(2026, 7, 10, 10), {
+        runId: 'reflection-2',
+        purpose: 'lessons',
+        costUsd: 0.03,
+      });
+      await record(new Date(2026, 7, 10, 11), { runId: 'chat', costUsd: 4 });
+
+      const stats = await readUsage(
+        new Date(2026, 7, 10),
+        new Date(2026, 7, 11),
+      );
+
+      expect(
+        stats.byPurpose.map((row) => [row.key, row.totals.costUsd]),
+      ).toEqual([['lessons', 0.05]]);
+      expect(stats.totals.costUsd).toBe(4.05);
+    });
+
+    it('has no rows when nothing was spent on reflections', async () => {
+      await record(new Date(2026, 7, 10, 9), { runId: 'chat' });
+
+      const stats = await readUsage(
+        new Date(2026, 7, 10),
+        new Date(2026, 7, 11),
+      );
+
+      expect(stats.byPurpose).toEqual([]);
     });
   });
 });

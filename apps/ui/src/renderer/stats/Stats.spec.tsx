@@ -150,6 +150,7 @@ function stats(overrides: Partial<UsageStatsDto> = {}): UsageStatsDto {
       { key: 'dev-team', totals: totals() },
       { key: 'review-team', totals: totals() },
     ],
+    byPurpose: [],
     byThread: [
       {
         key: 'run-1',
@@ -205,6 +206,32 @@ describe('Stats', () => {
       'Tokens in': '1k',
       'Agent time': '1h 0m',
     });
+  });
+
+  it('says what lessons reflections spent in the period, and nothing when none ran', async () => {
+    const quiet = await render(<Stats handle={HANDLE} />);
+    expect(quiet.querySelector('[data-slot="lessons-spend"]')).toBeNull();
+
+    mocks.readUsageStats.mockResolvedValue(
+      stats({
+        byPurpose: [
+          {
+            key: 'lessons',
+            totals: {
+              ...totals(),
+              costUsd: 0.31,
+              estimatedCostUsd: null,
+              turns: 14,
+            },
+          },
+        ],
+      }),
+    );
+    const el = await render(<Stats handle={HANDLE} />);
+
+    const line = el.querySelector('[data-slot="lessons-spend"]');
+    expect(line?.textContent).toContain('$0.31');
+    expect(line?.textContent).toContain('14 turns');
   });
 
   it('shows the goals of the period’s threads and every tool and MCP server called', async () => {

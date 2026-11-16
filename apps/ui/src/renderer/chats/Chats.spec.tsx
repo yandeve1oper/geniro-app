@@ -173,6 +173,11 @@ const projectsApi = vi.hoisted(() => ({
     Promise.resolve({ project: null }),
   ),
 }));
+const lessonsApi = vi.hoisted(() => ({
+  getThreadLessonsState: vi.fn(),
+  reflectLessons: vi.fn(),
+}));
+
 vi.mock('../daemon-api', async (importOriginal) => ({
   // Only the client factory is faked. `daemonErrorStatus` is the REAL parser,
   // so a test that hands the component a daemon error proves the component
@@ -190,6 +195,7 @@ vi.mock('../daemon-api', async (importOriginal) => ({
     tasks: tasksApi,
     projects: projectsApi,
     shares: { listShares: vi.fn(() => Promise.resolve({ shares: [] })) },
+    lessons: lessonsApi,
   })),
 }));
 // The module reads `window.geniro` once at import, before this spec installs its
@@ -867,6 +873,17 @@ beforeEach(() => {
   });
   notify.mockReset().mockResolvedValue(undefined);
   api.listChats.mockReset().mockResolvedValue([run1]);
+  lessonsApi.getThreadLessonsState.mockReset().mockResolvedValue({
+    reflectable: false,
+    reflectionRunId: null,
+    reflectedThroughSeq: null,
+  });
+  lessonsApi.reflectLessons.mockReset().mockResolvedValue({
+    reflectionRunId: 'refl-1',
+    segmentId: 'seg-1',
+    fromSeq: -1,
+    toSeq: 9,
+  });
   api.setRunGroup.mockReset();
   api.setRunColor.mockReset();
   api.markRunSeen.mockReset().mockResolvedValue({});
@@ -17318,6 +17335,51 @@ describe('Chats — background sub-agents', () => {
     // counted behind the finished-sub-agents disclosure.
     expect(panel?.textContent).toContain('Review the diff');
     expect(panel?.textContent).not.toContain('finished sub-agent');
+  });
+
+  it('starts a lessons reflection from the Reflect now button, re-reads the thread’s state, and shows the daemon’s refusal', async () => {
+    api.listChats.mockResolvedValue([run1]);
+    api.listRunItems.mockResolvedValue([msg(0, 'user', 'find the bug')]);
+    lessonsApi.getThreadLessonsState.mockResolvedValue({
+      reflectable: true,
+      reflectionRunId: null,
+      reflectedThroughSeq: null,
+    });
+    const { client } = makeClient();
+    const container = await mount(client);
+    await clickRun(container, 'My chat');
+    const reflectNow = () =>
+      container.querySelector<HTMLButtonElement>(
+        'aside[aria-label="Run agents"] button[data-lessons]',
+      );
+    await act(async () => {});
+    expect(reflectNow()?.dataset.lessons).toBe('ready');
+
+    const readsBefore = lessonsApi.getThreadLessonsState.mock.calls.length;
+    await act(async () => {
+      reflectNow()!.click();
+    });
+
+    expect(lessonsApi.reflectLessons).toHaveBeenCalledWith({
+      runId: 'r1',
+      reflectLessonsDto: {},
+    });
+    expect(lessonsApi.getThreadLessonsState.mock.calls.length).toBeGreaterThan(
+      readsBefore,
+    );
+
+    lessonsApi.reflectLessons.mockRejectedValueOnce(
+      new Error(
+        'daemon POST /v1/chats/r1/lessons/reflect failed (409): {"message":"a reflection on this thread is still working"}',
+      ),
+    );
+    await act(async () => {
+      reflectNow()!.click();
+    });
+
+    expect(container.textContent).toContain(
+      'a reflection on this thread is still working',
+    );
   });
 
   it("opens a terminal tab in the open chat's own folder", async () => {

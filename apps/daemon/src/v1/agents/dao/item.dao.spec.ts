@@ -662,6 +662,29 @@ describe('ItemDao (in-memory sqlite)', () => {
     });
   });
 
+  describe('maxSeqExcept', () => {
+    const LESSON_KINDS: ItemKind[] = ['lessons', 'lesson_outcome'];
+
+    it('answers the newest row whose kind is not one of those named', async () => {
+      await insert('run-a', 1);
+      await insert('run-a', 4, 'message');
+      await insert('run-a', 6, 'lessons');
+      await insert('run-a', 8, 'lesson_outcome');
+      await insert('run-b', 9, 'message');
+
+      expect(await dao.maxSeqExcept('run-a', LESSON_KINDS)).toBe(4);
+      expect(await dao.maxSeq('run-a')).toBe(8);
+    });
+
+    it('answers -1 when every row of the run is of a named kind, or it has none', async () => {
+      await insert('run-a', 2, 'lessons');
+      await insert('run-b', 3, 'message');
+
+      expect(await dao.maxSeqExcept('run-a', LESSON_KINDS)).toBe(-1);
+      expect(await dao.maxSeqExcept('run-c', LESSON_KINDS)).toBe(-1);
+    });
+  });
+
   describe('latestMessageTextPerRun', () => {
     it('previews the ROOT conversation of a team run, not a callee inside a call', async () => {
       // REPORTED as a Dev Team row previewing the Engineer's "Fixed: 36/36…"

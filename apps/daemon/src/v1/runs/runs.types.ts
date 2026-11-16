@@ -48,6 +48,13 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
 export const PROJECT_SOURCES = ['explicit', 'card', 'folder', 'none'] as const;
 export type ProjectSource = (typeof PROJECT_SOURCES)[number];
 
+/**
+ * What an analysis chat is for: the user's own "Analyze thread" (`review`;
+ * null on rows written before purposes) or a hidden lessons reflection.
+ */
+export const ANALYSIS_PURPOSES = ['review', 'lessons'] as const;
+export type AnalysisPurpose = (typeof ANALYSIS_PURPOSES)[number];
+
 /** A member may additionally be `skipped` — it was never started before the run settled. */
 export const NodeStatusSchema = z
   .enum([...RUN_STATUSES, 'skipped'])
@@ -181,6 +188,10 @@ export type NodeStatus = z.infer<typeof NodeStatusSchema>;
  * `run_outcome` is where one pull request of a team run ended up, recorded
  * by a member (`record_outcome`). Append-only per pull request: the newest row
  * naming a pull request is its outcome, and an earlier one stays as history.
+ *
+ * `lessons` is the lessons a hidden reflection proposed about this thread
+ * (`propose_lessons`), written into the thread it read; `lesson_outcome` is
+ * the user's save or reject of one of them, append-only like the action pair.
  */
 export const ItemKindSchema = z
   .enum([
@@ -220,6 +231,8 @@ export const ItemKindSchema = z
     'run_outcome',
     'stage_change',
     'thread_outcome',
+    'lessons',
+    'lesson_outcome',
   ])
   .meta({ id: 'ItemKind' });
 export type ItemKind = z.infer<typeof ItemKindSchema>;

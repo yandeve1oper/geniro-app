@@ -22,7 +22,7 @@ export class MarkRecommendationsTool extends BaseMcpTool {
   }
 
   protected isOffered({ runId, memberId }: McpListContext): boolean {
-    return this.analysis.canAnalyse(runId, memberId);
+    return this.analysis.canReview(runId, memberId);
   }
 
   protected instructions(): string {

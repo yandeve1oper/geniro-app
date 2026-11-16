@@ -1,5 +1,6 @@
 import {
   HOST_ANALYZED_THREAD_TOOL,
+  HOST_LESSONS_TOOL,
   HOST_RECOMMENDATION_MARKS_TOOL,
   HOST_RECOMMENDATIONS_TOOL,
 } from '../chat.types';
@@ -41,4 +42,16 @@ export function isHostRecommendationsCall(
     isHostToolCall(serverName, toolName, HOST_RECOMMENDATIONS_TOOL) ||
     isHostToolCall(serverName, toolName, HOST_RECOMMENDATION_MARKS_TOOL)
   );
+}
+
+/**
+ * Whether a permission request names `propose_lessons`: installed only on a
+ * lessons reflection, it files proposals the user then saves or rejects, and
+ * changes nothing an agent reads.
+ */
+export function isHostLessonsCall(
+  serverName: string | null,
+  toolName: string,
+): boolean {
+  return isHostToolCall(serverName, toolName, HOST_LESSONS_TOOL);
 }

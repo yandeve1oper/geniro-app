@@ -15,6 +15,9 @@ import {
 } from '../agents/chat.types';
 import type { AgentKind } from '../runs/runs.types';
 
+/** What a turn's spend was for, beside the user's own work: a lessons reflection. */
+export type UsagePurpose = 'lessons';
+
 /**
  * One ledger row as its writers hand it over — the shape both the live recorder
  * and the boot backfill produce, so the two cannot disagree about what a usage
@@ -29,6 +32,8 @@ export interface UsageEventInput {
   model: string | null;
   cwd: string | null;
   teamName: string | null;
+  /** Absent reads as null: the user's own work. */
+  purpose?: UsagePurpose | null;
   costUsd: number | null;
   estimatedCostUsd: number | null;
   inputTokens: number | null;
@@ -969,6 +974,11 @@ export const UsageStatsWireSchema = z.object({
     .array(UsageGroupWireSchema)
     .describe(
       'per team, keyed by slug; a thread with no team is in no row, so a chat is never pooled into one',
+    ),
+  byPurpose: z
+    .array(UsageGroupWireSchema)
+    .describe(
+      "spend the app made for itself, keyed by purpose: `lessons` is the hidden lessons reflections; the user's own work is in no row",
     ),
   metrics: ThreadMetricsSchema.describe(
     'the threads started in the period: goals, outcomes, and every tool and MCP server called in it',

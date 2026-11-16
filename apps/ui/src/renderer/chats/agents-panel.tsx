@@ -9,6 +9,7 @@ import {
   Download,
   FileText,
   LayoutTemplate,
+  Lightbulb,
   Link2,
   NotebookPen,
   Search,
@@ -126,6 +127,7 @@ import { type AgentMcpScope, mcpScopeKey } from './use-agent-mcp';
 import type { RunProcessesState } from './use-run-processes';
 import type { RunWaterfallState } from './use-run-waterfall';
 import type { ThreadAnalysisMark } from './use-thread-analysis';
+import { LESSONS_BUTTON, type ThreadLessonsMark } from './use-thread-lessons';
 import { rankByUrgency, type WaitState, waitStateOf } from './waiting';
 import { WorkflowPanelRow } from './workflow-block';
 
@@ -349,6 +351,43 @@ function ExportChatButton({
       onClick={onExport}
       className={cn('shrink-0 text-muted-foreground', className)}>
       <Download className="size-4" />
+    </Button>
+  );
+}
+
+/**
+ * "Reflect now": a hidden reflection that proposes lessons from this thread,
+ * which land as a card in it. Disabled with nothing new since the last one,
+ * and while one is working (a pulsing dot).
+ */
+function ReflectNowButton({
+  onReflect,
+  mark,
+  className,
+}: {
+  onReflect: () => void;
+  mark: ThreadLessonsMark;
+  className?: string;
+}): React.JSX.Element {
+  const { label, title, disabled } = LESSONS_BUTTON[mark];
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={label}
+      title={title}
+      data-lessons={mark}
+      disabled={disabled}
+      onClick={onReflect}
+      className={cn('relative shrink-0 text-muted-foreground', className)}>
+      <Lightbulb className="size-4" />
+      {mark === 'reflecting' ? (
+        <span
+          aria-hidden
+          className="absolute top-1 right-1 size-1.5 animate-pulse rounded-full bg-primary"
+        />
+      ) : null}
     </Button>
   );
 }
@@ -1874,6 +1913,8 @@ export function AgentsPanel({
   onExportChat,
   onAnalyzeThread,
   analysisMark = 'none',
+  onReflectLessons,
+  lessonsMark = 'unknown',
   onResolveHandoff,
   onSetPoolMember,
   terminalReasons,
@@ -2128,6 +2169,10 @@ export function AgentsPanel({
   onAnalyzeThread?: () => void;
   /** What the thread's analysis is doing, for that button — see `useThreadAnalysis`. */
   analysisMark?: ThreadAnalysisMark;
+  /** Start a lessons reflection on this run. Absent draws no button. */
+  onReflectLessons?: () => void;
+  /** Whether that button can start one now — see `useThreadLessons`. */
+  lessonsMark?: ThreadLessonsMark;
   /**
    * Each agent's OWN current task list, keyed by `AgentDisplay.id` — the
    * checklist its CLI keeps while working a multi-step job.
@@ -2488,6 +2533,14 @@ export function AgentsPanel({
             className={size}
           />
         ) : null,
+        onReflectLessons ? (
+          <ReflectNowButton
+            key="reflect"
+            onReflect={onReflectLessons}
+            mark={lessonsMark}
+            className={size}
+          />
+        ) : null,
         waterfall ? (
           <RunWaterfallButton
             key="waterfall"
@@ -2562,6 +2615,7 @@ export function AgentsPanel({
         onOpenFolderTerminal ||
         onExportChat ||
         onAnalyzeThread ||
+        onReflectLessons ||
         waterfall ||
         processes ||
         notes ? (

@@ -7024,3 +7024,72 @@ describe('a call a callee made', () => {
     });
   });
 });
+
+describe('groupTranscript — lessons cards', () => {
+  const proposal = {
+    id: 'p1',
+    title: 'WHEN running tests → use pnpm --filter <pkg> test:unit',
+    rule: 'Run tests through pnpm --filter <pkg> test:unit.',
+    why: 'Plain vitest skips the Electron runtime.',
+    signalKind: 'user_correction',
+    evidence: { seq: 31, quote: 'не запускай vitest напрямую' },
+    target: { kind: 'memory', scope: 'project', type: 'feedback' },
+    dedup: { verdict: 'new', handle: null },
+  };
+  const lessons = item('lessons', {
+    reflectionRunId: 'refl-1',
+    segmentId: 'seg-1',
+    fromSeq: 1,
+    toSeq: 40,
+    agentKind: 'claude',
+    model: null,
+    proposals: [proposal],
+  });
+  const outcome = (status: 'saved' | 'rejected'): ChatItem =>
+    item('lesson_outcome', {
+      proposalId: 'p1',
+      status,
+      title: proposal.title,
+      rule: proposal.rule,
+      target: { kind: 'memory', scope: 'project', type: 'feedback' },
+      memoryHandle: status === 'saved' ? 'm40' : null,
+      reason: null,
+    });
+
+  it('draws the lessons row as a card, with its outcome folded in and no row of its own', () => {
+    const entries = groupTranscript([lessons, outcome('saved')]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      type: 'lessons',
+      seq: lessons.seq,
+      card: { reflectionRunId: 'refl-1', proposals: [{ id: 'p1' }] },
+      outcomes: { p1: { status: 'saved', memoryHandle: 'm40' } },
+    });
+  });
+
+  it('folds the newest outcome onto the card when a later one overrides it', () => {
+    const entries = groupTranscript([
+      lessons,
+      outcome('saved'),
+      outcome('rejected'),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      outcomes: { p1: { status: 'rejected' } },
+    });
+  });
+
+  it('draws nothing for a lessons row that does not read', () => {
+    const entries = groupTranscript([
+      item('lessons', { reflectionRunId: '', proposals: [] }),
+    ]);
+
+    expect(entries).toEqual([]);
+  });
+
+  it('draws nothing for an outcome with no lessons row to fold onto', () => {
+    expect(groupTranscript([outcome('saved')])).toEqual([]);
+  });
+});

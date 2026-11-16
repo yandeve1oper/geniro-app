@@ -387,6 +387,28 @@ export const DEFAULT_MEMORY: MemorySettings = {
   nativeMemoryOff: false,
 };
 
+/** Whether a thread may be offered a lessons reflection: never, or on the user's press. */
+export type LessonsMode = 'off' | 'offer';
+
+/**
+ * What a lessons reflection runs as. A null agent reflects with the thread's own
+ * CLI; a null model or effort with that CLI's default. `agentKind` is the
+ * daemon's vocabulary, kept an opaque string here.
+ */
+export interface LessonsSettings {
+  mode: LessonsMode;
+  agentKind: string | null;
+  model: string | null;
+  effort: string | null;
+}
+
+export const DEFAULT_LESSONS: LessonsSettings = {
+  mode: 'offer',
+  agentKind: null,
+  model: null,
+  effort: null,
+};
+
 /** What an agent's document save does: used at once, held for the user's review, or refused. */
 export type KnowledgeAgentWrites = 'review' | 'direct' | 'off';
 
@@ -591,6 +613,11 @@ export interface Settings {
    * app starts; the daemon keeps it in memory only.
    */
   memory: MemorySettings;
+  /**
+   * Whether a thread is offered a lessons reflection, and the agent, model and
+   * effort one runs as. Owned here and pushed to every daemon this app starts.
+   */
+  lessons: LessonsSettings;
   /**
    * Whether agents get knowledge tools and an index, and what happens to a
    * document an agent saves. Owned here (settings.json) and pushed to every
@@ -867,6 +894,7 @@ export const DEFAULT_SETTINGS: Settings = {
   remoteAccessEnabled: true,
   sharing: DEFAULT_SHARING,
   memory: DEFAULT_MEMORY,
+  lessons: DEFAULT_LESSONS,
   knowledge: DEFAULT_KNOWLEDGE,
   resourceAlerts: DEFAULT_RESOURCE_ALERTS,
   archiveRetentionDays: null,

@@ -68,6 +68,7 @@ export function analysisTurnOf(
     | 'analysisSourceWorking'
     | 'analysisTeamSlug'
     | 'analysisRuns'
+    | 'analysisPurpose'
   >,
 ): AnalysisTurn | null {
   if (run.analysisSourceRunId !== null && run.analysisSourceSeq !== null) {
@@ -76,6 +77,7 @@ export function analysisTurnOf(
       sourceRunId: run.analysisSourceRunId,
       snapshotSeq: run.analysisSourceSeq,
       sourceWorking: run.analysisSourceWorking ?? false,
+      ...(run.analysisPurpose === 'lessons' ? { purpose: 'lessons' } : {}),
     };
   }
   if (run.analysisTeamSlug === null) {
@@ -208,4 +210,13 @@ export function isAnalysisRun(
   run: Pick<Run, 'analysisSourceRunId' | 'analysisTeamSlug'>,
 ): boolean {
   return run.analysisSourceRunId !== null || run.analysisTeamSlug !== null;
+}
+
+/**
+ * Whether a run works read-only: a lessons reflection is hidden, so its turns
+ * get no shell or write tools, and a permission request the rules do not
+ * approve is refused at once, since a card raised there would never be seen.
+ */
+export function runsReadOnly(run: Pick<Run, 'analysisPurpose'>): boolean {
+  return run.analysisPurpose === 'lessons';
 }

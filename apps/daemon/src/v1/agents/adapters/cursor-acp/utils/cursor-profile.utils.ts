@@ -18,7 +18,9 @@ import {
   CURSOR_AUTH_INFO_CONFIG_KEY,
   CURSOR_HOME_DIR_NAME,
   CURSOR_MAX_MODE_CONFIG_KEY,
+  CURSOR_PERMISSIONS_CONFIG_KEY,
   CURSOR_PROFILE_DIR_PREFIX,
+  CURSOR_READ_ONLY_PERMISSIONS,
   CURSOR_SEEDED_CONFIG_FILE,
   CURSOR_WEB_SEARCH_AUTO_ACCEPT_CONFIG_KEY,
 } from '../cursor-acp.const';
@@ -91,6 +93,12 @@ export interface CursorProfileSeed {
    * request in the driver anyway, and a probe profile runs no tools.
    */
   askForApprovals?: boolean;
+  /**
+   * Replace the copied permissions with {@link CURSOR_READ_ONLY_PERMISSIONS}, so
+   * the turn can run no shell command and write no file. A profile that cannot
+   * be written so throws rather than run the turn with them.
+   */
+  readOnly?: boolean;
   /** A named configuration's own identity block; null drops the copied default account's. */
   authInfo?: Record<string, unknown> | null;
 }
@@ -190,6 +198,9 @@ export function seedCursorProfile(seed: CursorProfileSeed): string {
           [CURSOR_WEB_SEARCH_AUTO_ACCEPT_CONFIG_KEY]: false,
         }
       : {}),
+    ...(seed.readOnly === true
+      ? { [CURSOR_PERMISSIONS_CONFIG_KEY]: CURSOR_READ_ONLY_PERMISSIONS }
+      : {}),
     ...(seed.authInfo !== undefined
       ? { [CURSOR_AUTH_INFO_CONFIG_KEY]: seed.authInfo ?? undefined }
       : {}),
@@ -197,7 +208,7 @@ export function seedCursorProfile(seed: CursorProfileSeed): string {
   if (
     Object.keys(patch).length > 0 &&
     !patchSeededConfig(configPath, patch) &&
-    seed.askForApprovals === true
+    (seed.askForApprovals === true || seed.readOnly === true)
   ) {
     // The copy may still say "run everything": running the turn would show
     // its user no card at all, so it fails instead.

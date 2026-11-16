@@ -186,7 +186,7 @@ export class ThreadAnalysisService
     // start racing it (a second window, the phone) creates one too, and
     // deleting "every analysis but mine" afterwards would delete each
     // other's. The newest then wins `findAnalysis`, and both survive.
-    const earlier = (await this.runDao.listAnalysesOf(source.id, em)).map(
+    const earlier = (await this.runDao.listReviewAnalysesOf(source.id, em)).map(
       (analysis) => analysis.id,
     );
     const kind = analysedThreadKindOf(source);

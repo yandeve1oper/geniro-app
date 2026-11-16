@@ -15,7 +15,12 @@ import type {
   RunGroupColor,
 } from '../../agents/chat.types';
 import { PAYLOAD_REFS_VERSION } from '../../agents/utils/payload-refs';
-import type { AgentKind, ProjectSource, RunStatus } from '../runs.types';
+import type {
+  AgentKind,
+  AnalysisPurpose,
+  ProjectSource,
+  RunStatus,
+} from '../runs.types';
 
 /** One execution of a team or a single-agent chat. */
 @Entity({ tableName: 'runs' })
@@ -608,6 +613,22 @@ export class Run extends TimestampsEntity {
    */
   @Property({ type: 'boolean', nullable: true })
   analysisSourceWorking: boolean | null = null;
+
+  /**
+   * What an analysis of {@link analysisSourceRunId} is for: null or `review`
+   * is the user's own "Analyze thread", `lessons` a hidden lessons
+   * reflection, which never replaces, hides or is read as that review.
+   */
+  @Property({ type: 'string', nullable: true })
+  analysisPurpose: AnalysisPurpose | null = null;
+
+  /**
+   * The highest seq of this run a lessons reflection has finished reading;
+   * the next reflection starts after it. Moves only when a reflection files
+   * its lessons, and only to the snapshot that reflection read up to.
+   */
+  @Property({ type: 'integer', nullable: true })
+  reflectedThroughSeq: number | null = null;
 
   /**
    * The library team this chat was started to ANALYSE across its recent

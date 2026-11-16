@@ -11,6 +11,7 @@ import {
 import { TimestampsEntity } from '@packages/mikroorm';
 
 import type { AgentKind } from '../../runs/runs.types';
+import type { UsagePurpose } from '../stats.types';
 
 /**
  * One finished turn's usage, recorded to OUTLIVE the run that produced it.
@@ -92,6 +93,10 @@ export class UsageEvent extends TimestampsEntity {
    */
   @Property({ type: 'text', nullable: true })
   teamName: string | null = null;
+
+  /** `lessons` for a turn of a hidden lessons reflection, null for every other turn. */
+  @Property({ type: 'string', nullable: true })
+  purpose: UsagePurpose | null = null;
 
   /**
    * Every figure below is nullable, and null means NOT MEASURED rather than

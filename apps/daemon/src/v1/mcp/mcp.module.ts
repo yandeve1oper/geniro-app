@@ -31,6 +31,8 @@ import { ThreadReaderService } from '../agents/services/thread-reader.service';
 import { UserQuestionBroker } from '../agents/services/user-question.broker';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { KnowledgeService } from '../knowledge/services/knowledge.service';
+import { LessonsModule } from '../lessons/lessons.module';
+import { LessonFilingService } from '../lessons/services/lesson-filing.service';
 import { MemoryModule } from '../memory/memory.module';
 import { MemoryService } from '../memory/services/memory.service';
 import { ShareService } from '../shares/services/share.service';
@@ -72,6 +74,7 @@ import { createMcpTools, MCP_TOOLS } from './tools/mcp-tools';
     MemoryModule,
     KnowledgeModule,
     StatsModule,
+    LessonsModule,
   ],
   controllers: [McpController],
   providers: [
@@ -118,6 +121,7 @@ import { createMcpTools, MCP_TOOLS } from './tools/mcp-tools';
         shares: ShareService,
         threadDelivery: ThreadDeliveryService,
         knowledgeItems: KnowledgeItemsService,
+        lessons: LessonFilingService,
       ) =>
         createMcpTools({
           calls,
@@ -160,6 +164,7 @@ import { createMcpTools, MCP_TOOLS } from './tools/mcp-tools';
           shares,
           threadDelivery,
           knowledgeItems,
+          lessons,
         }),
       inject: [
         CallBroker,
@@ -202,6 +207,7 @@ import { createMcpTools, MCP_TOOLS } from './tools/mcp-tools';
         ShareService,
         ThreadDeliveryService,
         KnowledgeItemsService,
+        LessonFilingService,
       ],
     },
     McpServerService,

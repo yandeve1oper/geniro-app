@@ -777,6 +777,32 @@ describe('knowledge settings', () => {
   });
 });
 
+describe('lessons settings', () => {
+  it('a half-valid lessons object keeps its valid fields and defaults the rest', () => {
+    writeRaw({
+      lessons: { mode: 'off', agentKind: 'codex', model: 42, effort: 'low' },
+    });
+
+    expect(readSettings().lessons).toEqual({
+      mode: 'off',
+      agentKind: 'codex',
+      model: null,
+      effort: 'low',
+    });
+  });
+
+  it('a file from before the setting offers reflections on the thread’s own CLI', () => {
+    writeRaw({});
+
+    expect(readSettings().lessons).toEqual({
+      mode: 'offer',
+      agentKind: null,
+      model: null,
+      effort: null,
+    });
+  });
+});
+
 describe('resource alert settings', () => {
   const GIB = 1024 ** 3;
 

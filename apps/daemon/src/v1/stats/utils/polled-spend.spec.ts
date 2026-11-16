@@ -11,6 +11,7 @@ const run = (over: Partial<PolledSpendRun> = {}): PolledSpendRun => ({
   cwd: '/repo',
   teamId: 'dev-team',
   teamSnapshot: null,
+  analysisPurpose: null,
   polledSpendBuckets: JSON.stringify({
     '2026-10-01|gpt-5': 600,
     '2026-10-02|gpt-5': 400,

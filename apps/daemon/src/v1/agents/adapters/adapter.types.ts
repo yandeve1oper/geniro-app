@@ -3552,6 +3552,14 @@ export interface AgentTurnInput {
    */
   isolateMcpServers?: boolean;
   /**
+   * This turn may read but neither run a command nor change a file: each CLI
+   * takes its own shell and write tools away from the model, as strongly as it
+   * allows, and loads no MCP server of the user's where it can. geniro's own
+   * server stays. Set only for a lessons reflection, which reads its thread
+   * through geniro's tools. Part of `AgentAdapter.sessionKey`.
+   */
+  readOnly?: boolean;
+  /**
    * MCP servers this turn runs WITHOUT, by the name the CLI lists them under —
    * a team member's own switches (`TeamMember.mcpDisabled`). Absent
    * or empty switches nothing off; chats never set it.

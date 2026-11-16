@@ -402,6 +402,43 @@ describe('the turn', () => {
     });
   });
 
+  it('takes the shell away and runs read-only, outside plan mode, for a read-only turn', () => {
+    const startFrame = (
+      input: AgentTurnInput,
+    ): Record<string, unknown> | undefined => {
+      const written: string[] = [];
+      adapterWith()
+        .driver(input)
+        .onStdinReady?.({
+          write: (payload) => {
+            written.push(payload);
+            return true;
+          },
+          emit: () => undefined,
+        });
+      return written
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              method?: string;
+              params?: Record<string, unknown>;
+            },
+        )
+        .find((frame) => frame.method === 'thread/start')?.params;
+    };
+
+    const reading = startFrame({ prompt: 'x', cwd: '/repo', readOnly: true });
+    expect(reading?.config).toEqual({ 'features.shell_tool': false });
+    expect(reading).toMatchObject({
+      approvalPolicy: 'untrusted',
+      sandbox: 'read-only',
+    });
+
+    const open = startFrame({ prompt: 'x', cwd: '/repo' });
+    expect(open?.config).toBeUndefined();
+    expect(open).toMatchObject({ approvalPolicy: 'never' });
+  });
+
   it('tells the agent about the call tools only when they are registered', () => {
     const instructionsFor = (input: AgentTurnInput): string => {
       const written: string[] = [];

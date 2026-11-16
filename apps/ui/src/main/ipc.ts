@@ -392,9 +392,11 @@ export function registerIpc(
     // pages through the user's own logins: the desktop's call alone.
     // The auto-forget window arms a sweep that forgets memory on its own clock.
     // `resourceAlerts` reaches the daemon's desktop-only config route.
+    // `lessons` picks what a reflection spends, through another such route.
     [
       'cliPaths',
       'daemonInspect',
+      'lessons',
       'memoryAutoForgetAfterDays',
       'resourceAlerts',
       'sharing',

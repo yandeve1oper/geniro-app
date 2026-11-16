@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { codexTurnPolicy } from './codex-policy.utils';
+import {
+  CODEX_READ_ONLY_TURN_POLICY,
+  codexTurnPolicy,
+} from './codex-policy.utils';
 
 // Every case compares the WHOLE policy: an extra writable root, or an
 // auto-accept where none was meant, widens where an agent writes without asking
@@ -64,6 +67,16 @@ describe('codexTurnPolicy', () => {
   it('runs a turn naming no mode (an internal probe) read-only with nothing to ask', () => {
     expect(codexTurnPolicy(undefined)).toEqual({
       approvalPolicy: 'never',
+      sandbox: 'read-only',
+      sandboxPolicy: { type: 'readOnly', networkAccess: false },
+      plan: false,
+      autoAcceptFileChanges: false,
+    });
+  });
+
+  it('runs a read-only turn in the read-only sandbox under untrusted, outside plan mode', () => {
+    expect(CODEX_READ_ONLY_TURN_POLICY).toEqual({
+      approvalPolicy: 'untrusted',
       sandbox: 'read-only',
       sandboxPolicy: { type: 'readOnly', networkAccess: false },
       plan: false,

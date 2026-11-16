@@ -314,6 +314,44 @@ describe('RunDao (in-memory sqlite)', () => {
         (await dao.listAnalysesOf(source.id)).map((run) => run.id),
       ).toEqual([newer.id, older.id]);
     });
+
+    it('keeps a lessons reflection out of every listing and out of the thread’s own analysis, and still cascades it', async () => {
+      const source = await dao.create({ createdAt: new Date(1_000) });
+      const review = await dao.create({
+        createdAt: new Date(2_000),
+        analysisSourceRunId: source.id,
+      });
+      const labelledReview = await dao.create({
+        createdAt: new Date(2_500),
+        analysisSourceRunId: source.id,
+        analysisPurpose: 'review',
+      });
+      const lessons = await dao.create({
+        createdAt: new Date(3_000),
+        analysisSourceRunId: source.id,
+        analysisPurpose: 'lessons',
+      });
+
+      for (const scope of ['active', 'archived', 'all'] as const) {
+        expect(
+          (await dao.listChats(scope))
+            .map((run) => run.id)
+            .filter((id) => id !== source.id),
+        ).toEqual([]);
+      }
+      expect(
+        (await dao.listReviewAnalysesOf(source.id)).map((run) => run.id),
+      ).toEqual([labelledReview.id, review.id]);
+      expect(
+        (await dao.listLessonReflectionsOf(source.id)).map((run) => run.id),
+      ).toEqual([lessons.id]);
+      expect(
+        (await dao.listAnalysesOf(source.id)).map((run) => run.id),
+      ).toEqual([lessons.id, labelledReview.id, review.id]);
+      expect((await dao.teamLedgerChats()).map((run) => run.id).sort()).toEqual(
+        [labelledReview.id, review.id].sort(),
+      );
+    });
   });
 
   describe('listThreads', () => {

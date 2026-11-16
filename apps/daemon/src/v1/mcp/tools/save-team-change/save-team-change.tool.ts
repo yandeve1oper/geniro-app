@@ -45,7 +45,7 @@ export class SaveTeamChangeTool extends BaseMcpTool {
 
   protected isOffered({ runId, memberId }: McpListContext): boolean {
     return (
-      this.analysis.canAnalyse(runId, memberId) ||
+      this.analysis.canReview(runId, memberId) ||
       this.builders.canEdit(runId, memberId)
     );
   }

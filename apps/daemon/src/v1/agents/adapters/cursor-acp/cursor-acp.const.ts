@@ -268,6 +268,22 @@ export const CURSOR_ASKING_APPROVAL_MODE = 'allowlist';
 export const CURSOR_WEB_SEARCH_AUTO_ACCEPT_CONFIG_KEY = 'autoAcceptWebSearch';
 
 /**
+ * The `cli-config.json` permissions a read-only turn (`AgentTurnInput.readOnly`)
+ * is seeded with: no allow rule copied from the user's own, and a hard deny on
+ * every shell command and every write. MEASURED over ACP on 2026.11.05-86047df
+ * in a throwaway profile with `Shell(ls)` allowed: the shell answered
+ * "Command blocked by permissions configuration", a patch "Write permission
+ * denied … Blocked by permissions configuration", with no
+ * `session/request_permission` and no file written. Both tools stay listed;
+ * deny is checked before allow, and `*` / `**` match any command and any path.
+ */
+export const CURSOR_PERMISSIONS_CONFIG_KEY = 'permissions';
+export const CURSOR_READ_ONLY_PERMISSIONS = {
+  allow: [],
+  deny: ['Shell(*)', 'Write(**)'],
+} as const;
+
+/**
  * How long cursor keeps an "Allow always" answer as geniro runs it: one
  * SESSION.
  *

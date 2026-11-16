@@ -113,6 +113,7 @@ export class StatsService {
     const byProject = new Map<string | null, ChatTotalsWire>();
     const byThread = new Map<string | null, ChatTotalsWire>();
     const byTeam = new Map<string | null, ChatTotalsWire>();
+    const byPurpose = new Map<string | null, ChatTotalsWire>();
     // A thread with no team slug is in no team bucket.
     const threadRows = await this.activityDao.threadRowsByRuns(
       [...new Set(events.map((event) => event.runId))],
@@ -160,6 +161,9 @@ export class StatsService {
       if (team !== null) {
         addUsage(bucket(byTeam, team), event);
       }
+      if (event.purpose !== null && event.purpose !== undefined) {
+        addUsage(bucket(byPurpose, event.purpose), event);
+      }
       tallyUnpricedTurn(unpricedTurns, event);
     }
 
@@ -205,6 +209,9 @@ export class StatsService {
       const team = teamOf(event.runId);
       if (team !== null) {
         addPolledSpend(bucket(byTeam, team), costUsd, turns);
+      }
+      if (event.purpose !== null && event.purpose !== undefined) {
+        addPolledSpend(bucket(byPurpose, event.purpose), costUsd, turns);
       }
     }
 
@@ -280,6 +287,7 @@ export class StatsService {
       byProject: rank(byProject),
       byThread: await this.titled(rank(byThread), em),
       byTeam: rank(byTeam),
+      byPurpose: rank(byPurpose),
       metrics,
     };
   }

@@ -129,6 +129,8 @@ const GENIRO_TOOLS: Readonly<Record<string, GeniroCardKind | null>> = {
   // The outcome is its own `run_outcome` row.
   record_outcome: null,
   move_stage: null,
+  // The card is the `lessons` row the reflection writes into the thread.
+  propose_lessons: null,
   // The send is the sender's own `threadMessageSent` row; a refused one keeps
   // its call row (`transcript-groups.ts`).
   [MESSAGE_THREAD]: null,

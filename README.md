@@ -391,6 +391,14 @@ Every agent shares one memory, whatever its CLI. An agent searches it, reads an 
 
 The memory works from your phone as well: you can read, edit, forget, approve and clean up there. Import and export happen on the Mac.
 
+## 💡 Lessons
+
+Agents repeat mistakes from one thread to the next. **Reflect now** (in a thread's menu in the sidebar, or the lightbulb in its agents panel) has a separate, hidden agent read what happened in the thread since its last reflection and propose at most three lessons. A lesson needs evidence from outside the agent's own opinion: you correcting it after it said it was done, an approval you declined, a step that failed and then passed, a failed outcome, a reopened stage or a review finding. It quotes that message, and Geniro checks the quote. Zero lessons is the normal outcome.
+
+- **The card.** The lessons land as a card at the end of the thread: each with its rule, why, the evidence and where it would be saved. **Save** writes it to the shared memory (project, team or global) as your own entry, so its title goes into the memory index every new chat in that place starts with. **Edit** changes the wording first, and **Reject** takes an optional reason; a rejected lesson is not proposed again in that project or team without new evidence. Nothing reaches an agent until you save it.
+- **Cost.** A reflection runs only when you press. The card's footer shows the agent, the model, how long it took and what it cost. **Stats** shows what reflections spent in the period under **Lessons**.
+- **Settings → Memory → Lessons** sets the agent, model and effort a reflection runs as (by default the thread's own CLI and its default model), and switches the offers off. Reflect now works either way. These settings are on the Mac only; saving and rejecting lessons works from your phone too.
+
 ## 📊 Stats, cost and CPU & RAM
 
 **Stats page.** Pick a period: today, 7, 30 or 90 days, or all time. See spend, cost per turn, turns, agent time, threads, pull requests, lines changed, tokens in and out, cache reads and writes, and cache hit rate. Break it all down by agent, model, project, team and thread. See the share of threads that recorded goals, how many goals were achieved and how threads ended, and every tool and MCP server the agents called, with its errors and average time. Prices come from the public [models.dev](https://models.dev) catalog. A model without a price shows a dash, never a made-up `$0`. The usage ledger survives deleted chats.

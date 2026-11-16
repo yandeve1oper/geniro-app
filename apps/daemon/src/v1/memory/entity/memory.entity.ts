@@ -74,6 +74,10 @@ export class Memory extends TimestampsEntity {
   @Property({ type: 'text', nullable: true })
   sourceImportedFrom: string | null = null;
 
+  /** The lesson proposal a user's save of a lesson wrote this entry from. */
+  @Property({ type: 'string', nullable: true })
+  lessonProposalId: string | null = null;
+
   @Property({ type: 'text', nullable: true })
   forgetReason: string | null = null;
 

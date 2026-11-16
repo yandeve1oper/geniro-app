@@ -46,6 +46,7 @@ import {
   type MemoryImportResult,
   type MemoryIndexPreview,
   type MemoryKeepResult,
+  type MemoryLessonSource,
   type MemoryList,
   type MemoryListQuery,
   type MemoryMergeOutcome,
@@ -361,6 +362,15 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     };
   }
 
+  /** Whether the actor is a lessons reflection, which proposes lessons and writes no memory itself. */
+  private async isReflection(actor: MemoryActor): Promise<boolean> {
+    if (actor.kind !== 'analysis') {
+      return false;
+    }
+    const run = await this.runs.getById(actor.runId, this.em.fork());
+    return run?.analysisPurpose === 'lessons';
+  }
+
   /** The best active entries a run in `place` may see, best first. */
   async search(
     query: string,
@@ -630,8 +640,14 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     return row ? toEntry(row) : null;
   }
 
-  /** The user's own new entry, filed where the user chose. */
-  create(input: MemoryCreateInput): Promise<MemorySaveOutcome> {
+  /**
+   * The user's own new entry, filed where the user chose. `lesson` names the
+   * thread and the lesson proposal a saved lesson came from.
+   */
+  create(
+    input: MemoryCreateInput,
+    lesson?: MemoryLessonSource,
+  ): Promise<MemorySaveOutcome> {
     return this.serialize(async () => {
       const invalid = this.refuseInvalid(USER, input);
       if (invalid) {
@@ -642,7 +658,8 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
         (await this.refuseUnknownProject(input.projectId, em)) ??
         (await this.refuseUnknownTeam(input.teamSlug ?? null, null));
       return (
-        unknown ?? this.writeRow(USER, input, placeOfInput(input), null, em)
+        unknown ??
+        this.writeRow(USER, input, placeOfInput(input), null, em, true, lesson)
       );
     });
   }
@@ -1076,6 +1093,9 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     if (invalid) {
       return invalid;
     }
+    if (await this.isReflection(actor)) {
+      return refusedForReflection();
+    }
     if (input.handle !== undefined && this.underReview(actor)) {
       return refused(
         'UNDER_REVIEW',
@@ -1118,6 +1138,7 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     existing: Memory | null,
     em: EntityManager,
     announce = true,
+    lesson?: MemoryLessonSource,
   ): Promise<MemorySaveOutcome> {
     const duplicates = await this.nearDuplicates(input, target, existing, em);
     const live = duplicates.filter((row) => row.status === 'active');
@@ -1147,7 +1168,7 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     row.projectId = target.projectId;
     row.teamSlug = target.teamSlug;
     row.status = status;
-    stampSource(row, actor);
+    stampSource(row, actor, lesson);
     em.persist(row);
     await em.flush();
     if (announce) {
@@ -1164,6 +1185,9 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
   ): Promise<MemoryForgetOutcome> {
     if (isAgent(actor) && !this.config.enabled) {
       return refused('MEMORY_DISABLED', 'the user has turned memory off');
+    }
+    if (await this.isReflection(actor)) {
+      return refusedForReflection();
     }
     if (this.underReview(actor)) {
       return refused(
@@ -1487,13 +1511,26 @@ function markText(row: Memory): void {
   row.referencesCheckedAt = null;
 }
 
-function stampSource(row: Memory, actor: MemoryActor): void {
+function refusedForReflection(): Refusal {
+  return refused(
+    'REFLECTION_READ_ONLY',
+    'a lessons reflection proposes lessons with propose_lessons; the user saves them',
+  );
+}
+
+function stampSource(
+  row: Memory,
+  actor: MemoryActor,
+  lesson?: MemoryLessonSource,
+): void {
   row.approvedAt = null;
   row.sourceActor = actor.kind;
   row.sourceAgentKind = 'agentKind' in actor ? actor.agentKind : null;
   row.sourceModel = 'model' in actor ? actor.model : null;
-  row.sourceRunId = 'runId' in actor ? actor.runId : null;
+  row.sourceRunId =
+    lesson?.sourceRunId ?? ('runId' in actor ? actor.runId : null);
   row.sourceImportedFrom = actor.kind === 'import' ? actor.importedFrom : null;
+  row.lessonProposalId = lesson?.proposalId ?? null;
 }
 
 export function toEntry(row: Memory): MemoryEntry {

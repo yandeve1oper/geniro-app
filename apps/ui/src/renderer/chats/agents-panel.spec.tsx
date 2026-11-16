@@ -1250,6 +1250,39 @@ describe('AgentsPanel', () => {
     expect(onAnalyzeThread).toHaveBeenCalledTimes(2);
   });
 
+  it('starts a lessons reflection from the heading and the rail, and holds the button while there is nothing to reflect on', () => {
+    const onReflectLessons = vi.fn();
+    const selector = 'button[data-lessons]';
+    const ready = render(
+      <AgentsPanel
+        terminalReasons={TERMINALS}
+        agents={agents}
+        onOpenThread={vi.fn()}
+        onReflectLessons={onReflectLessons}
+        lessonsMark="ready"
+      />,
+    );
+    click(ready.querySelector(selector));
+    click(ready.querySelector('button[aria-label="Collapse agents panel"]'));
+    click(ready.querySelector(selector));
+    expect(onReflectLessons).toHaveBeenCalledTimes(2);
+
+    for (const mark of ['nothing_new', 'reflecting'] as const) {
+      const held = render(
+        <AgentsPanel
+          terminalReasons={TERMINALS}
+          agents={agents}
+          onOpenThread={vi.fn()}
+          onReflectLessons={onReflectLessons}
+          lessonsMark={mark}
+        />,
+      );
+      expect(held.querySelector<HTMLButtonElement>(selector)?.disabled).toBe(
+        true,
+      );
+    }
+  });
+
   it('exports the chat from the heading and from the rail', () => {
     const onExportChat = vi.fn();
     const el = render(

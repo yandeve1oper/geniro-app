@@ -25,6 +25,16 @@ export class AnalysisBroker extends HostSinkBroker<AnalysisSink> {
     return this.has(runId, memberId);
   }
 
+  /** Whether this member's analysis turn is a hidden lessons reflection. */
+  isReflection(runId: string, memberId: string): boolean {
+    return this.sinkOf(runId, memberId)?.turn.purpose === 'lessons';
+  }
+
+  /** Whether this member is an analysis that may file recommendations and changes — not a reflection. */
+  canReview(runId: string, memberId: string): boolean {
+    return this.has(runId, memberId) && !this.isReflection(runId, memberId);
+  }
+
   turnOf(
     runId: string,
     memberId: string,

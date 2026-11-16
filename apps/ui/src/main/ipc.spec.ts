@@ -63,6 +63,7 @@ const mocks = vi.hoisted(() => {
       autoRevokeAfterDays: null,
     },
     memory: { enabled: true, agentWrites: 'active', nativeMemoryOff: false },
+    lessons: { mode: 'offer', agentKind: null, model: null, effort: null },
     knowledge: { enabled: true, agentWrites: 'review' },
     resourceAlerts: {
       enabled: true,
@@ -679,6 +680,25 @@ describe('registerIpc remote-access channels', () => {
     expect(
       entry.policy.refuseRemoteArgs?.([{ memoryAutoForgetAfterDays: null }]),
     ).toContain('memoryAutoForgetAfterDays');
+  });
+
+  it('a paired device cannot pick what a lessons reflection runs as', () => {
+    const entry = registry.get(IPC.updateSettings);
+    if (!entry || entry.policy.remote !== 'allow') {
+      throw new Error('updateSettings is not remotely callable');
+    }
+    expect(
+      entry.policy.refuseRemoteArgs?.([
+        {
+          lessons: {
+            mode: 'offer',
+            agentKind: 'claude',
+            model: 'opus',
+            effort: null,
+          },
+        },
+      ]),
+    ).toContain('lessons');
   });
 
   it('a paired device cannot change or switch off the resource alerts', () => {

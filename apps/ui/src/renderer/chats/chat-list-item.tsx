@@ -2,6 +2,7 @@ import {
   Archive,
   ArchiveRestore,
   Ellipsis,
+  Lightbulb,
   NotebookPen,
   Palette,
   Pencil,
@@ -49,6 +50,7 @@ import {
   STANDING_ACTIVITY,
 } from './run-status';
 import { notesPreview } from './thread-notes';
+import { LESSONS_BUTTON, type ThreadLessonsMark } from './use-thread-lessons';
 
 /**
  * What the agent label SAYS — `claude`, `cursor`, `graph`.
@@ -159,6 +161,8 @@ export const ChatListItem = memo(function ChatListItem({
   onArchive,
   onUnarchive,
   onAnalyze,
+  onReflect,
+  readLessonsMark,
   archived = false,
   pinned = false,
   notes = null,
@@ -271,6 +275,9 @@ export const ChatListItem = memo(function ChatListItem({
   onUnarchive?: (runId: string) => void;
   /** Open the Analyze thread dialog for this row; absent offers no item. */
   onAnalyze?: (runId: string) => void;
+  /** Start a lessons reflection on this row; absent offers no item. */
+  onReflect?: (runId: string) => void;
+  readLessonsMark?: (runId: string) => Promise<ThreadLessonsMark>;
   /**
    * This row is being drawn in the ARCHIVE, which decides which pair of
    * actions it offers: Archive on the desk, Unarchive + Delete on the shelf.
@@ -332,6 +339,25 @@ export const ChatListItem = memo(function ChatListItem({
   const preview = notesPreview(notes);
 
   const rowMenu = useContextMenu();
+  const [lessonsMark, setLessonsMark] = useState<ThreadLessonsMark | 'reading'>(
+    'unknown',
+  );
+  const lessonsRead = useRef(0);
+
+  const readLessons = (): void => {
+    if (readLessonsMark === undefined || onReflect === undefined) {
+      return;
+    }
+    const read = ++lessonsRead.current;
+    setLessonsMark('reading');
+    void readLessonsMark(runId)
+      .catch((): ThreadLessonsMark => 'unknown')
+      .then((mark) => {
+        if (lessonsRead.current === read) {
+          setLessonsMark(mark);
+        }
+      });
+  };
 
   useEffect(() => {
     if (editing) {
@@ -414,16 +440,27 @@ export const ChatListItem = memo(function ChatListItem({
     if (naming.length > 0) {
       groups.push({ items: naming });
     }
+    const thread: MenuItem[] = [];
     if (onAnalyze) {
-      groups.push({
-        items: [
-          {
-            value: 'analyze',
-            label: 'Analyze thread…',
-            icon: <Sparkles className="size-3.5 shrink-0" />,
-          },
-        ],
+      thread.push({
+        value: 'analyze',
+        label: 'Analyze thread…',
+        icon: <Sparkles className="size-3.5 shrink-0" />,
       });
+    }
+    if (onReflect) {
+      const reflect =
+        LESSONS_BUTTON[lessonsMark === 'reading' ? 'unknown' : lessonsMark];
+      thread.push({
+        value: 'reflect',
+        label: reflect.label,
+        title: reflect.title,
+        disabled: lessonsMark === 'reading' || reflect.disabled,
+        icon: <Lightbulb className="size-3.5 shrink-0" />,
+      });
+    }
+    if (thread.length > 0) {
+      groups.push({ items: thread });
     }
     const shelf: MenuItem[] = [];
     if (!archived && onArchive) {
@@ -465,6 +502,8 @@ export const ChatListItem = memo(function ChatListItem({
     onArchive,
     onUnarchive,
     onAnalyze,
+    onReflect,
+    lessonsMark,
   ]);
 
   const startEditing = (): void => {
@@ -495,6 +534,8 @@ export const ChatListItem = memo(function ChatListItem({
       onDelete(runId);
     } else if (value === 'analyze') {
       onAnalyze?.(runId);
+    } else if (value === 'reflect') {
+      onReflect?.(runId);
     } else if (value.startsWith(COLOR_ROW_PREFIX)) {
       const next = colorOfMenuValue(value);
       if (next !== undefined && next !== color) {
@@ -588,7 +629,14 @@ export const ChatListItem = memo(function ChatListItem({
       // act on a row the field currently owns, and the platform's own
       // cut/copy/paste is what a right-click in a text field should raise —
       // which it does, since this handler is what would have suppressed it.
-      onContextMenu={editing ? undefined : rowMenu.onContextMenu}
+      onContextMenu={
+        editing
+          ? undefined
+          : (event) => {
+              rowMenu.onContextMenu(event);
+              readLessons();
+            }
+      }
       onActivate={() => onActivate(runId)}>
       <span className="flex items-center gap-1.5">
         {/* Leads the row, ahead of the team glyph: it is about the row as a
@@ -786,6 +834,7 @@ export const ChatListItem = memo(function ChatListItem({
               onClick={(event) => {
                 event.stopPropagation();
                 rowMenu.openBelow(event.currentTarget);
+                readLessons();
               }}>
               <Ellipsis className="size-4 shrink-0" />
             </Button>

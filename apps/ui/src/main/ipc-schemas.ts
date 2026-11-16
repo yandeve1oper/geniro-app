@@ -280,6 +280,17 @@ export const memorySchema = z.strictObject({
   nativeMemoryOff: z.boolean(),
 });
 
+/**
+ * TWIN PARSER: `LessonsConfigSchema` in `apps/daemon/src/v1/lessons/lessons.types.ts`,
+ * which `lessons-config-push.ts` pushes this to.
+ */
+export const lessonsSchema = z.strictObject({
+  mode: z.enum(['off', 'offer']),
+  agentKind: z.string().min(1).max(64).nullable(),
+  model: z.string().min(1).max(200).nullable(),
+  effort: z.string().min(1).max(50).nullable(),
+});
+
 /** Twin of the day bound in `MemoryConfigSchema` (`apps/daemon/src/v1/memory/memory.types.ts`). */
 const MAX_AUTO_FORGET_DAYS = 3650;
 
@@ -445,6 +456,7 @@ export const settingsPatchSchema = z.strictObject({
   remoteAccessEnabled: z.boolean().optional(),
   sharing: sharingSchema.optional(),
   memory: memorySchema.optional(),
+  lessons: lessonsSchema.optional(),
   knowledge: knowledgeSchema.optional(),
   resourceAlerts: resourceAlertsSchema.optional(),
   // The retention window, or null for "keep the archive". Bounded to exactly

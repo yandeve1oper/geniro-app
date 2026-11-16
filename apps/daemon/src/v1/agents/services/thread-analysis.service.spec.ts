@@ -82,6 +82,9 @@ describe('ThreadAnalysisService.start', () => {
       listAnalysesOf: vi.fn(() =>
         Promise.resolve([...listed, ...earlier].map((id) => ({ id }) as Run)),
       ),
+      listReviewAnalysesOf: vi.fn(() =>
+        Promise.resolve([...listed, ...earlier].map((id) => ({ id }) as Run)),
+      ),
       listOrphanedAnalyses: vi.fn(() => Promise.resolve([] as Run[])),
     };
     const itemDao = { maxSeq: vi.fn(() => Promise.resolve(maxSeq)) };
@@ -157,6 +160,18 @@ describe('ThreadAnalysisService.start', () => {
     // And it answers with its own row as it reads now, not the pre-brief copy.
     expect(started.status).toBe('running');
     expect(findAnalysis).toHaveBeenCalledWith('source', 'analysis');
+  });
+
+  it('never replaces a lessons reflection: only the thread’s own analyses are read for the replace', async () => {
+    const { service, remove, runDao } = build({}, 41, ['old-review']);
+    runDao.listAnalysesOf.mockResolvedValue([
+      { id: 'lessons-reflection' },
+      { id: 'old-review' },
+    ] as Run[]);
+
+    await service.start('source', { agentKind: 'claude' });
+
+    expect(remove.mock.calls).toEqual([['old-review']]);
   });
 
   it('deletes only what it replaces, so a start racing it keeps its own analysis', async () => {
