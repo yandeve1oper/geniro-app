@@ -95,6 +95,7 @@ import { GalleryImageService } from './services/gallery-image.service';
 import { GlobalChatSearchService } from './services/global-chat-search.service';
 import { GoalWritersBroker } from './services/goal-writers.broker';
 import { GoalsService } from './services/goals.service';
+import { HostToolResultLedger } from './services/host-tool-result.ledger';
 import { HostWakeBus } from './services/host-wake.bus';
 import { HostWakeChatDelivery } from './services/host-wake-chat-delivery.service';
 import { ItemCallIndexService } from './services/item-call-index.service';
@@ -444,6 +445,7 @@ import { defaultSpawn } from './utils/spawn-cli';
       inject: [AgentAdapterRegistry, ProcessRegistry, AgentVersionService],
     },
     AgentEventBus,
+    HostToolResultLedger,
     RunContextRegistry,
     RunHoldRegistry,
     ApprovalRegistry,
@@ -596,12 +598,14 @@ import { defaultSpawn } from './utils/spawn-cli';
         AgentVersionService,
         ProcessRegistry,
         ModelPriceCatalog,
+        HostToolResultLedger,
       ],
       useFactory: (
         vocabularyStore: ModelVocabularyStore,
         versions: AgentVersionService,
         processes: ProcessRegistry,
         prices: ModelPriceCatalog,
+        hostToolResults: HostToolResultLedger,
       ) => {
         const deps: AdapterDaemonDeps = {
           userDataDir: environment.userDataDir,
@@ -620,6 +624,7 @@ import { defaultSpawn } from './utils/spawn-cli';
           processes,
           clientVersion: DAEMON_VERSION,
           prices,
+          hostToolResults,
         };
         return [
           ClaudeAdapter.forDaemon(deps),
@@ -645,6 +650,9 @@ import { defaultSpawn } from './utils/spawn-cli';
     KnowledgeItemsService,
     GlobalChatSearchService,
     AgentEventBus,
+    // For `McpModule`'s MCP host, which files each result it serves here for a
+    // CLI that reports none (`HostToolResultLedger`).
+    HostToolResultLedger,
     ApprovalRegistry,
     // Exported for `McpModule` (`v1/mcp`): its MCP host serves the
     // `ask_user_question` tool through this broker, and the turn that can

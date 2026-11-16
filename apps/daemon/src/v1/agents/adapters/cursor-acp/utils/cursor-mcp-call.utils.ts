@@ -24,3 +24,18 @@ export function readCursorMcpToolCall(
   }
   return { server, tool, args: wrapper.args ?? null };
 }
+
+/**
+ * What a cursor MCP call's reported output says of its result: cursor reports a
+ * call the tool answered as exactly `{success: true}` and forwards none of the
+ * answer, so that output is no result and reads as null. A refusal or an error
+ * it reports is real and is kept.
+ */
+export function readCursorMcpToolResult(reported: unknown): unknown {
+  const record = asRecord(reported);
+  return record !== null &&
+    Object.keys(record).length === 1 &&
+    record.success === true
+    ? null
+    : reported;
+}

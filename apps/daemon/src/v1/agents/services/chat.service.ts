@@ -155,6 +155,7 @@ import { isHostBoardCall } from '../utils/host-board';
 import { isHostBrowserCall } from '../utils/host-browser';
 import { isHostChartCall } from '../utils/host-chart';
 import { isHostComparisonCall } from '../utils/host-comparison';
+import { hostEndpointPath } from '../utils/host-endpoint';
 import { isHostFindingsCall } from '../utils/host-findings';
 import { hostGalleryDownloads, isHostGalleryCall } from '../utils/host-gallery';
 import { isHostKnowledgeCall } from '../utils/host-knowledge';
@@ -7185,7 +7186,7 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
       const mcpEndpoint =
         port !== null && callToken !== null
           ? {
-              url: `http://127.0.0.1:${port}/v1/mcp/${encodeURIComponent(runId)}/${encodeURIComponent(SINGLE_AGENT_NODE)}`,
+              url: `http://127.0.0.1:${port}${hostEndpointPath(runId, SINGLE_AGENT_NODE, null)}`,
               token: callToken,
               serverName: hostServerName,
             }

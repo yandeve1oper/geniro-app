@@ -87,6 +87,7 @@ import { GalleryImageService } from '../../agents/services/gallery-image.service
 import { GlobalChatSearchService } from '../../agents/services/global-chat-search.service';
 import { GoalWritersBroker } from '../../agents/services/goal-writers.broker';
 import type { GoalsService } from '../../agents/services/goals.service';
+import { HostToolResultLedger } from '../../agents/services/host-tool-result.ledger';
 import type { KnowledgeItemsService } from '../../agents/services/knowledge-items.service';
 import { MetricsBroker } from '../../agents/services/metrics.broker';
 import { MonitorBroker } from '../../agents/services/monitor.broker';
@@ -120,6 +121,7 @@ import {
   ARTIFACT_TAILWIND_THEME,
   ARTIFACT_TOKEN_NAMES,
 } from '../../agents/utils/artifact-runtime';
+import { hostEndpointPath } from '../../agents/utils/host-endpoint';
 import { MAX_HOST_QUESTION_TITLE_LENGTH } from '../../agents/utils/host-question';
 import { RemoteImageError } from '../../agents/utils/remote-image';
 import type { BrowserOp } from '../../browser/browser.types';
@@ -162,7 +164,7 @@ import {
   ANSWERING_WITH_CALLS_OUT,
 } from '../../teams/utils/callee-text';
 import { callerKey } from '../../teams/utils/caller-key';
-import type { McpCallContext } from '../mcp.types';
+import type { McpCallContext, McpTool } from '../mcp.types';
 import { PAGE_CONTENT_PREFACE } from '../tools/browser-shared/browser-outcome';
 import { createBrowserTools } from '../tools/browser-shared/browser-tools';
 import { GoalsTool } from '../tools/goals/goals.tool';
@@ -317,6 +319,7 @@ function service(
       startedAt: 0,
       port: 4870,
     },
+    new HostToolResultLedger(),
   );
 }
 
@@ -6525,12 +6528,16 @@ describe('goals through the MCP endpoint', () => {
       { runId: 'run-1' },
       { offeredTo: () => false },
     );
-    endpoint = new McpServerService([new GoalsTool(db.service, writers)], {
-      token: 'launch',
-      version: '9.9.9',
-      startedAt: 0,
-      port: 4870,
-    });
+    endpoint = new McpServerService(
+      [new GoalsTool(db.service, writers)],
+      {
+        token: 'launch',
+        version: '9.9.9',
+        startedAt: 0,
+        port: 4870,
+      },
+      new HostToolResultLedger(),
+    );
   });
 
   afterEach(async () => {
@@ -6724,6 +6731,7 @@ describe('goals through the MCP endpoint', () => {
     const relay = new McpServerService(
       [new GoalsTool(db.service, relayWriters)],
       { token: 'launch', version: '9.9.9', startedAt: 0, port: 4870 },
+      new HostToolResultLedger(),
     );
     const add = (member: string, text: string) =>
       callGoals(
@@ -6834,6 +6842,7 @@ describe('McpServerService — the in-app browser tools', () => {
       subject: new McpServerService(
         createBrowserTools(broker, attachments),
         RUNTIME,
+        new HostToolResultLedger(),
       ),
       runs,
       saved,
@@ -7163,5 +7172,77 @@ describe('McpServerService — the in-app browser tools', () => {
       );
       expect(describes(HOST_BROWSER_SNAPSHOT_TOOL)).toContain('text: true');
     });
+  });
+});
+
+describe('McpServerService — results kept for a CLI that reports none', () => {
+  const served = {
+    content: [{ type: 'text' as const, text: 'two notes' }],
+    isError: false,
+  };
+  const notes: McpTool = {
+    handles: (name) => name === 'team_notes',
+    list: () => [],
+    call: () => Promise.resolve(served),
+  };
+  const endpointOf = (conversationId: string | null) => ({
+    url: `http://127.0.0.1:4870${hostEndpointPath('run-1', 'qa', conversationId)}`,
+    serverName: 'geniro-run1abcd',
+  });
+  const callOf = (tool: string, args: unknown) => ({
+    server: 'geniro-run1abcd',
+    tool,
+    args,
+  });
+
+  it('files each answer under the endpoint of the conversation that asked', async () => {
+    const ledger = new HostToolResultLedger();
+    const target = new McpServerService(
+      [notes],
+      { token: 'launch', version: '9.9.9', startedAt: 0, port: 4870 },
+      ledger,
+    );
+    const callee = endpointOf('conv-9');
+    const own = endpointOf(null);
+    ledger.watch(callee);
+    ledger.watch(own);
+
+    const response = await post(
+      target,
+      'run-1',
+      'qa',
+      rpc('tools/call', { name: 'team_notes', arguments: { limit: 5 } }),
+      'conv-9',
+    );
+
+    expect(response.json().result).toEqual(served);
+    expect(ledger.resultOf(own, callOf('team_notes', { limit: 5 }))).toBe(
+      undefined,
+    );
+    expect(ledger.resultOf(callee, callOf('team_notes', { limit: 5 }))).toEqual(
+      served,
+    );
+  });
+
+  it('files the refusal of a tool this endpoint does not serve', async () => {
+    const ledger = new HostToolResultLedger();
+    const target = new McpServerService(
+      [],
+      { token: 'launch', version: '9.9.9', startedAt: 0, port: 4870 },
+      ledger,
+    );
+    const own = endpointOf(null);
+    ledger.watch(own);
+
+    const response = await post(
+      target,
+      'run-1',
+      'qa',
+      rpc('tools/call', { name: 'launch_missiles', arguments: {} }),
+    );
+
+    expect(ledger.resultOf(own, callOf('launch_missiles', {}))).toEqual(
+      response.json().result,
+    );
   });
 });

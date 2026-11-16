@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { atomicWrite } from '../../../../utils/atomic-file';
 import { registerSecret } from '../../../diagnostics/utils/redact';
 import { AgentKind } from '../../../runs/runs.types';
+import type { HostToolResultLedger } from '../../services/host-tool-result.ledger';
 import { ModelVocabularyStore } from '../../services/model-vocabulary.store';
 import { adapterQuestionOf } from '../../utils/card-questions';
 import { asNumber, asRecord, asString } from '../../utils/json-util';
@@ -173,7 +174,10 @@ import {
   readCursorDelegateEnding,
 } from './utils/cursor-delegate-transcript.utils';
 import { cursorDelegateWakePrompt } from './utils/cursor-delegate-wake.utils';
-import { readCursorMcpToolCall } from './utils/cursor-mcp-call.utils';
+import {
+  readCursorMcpToolCall,
+  readCursorMcpToolResult,
+} from './utils/cursor-mcp-call.utils';
 import { parseCursorMcpList } from './utils/cursor-mcp-list.utils';
 import {
   cursorProjectRoot,
@@ -271,6 +275,12 @@ export interface CursorAcpAdapterOptions extends AgentAdapterOptions {
    * should not have a default.
    */
   vocabularyStore: ModelVocabularyStore;
+  /**
+   * What geniro's own MCP endpoint served, read back for the MCP calls this CLI
+   * reports with no result (`readCursorMcpToolResult`). Absent: such a call is
+   * written as having no result.
+   */
+  hostToolResults?: HostToolResultLedger;
 }
 
 /**
@@ -2314,6 +2324,7 @@ export class CursorAcpAdapter extends AgentAdapter {
       clientVersion: deps.clientVersion,
       profileDir: join(deps.userDataDir, CURSOR_PROFILE_DIR_NAME),
       sessionStoreDir: join(deps.userDataDir, CURSOR_SESSION_STORE_DIR_NAME),
+      hostToolResults: deps.hostToolResults,
     });
   }
 
@@ -3026,7 +3037,14 @@ export class CursorAcpAdapter extends AgentAdapter {
         );
       }
     }
+    // For as long as the process lives, so the answers geniro's endpoint serves
+    // it are kept for `mcpToolResult` to read back.
+    const release =
+      input.mcpEndpoint == null
+        ? undefined
+        : this.cursorOptions.hostToolResults?.watch(input.mcpEndpoint);
     return () => {
+      release?.();
       this.turnProfiles.delete(input);
       this.turnAccounts.delete(input);
       removeCursorProfile(dir);
@@ -3385,6 +3403,8 @@ export class CursorAcpAdapter extends AgentAdapter {
   }
 
   protected override createTurnDriver(input: AgentTurnInput): TurnDriver {
+    const endpoint = input.mcpEndpoint ?? null;
+    const served = this.cursorOptions.hostToolResults;
     return new AcpSession(
       {
         clientName: CURSOR_ACP_CLIENT_NAME,
@@ -3420,6 +3440,13 @@ export class CursorAcpAdapter extends AgentAdapter {
         // per conversation process — see CURSOR_ALWAYS_ANSWER_SCOPE.
         alwaysAnswerScope: CURSOR_ALWAYS_ANSWER_SCOPE,
         mcpToolCall: readCursorMcpToolCall,
+        // Read even when cursor reported an outcome of its own, so the result
+        // this call was served is never handed to a later identical call.
+        mcpToolResult: (call, reported) => {
+          const result =
+            endpoint === null ? undefined : served?.resultOf(endpoint, call);
+          return readCursorMcpToolResult(reported) ?? result ?? null;
+        },
         question: {
           method: CURSOR_ASK_QUESTION_METHOD,
           toolName: this.getConfig().questionToolName ?? '',

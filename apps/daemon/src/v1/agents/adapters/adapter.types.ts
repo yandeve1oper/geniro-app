@@ -11,6 +11,7 @@ import type {
   PromptCacheTtlReason,
 } from '../chat.types';
 import type { AgentVersionService } from '../services/agent-version.service';
+import type { HostToolResultLedger } from '../services/host-tool-result.ledger';
 import type { ModelVocabularyStore } from '../services/model-vocabulary.store';
 import type { ProcessRegistry } from '../services/process-registry';
 import type {
@@ -5601,6 +5602,8 @@ export interface AdapterDaemonDeps {
    * on a lookup. See `ModelPriceCatalog`.
    */
   readonly prices: ModelPriceLookup;
+  /** What geniro's own MCP endpoint served, for a CLI that reports no MCP result. */
+  readonly hostToolResults: HostToolResultLedger;
 }
 
 /**

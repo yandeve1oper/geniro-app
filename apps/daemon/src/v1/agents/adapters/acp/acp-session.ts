@@ -25,6 +25,7 @@ import {
   ACP_PROTOCOL_VERSION,
   type AcpAgentCapabilities,
   type AcpMcpServerHttp,
+  type AcpMcpToolCall,
   type AcpParkedPermission,
   type AcpToolCall,
 } from './acp.types';
@@ -223,6 +224,12 @@ export class AcpSession implements TurnDriver {
    * showing no arguments asks the user to approve something they cannot see.
    */
   readonly toolInputs = new Map<string, unknown>();
+  /**
+   * The MCP call each renamed toolCallId named (`AcpSessionOptions.mcpToolCall`),
+   * kept until it settles: the settling update carries neither title nor
+   * arguments to read it from again.
+   */
+  readonly mcpCalls = new Map<string, AcpMcpToolCall>();
   /**
    * Each parked permission request — its offered options and the tool call it
    * asked about — keyed by encoded id.

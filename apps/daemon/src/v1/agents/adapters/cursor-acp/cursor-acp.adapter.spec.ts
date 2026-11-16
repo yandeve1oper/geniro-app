@@ -34,7 +34,9 @@ import { simulateSleep } from '../../../../__tests__/simulate-sleep';
 import { FakeChild, fakeSpawn } from '../../__tests__/fake-child';
 import { AgentAdapterRegistry } from '../../services/agent-adapter.registry';
 import { AgentVersionService } from '../../services/agent-version.service';
+import { HostToolResultLedger } from '../../services/host-tool-result.ledger';
 import { GENIRO_UI_PREAMBLE } from '../../utils/agent-instructions';
+import { hostEndpointPath } from '../../utils/host-endpoint';
 import { isHostToolCall } from '../../utils/host-tool';
 import type { SpawnedProcess, SpawnFn } from '../../utils/spawn-cli';
 import { fakeGroupChild } from '../__tests__/fake-group-child';
@@ -6650,5 +6652,239 @@ describe('CursorAcpAdapter — MCP tool calls', () => {
         },
       }),
     ]);
+  });
+});
+
+describe('CursorAcpAdapter — what an MCP call answered', () => {
+  /**
+   * cursor-agent 2026.11.13-eacade1's `extractToolCallOutput` reports an MCP
+   * call the tool answered as exactly `{success: true}`, and `{error}`,
+   * `{rejected: true}` or `{permissionDenied: true}` otherwise; the answer
+   * itself never crosses ACP.
+   */
+  const SERVER = 'geniro-83139c58';
+  const PATH = hostEndpointPath('run-1', 'manager', null);
+  const ENDPOINT = {
+    url: `http://127.0.0.1:4870${PATH}`,
+    token: 'call-token',
+    serverName: SERVER,
+  };
+  const served = {
+    content: [{ type: 'text', text: '{"threads":[]}' }],
+    isError: false,
+  };
+
+  function drive(
+    ledger: HostToolResultLedger,
+    options: { subagents?: boolean } = {},
+  ): { child: FakeChild; events: AgentEvent[] } {
+    const { spawn, child } = fakeSpawn();
+    const events: AgentEvent[] = [];
+    const input = { ...BASE, mcpEndpoint: ENDPOINT };
+    new CursorAcpAdapter({
+      vocabularyStore: freshVocabularyStore(),
+      spawn,
+      hostToolResults: ledger,
+    })
+      .startSession(input, { runScoped: true })
+      .startTurn(input, (event) => events.push(event));
+    child.stdout.emitData(
+      stdoutLine({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          protocolVersion: 1,
+          agentCapabilities: options.subagents
+            ? { sessionCapabilities: { subagents: {} } }
+            : {},
+        },
+      }),
+    );
+    child.stdout.emitData(
+      stdoutLine({ jsonrpc: '2.0', id: 2, result: { sessionId: 's' } }),
+    );
+    return { child, events };
+  }
+
+  const call = (
+    server: string,
+    tool: string,
+    args: Record<string, unknown>,
+    sessionId = 's',
+  ) =>
+    stdoutLine({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: `call-${tool}`,
+          title: `${server}: ${tool}`,
+          kind: 'other',
+          status: 'in_progress',
+          rawInput: { providerIdentifier: server, toolName: tool, args },
+        },
+      },
+    });
+  const settle = (tool: string, rawOutput: unknown, sessionId = 's') =>
+    stdoutLine({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: `call-${tool}`,
+          status: 'completed',
+          rawOutput,
+        },
+      },
+    });
+  const resultOf = (events: AgentEvent[], tool: string) =>
+    events.find(
+      (event) => event.type === 'tool_result' && event.id === `call-${tool}`,
+    );
+
+  it('writes a call to geniro’s own server with the answer its endpoint served', () => {
+    const ledger = new HostToolResultLedger();
+    const { child, events } = drive(ledger);
+    child.stdout.emitData(call(SERVER, 'list_agent_threads', {}));
+    ledger.record(PATH, 'list_agent_threads', {}, served);
+    child.stdout.emitData(settle('list_agent_threads', { success: true }));
+
+    expect(resultOf(events, 'list_agent_threads')).toEqual({
+      type: 'tool_result',
+      id: 'call-list_agent_threads',
+      name: `mcp__${SERVER}__list_agent_threads`,
+      result: served,
+      isError: false,
+    });
+  });
+
+  it('writes a call no served answer matches as having no result', () => {
+    const ledger = new HostToolResultLedger();
+    const { child, events } = drive(ledger);
+    child.stdout.emitData(call(SERVER, 'team_notes', { limit: 5 }));
+    ledger.record(PATH, 'team_notes', { limit: 50 }, served);
+    child.stdout.emitData(settle('team_notes', { success: true }));
+
+    expect(resultOf(events, 'team_notes')).toMatchObject({ result: null });
+  });
+
+  it('writes a call to another server as having no result, never the bare success marker', () => {
+    const ledger = new HostToolResultLedger();
+    const { child, events } = drive(ledger);
+    child.stdout.emitData(call('linear', 'get_issue', { id: 'CI-992' }));
+    ledger.record(PATH, 'get_issue', { id: 'CI-992' }, served);
+    child.stdout.emitData(settle('get_issue', { success: true }));
+
+    expect(resultOf(events, 'get_issue')).toMatchObject({
+      name: 'mcp__linear__get_issue',
+      result: null,
+    });
+  });
+
+  it('keeps an error cursor reported, and spends the answer it was served', () => {
+    const ledger = new HostToolResultLedger();
+    const { child, events } = drive(ledger);
+    child.stdout.emitData(call(SERVER, 'await_agent', { call_id: 'c1' }));
+    ledger.record(PATH, 'await_agent', { call_id: 'c1' }, served);
+    child.stdout.emitData(
+      settle('await_agent', { error: 'MCP request timed out' }),
+    );
+
+    expect(resultOf(events, 'await_agent')).toMatchObject({
+      result: { error: 'MCP request timed out' },
+    });
+    expect(
+      ledger.resultOf(ENDPOINT, {
+        server: SERVER,
+        tool: 'await_agent',
+        args: { call_id: 'c1' },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('writes a sub-agent’s call to geniro’s server with the answer served', () => {
+    const ledger = new HostToolResultLedger();
+    const { child, events } = drive(ledger, { subagents: true });
+    const meta = {
+      cursor: {
+        toolCallId: 'tool_A',
+        agentId: 'agent-1',
+        model: 'composer-2.5',
+      },
+    };
+    child.stdout.emitData(
+      sessionUpdate({
+        sessionUpdate: 'subagent_spawned',
+        subagentSessionId: 'agent-1',
+        name: 'generalPurpose',
+        task: 'Read the notes',
+        capabilities: {},
+        _meta: meta,
+      }),
+    );
+    child.stdout.emitData(
+      sessionUpdate({
+        sessionUpdate: 'tool_call',
+        toolCallId: 'tool_A',
+        title: 'Task: Read the notes',
+        kind: 'other',
+        status: 'pending',
+        rawInput: {
+          _toolName: 'task',
+          prompt: 'Read the notes',
+          description: 'Notes',
+        },
+      }),
+    );
+    child.stdout.emitData(call(SERVER, 'team_notes', {}, 'agent-1'));
+    ledger.record(PATH, 'team_notes', {}, served);
+    child.stdout.emitData(settle('team_notes', { success: true }, 'agent-1'));
+
+    expect(resultOf(events, 'team_notes')).toMatchObject({
+      name: `mcp__${SERVER}__team_notes`,
+      result: served,
+      parentToolUseId: 'tool_A',
+    });
+  });
+
+  it('stops keeping answers once a process that finished its turn ends', async () => {
+    const ledger = new HostToolResultLedger();
+    const { child, events } = drive(ledger);
+    child.stdout.emitData(
+      stdoutLine({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } }),
+    );
+    expect(events.some((event) => event.type === 'turn_complete')).toBe(true);
+    child.emit('close', 0, null);
+    await new Promise((resolve) => setImmediate(resolve));
+    ledger.record(PATH, 'team_notes', {}, served);
+
+    expect(
+      ledger.resultOf(ENDPOINT, {
+        server: SERVER,
+        tool: 'team_notes',
+        args: {},
+      }),
+    ).toBeUndefined();
+  });
+
+  it('stops keeping answers for the endpoint once the process has ended', async () => {
+    const ledger = new HostToolResultLedger();
+    const { child } = drive(ledger);
+    child.stdout.emitData(call(SERVER, 'team_notes', {}));
+    child.emit('close', 1, null);
+    await new Promise((resolve) => setImmediate(resolve));
+    ledger.record(PATH, 'team_notes', {}, served);
+
+    expect(
+      ledger.resultOf(ENDPOINT, {
+        server: SERVER,
+        tool: 'team_notes',
+        args: {},
+      }),
+    ).toBeUndefined();
   });
 });

@@ -12,6 +12,8 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { cameViaRemote } from '../../../auth/remote-marker';
 import { RUNTIME_TOKEN, type RuntimeInfo } from '../../../auth/runtime';
+import { HostToolResultLedger } from '../../agents/services/host-tool-result.ledger';
+import { hostEndpointPath } from '../../agents/utils/host-endpoint';
 import type { CallEnvelope } from '../../teams/teams.types';
 import { callerKey } from '../../teams/utils/caller-key';
 import { closeQuietly } from '../../teams/utils/close-quietly';
@@ -91,6 +93,7 @@ export class McpServerService {
     /** Every tool this endpoint serves, in listing order (`tools/mcp-tools.ts`). */
     @Inject(MCP_TOOLS) private readonly tools: readonly McpTool[],
     @Inject(RUNTIME_TOKEN) private readonly runtime: RuntimeInfo,
+    private readonly servedResults: HostToolResultLedger,
   ) {}
 
   /** Serve one stateless MCP request for `(run, caller member)`. */
@@ -292,19 +295,24 @@ export class McpServerService {
       return { tools: this.tools.flatMap((tool) => tool.list(context)) };
     });
 
+    const endpointPath = hostEndpointPath(runId, memberId, conversationId);
     server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const name = request.params.name;
       const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+      const answer = (result: CallToolResult): CallToolResult => {
+        this.servedResults.record(endpointPath, name, args, result);
+        return result;
+      };
       const tool = this.tools.find((entry) => entry.handles(name));
       if (tool === undefined) {
         const envelope: CallEnvelope = {
           status: 'error',
           error: `UNKNOWN_TOOL: '${name}' — this endpoint serves whatever tools/list reported for this agent`,
         };
-        return {
+        return answer({
           content: [{ type: 'text', text: JSON.stringify(envelope) }],
           isError: true,
-        };
+        });
       }
       const context: McpCallContext = {
         runId,
@@ -317,7 +325,7 @@ export class McpServerService {
         whileCancellable: (call) =>
           this.whileCancellable(runId, caller, extra.requestId, call),
       };
-      return wireResult(await tool.call(name, args, context));
+      return answer(wireResult(await tool.call(name, args, context)));
     });
 
     return server;

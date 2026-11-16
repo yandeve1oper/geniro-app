@@ -354,6 +354,9 @@ export function toolResultText(result: unknown): string {
   return prettyJson(result);
 }
 
+/** What a settled call whose CLI reported no result shows in its place. */
+const NO_RESULT_REPORTED = 'No result reported';
+
 /**
  * How to render a tool RESULT: the diff the agent reported, else its text with
  * the language the CALL'S INPUT implies — a file's contents come back bare, with
@@ -361,6 +364,14 @@ export function toolResultText(result: unknown): string {
  * the input is a parameter here at all: the result alone is not enough.)
  */
 export function toolResultBody(input: unknown, result: unknown): ToolBody {
+  if (result === null || result === undefined) {
+    return {
+      kind: 'code',
+      code: NO_RESULT_REPORTED,
+      language: null,
+      caption: null,
+    };
+  }
   const diffs = resultDiffsOf(result);
   const [first, ...rest] = diffs;
   if (first) {

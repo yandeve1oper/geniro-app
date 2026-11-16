@@ -600,6 +600,11 @@ export interface AcpSessionOptions {
    */
   mcpToolCall?: (call: AcpToolCall) => AcpMcpToolCall | null;
   /**
+   * The result to write for a call {@link mcpToolCall} named, given the output
+   * the agent reported for it. Absent: the reported output.
+   */
+  mcpToolResult?: (call: AcpMcpToolCall, reported: unknown) => unknown;
+  /**
    * How long this agent keeps an `*_always` permission answer, as geniro runs
    * it — which is what decides whether such an option reaches the card, and
    * the reach its button claims. Absent: never offered, and every verdict is
@@ -4603,13 +4608,26 @@ export class AcpTurnDriver {
   private toolCallOf(source: Record<string, unknown>): AcpToolCall {
     const call = readToolCall(source);
     const mcp = this.session.options.mcpToolCall?.(call) ?? null;
-    return mcp === null
-      ? call
-      : {
-          ...call,
-          name: mcpToolName(mcp.server, mcp.tool),
-          rawInput: disclosedInput(mcp.args),
-        };
+    if (mcp === null) {
+      return call;
+    }
+    this.session.mcpCalls.set(call.toolCallId, mcp);
+    return {
+      ...call,
+      name: mcpToolName(mcp.server, mcp.tool),
+      rawInput: disclosedInput(mcp.args),
+    };
+  }
+
+  /** The result a settled call is written with: an MCP call's as its agent's reader takes it. */
+  private settledBody(toolCallId: string, reported: unknown): unknown {
+    const mcp = this.session.mcpCalls.get(toolCallId);
+    if (mcp === undefined) {
+      return reported;
+    }
+    this.session.mcpCalls.delete(toolCallId);
+    const read = this.session.options.mcpToolResult;
+    return read === undefined ? reported : read(mcp, reported);
   }
 
   onNotification(method: string, params: unknown): AgentEvent[] {
@@ -4845,8 +4863,11 @@ export class AcpTurnDriver {
             call,
             this.isBookkeepingResult(call.toolCallId)
               ? null
-              : (call.rawOutput ??
-                  (diffs.length > 0 ? { diffs } : (update.content ?? null))),
+              : this.settledBody(
+                  call.toolCallId,
+                  call.rawOutput ??
+                    (diffs.length > 0 ? { diffs } : (update.content ?? null)),
+                ),
           ),
           parentToolUseId: launch,
         });
@@ -5107,8 +5128,11 @@ export class AcpTurnDriver {
                   // the result's existence — it just carries no body to frame
                   // as the delegate's report.
                   null
-                : (toolCall.rawOutput ??
-                    (diffs.length > 0 ? { diffs } : (update.content ?? null))),
+                : this.settledBody(
+                    toolCall.toolCallId,
+                    toolCall.rawOutput ??
+                      (diffs.length > 0 ? { diffs } : (update.content ?? null)),
+                  ),
             ),
           },
           // …and, when this call launched a delegate that OUTLIVES it, the row

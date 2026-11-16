@@ -6421,3 +6421,101 @@ describe('AcpSession — skipping unchanged parameters', () => {
     expect(unknown.sentAll('session/prompt')).toEqual([]);
   });
 });
+
+describe('AcpSession — the result an MCP call is written with', () => {
+  const opening = (id: string, tool: string, args: unknown) =>
+    update({
+      sessionUpdate: 'tool_call',
+      toolCallId: id,
+      title: `srv: ${tool}`,
+      kind: 'other',
+      status: 'in_progress',
+      rawInput: { server: 'srv', tool, args },
+    });
+  const settled = (id: string, rawOutput: unknown) =>
+    update({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: id,
+      status: 'completed',
+      rawOutput,
+    });
+  const mcpToolCall: NonNullable<AcpSessionOptions['mcpToolCall']> = (call) => {
+    const input = call.rawInput as {
+      server?: string;
+      tool?: string;
+      args?: unknown;
+    } | null;
+    return input?.server === undefined || input.tool === undefined
+      ? null
+      : { server: input.server, tool: input.tool, args: input.args ?? null };
+  };
+
+  it('asks the reader for the result of a call it named, with the call and what was reported', () => {
+    const seen: unknown[] = [];
+    const h = harness({
+      mcpToolCall,
+      mcpToolResult: (call, reported) => {
+        seen.push({ call, reported });
+        return { served: call.tool };
+      },
+    });
+    h.feed(opening('mcp-1', 'team_notes', { limit: 5 }));
+
+    expect(h.feed(settled('mcp-1', { success: true }))).toEqual([
+      {
+        type: 'tool_result',
+        id: 'mcp-1',
+        name: 'mcp__srv__team_notes',
+        result: { served: 'team_notes' },
+        isError: false,
+      },
+    ]);
+    expect(seen).toEqual([
+      {
+        call: { server: 'srv', tool: 'team_notes', args: { limit: 5 } },
+        reported: { success: true },
+      },
+    ]);
+  });
+
+  it('asks only once per call, so a repeated settle writes what was reported', () => {
+    let asked = 0;
+    const h = harness({
+      mcpToolCall,
+      mcpToolResult: () => {
+        asked += 1;
+        return 'served';
+      },
+    });
+    h.feed(opening('mcp-1', 'team_notes', {}));
+    const first = h.feed(settled('mcp-1', { success: true }));
+    const second = h.feed(settled('mcp-1', { success: true }));
+
+    expect(asked).toBe(1);
+    expect(first).toEqual([expect.objectContaining({ result: 'served' })]);
+    expect(second).not.toContainEqual(
+      expect.objectContaining({ result: 'served' }),
+    );
+  });
+
+  it('leaves the result of a call no reader named as it was reported', () => {
+    const h = harness({
+      mcpToolCall,
+      mcpToolResult: () => 'served',
+    });
+    h.feed(
+      update({
+        sessionUpdate: 'tool_call',
+        toolCallId: 'sh-1',
+        title: '`ls`',
+        kind: 'execute',
+        status: 'in_progress',
+        rawInput: { command: 'ls' },
+      }),
+    );
+
+    expect(h.feed(settled('sh-1', { exitCode: 0 }))).toEqual([
+      expect.objectContaining({ id: 'sh-1', result: { exitCode: 0 } }),
+    ]);
+  });
+});

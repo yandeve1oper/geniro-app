@@ -143,6 +143,7 @@ import {
 import { firstTurnWindow } from '../../agents/utils/first-turn-window';
 import { subagentsWouldBeCancelled } from '../../agents/utils/follow-up-background-work';
 import { isHostBrowserCall } from '../../agents/utils/host-browser';
+import { hostEndpointPath } from '../../agents/utils/host-endpoint';
 import { isHostKnowledgeCall } from '../../agents/utils/host-knowledge';
 import { isHostMemoryCall } from '../../agents/utils/host-memory';
 import { isHostProjectInstructionsCall } from '../../agents/utils/host-project-instructions';
@@ -4877,10 +4878,8 @@ export class TeamExecutorService
       if (token === null || port === null) {
         return null;
       }
-      const conversation =
-        conversationId === null ? '' : `/${encodeURIComponent(conversationId)}`;
       return {
-        url: `http://127.0.0.1:${port}/v1/mcp/${encodeURIComponent(runId)}/${encodeURIComponent(node.id)}${conversation}`,
+        url: `http://127.0.0.1:${port}${hostEndpointPath(runId, node.id, conversationId)}`,
         token,
         // Per-run — see `AgentTurnInput.mcpEndpoint.serverName` for why.
         serverName: hostMcpServerName(runId),

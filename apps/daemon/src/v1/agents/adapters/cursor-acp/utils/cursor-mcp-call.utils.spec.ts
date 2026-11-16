@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AcpToolCall } from '../../acp/acp.types';
-import { readCursorMcpToolCall } from './cursor-mcp-call.utils';
+import {
+  readCursorMcpToolCall,
+  readCursorMcpToolResult,
+} from './cursor-mcp-call.utils';
 
 function call(name: string, rawInput: unknown): AcpToolCall {
   return {
@@ -67,5 +70,25 @@ describe('readCursorMcpToolCall', () => {
     expect(
       readCursorMcpToolCall(call('Read a file', { path: '/repo/a.ts' })),
     ).toBeNull();
+  });
+});
+
+describe('readCursorMcpToolResult', () => {
+  it('reads the bare success marker as no result', () => {
+    expect(readCursorMcpToolResult({ success: true })).toBeNull();
+  });
+
+  it('keeps every outcome that says something', () => {
+    for (const reported of [
+      { error: 'MCP error -32603: boom' },
+      { rejected: true },
+      { permissionDenied: true },
+      { success: true, content: 'more' },
+      { success: false },
+      'text',
+      null,
+    ]) {
+      expect(readCursorMcpToolResult(reported)).toEqual(reported);
+    }
   });
 });

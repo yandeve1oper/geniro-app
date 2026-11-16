@@ -123,6 +123,17 @@ describe('toolResultBody', () => {
     });
   });
 
+  it('says a settled call reported no result instead of printing null', () => {
+    for (const result of [null, undefined]) {
+      expect(toolResultBody({ command: 'ls' }, result)).toEqual({
+        kind: 'code',
+        code: 'No result reported',
+        language: null,
+        caption: null,
+      });
+    }
+  });
+
   it('highlights a structured result as JSON', () => {
     expect(toolResultBody(null, { ok: true })).toMatchObject({
       language: 'json',
