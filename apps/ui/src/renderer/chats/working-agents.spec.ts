@@ -413,9 +413,21 @@ describe('leadWorkingAgent', () => {
     expect(leadWorkingAgent([], nothingUnseen)).toBeNull();
   });
 
-  it('puts an unseen failure over someone working', () => {
-    const failed = row('call-2', 'qa', 'failed');
-    const rows = [row('call-1', 'engineer', 'working'), failed];
+  it('puts someone working, then anyone else live, over an unseen failure', () => {
+    const failed = row('call-3', 'qa', 'failed');
+    const working = row('call-1', 'engineer', 'working');
+    const queued = row('call-2', 'researcher', 'queued');
+    const unseen = (item: WorkingAgentRow): boolean => item === failed;
+
+    expect(leadWorkingAgent([failed, queued, working], unseen)?.lead).toBe(
+      working,
+    );
+    expect(leadWorkingAgent([failed, queued], unseen)?.lead).toBe(queued);
+  });
+
+  it('puts an unseen failure over the settled once nobody is live', () => {
+    const failed = row('call-1', 'qa', 'failed');
+    const rows = [row('call-2', 'engineer', 'finished'), failed];
 
     expect(leadWorkingAgent(rows, (item) => item === failed)?.lead).toBe(
       failed,
@@ -452,9 +464,13 @@ describe('leadWorkingAgent', () => {
     expect(leadWorkingAgent(rows, nothingUnseen)?.others).toBe(3);
   });
 
-  it('counts the live conversations past a failure that leads', () => {
+  it('counts only the other live conversations beside an unseen failure', () => {
     const failed = row('call-1', 'qa', 'failed');
-    const rows = [failed, row('call-2', 'engineer', 'working')];
+    const rows = [
+      failed,
+      row('call-3', 'engineer', 'working'),
+      row('call-2', 'researcher', 'working'),
+    ];
 
     expect(leadWorkingAgent(rows, (item) => item === failed)?.others).toBe(1);
   });

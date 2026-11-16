@@ -246,22 +246,24 @@ export function workingAgentsSummary(rows: readonly WorkingAgentRow[]): string {
 }
 
 /**
- * Who stands for the whole set on the folded card: an unseen failure first, then
- * whoever works, newest first, then the rest. `others` counts the other live
- * conversations, or with nobody live the run's other conversations.
+ * Who stands for the whole set on the folded card: whoever works, newest first,
+ * then the other live conversations, then an unseen failure, then the rest — so
+ * the face is always who is out now, and a failure leads only once nobody is.
+ * `others` counts the other live conversations, or with nobody live the run's
+ * other conversations.
  */
 export function leadWorkingAgent(
   rows: readonly WorkingAgentRow[],
   isUnseenFailure: (row: WorkingAgentRow) => boolean,
 ): { lead: WorkingAgentRow; others: number } | null {
   const rank = (row: WorkingAgentRow): number => {
-    if (isUnseenFailure(row)) {
+    if (row.state === 'working') {
       return 0;
     }
-    if (row.state === 'working') {
+    if (isWorkingAgentLive(row)) {
       return 1;
     }
-    return isWorkingAgentLive(row) ? 2 : 3;
+    return isUnseenFailure(row) ? 2 : 3;
   };
   const lead = rows.reduce<WorkingAgentRow | null>(
     (best, row) => (best === null || rank(row) < rank(best) ? row : best),

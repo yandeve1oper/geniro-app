@@ -1634,23 +1634,46 @@ describe('WorkingAgentsCard', () => {
       expect(toggleOf(el).querySelector('svg')).toBeNull();
     });
 
-    it('leads with the unseen failure, over someone working', () => {
+    it('leads with an unseen failure once nobody is live', () => {
       const { el } = renderSquare([
-        named('call-1', 'Engineer', 'working'),
-        named('call-2', 'QA', 'failed'),
+        named('call-2', 'Engineer', 'finished'),
+        named('call-1', 'QA', 'failed'),
       ]);
 
       expect(faces(tile(el))).toEqual(['QA']);
     });
 
-    it('leads with whoever works once the failure is seen', async () => {
+    it('shows who works now and how many more while a failure is unseen, flagging the failure with its dot alone', () => {
       const { el } = renderSquare([
-        named('call-2', 'QA', 'failed'),
-        named('call-1', 'Engineer', 'working'),
+        named('call-3', 'Engineer', 'working'),
+        named('call-2', 'Middle', 'working'),
+        named('call-1', 'QA', 'failed'),
       ]);
-      await openAndShut(el);
 
       expect(faces(tile(el))).toEqual(['Engineer']);
+      expect(slot(el, 'working-agents-tile-more')?.textContent).toBe('+1');
+      expect(dot(el)).not.toBeNull();
+    });
+
+    it('keeps its face and count when opening the panel marks a failure seen while someone works', async () => {
+      const { el } = renderSquare([
+        named('call-2', 'QA', 'failed'),
+        named('call-3', 'Middle', 'working'),
+        named('call-1', 'Engineer', 'working'),
+      ]);
+      const before = {
+        faces: faces(tile(el)),
+        more: slot(el, 'working-agents-tile-more')?.textContent,
+      };
+      expect(dot(el)).not.toBeNull();
+      await openAndShut(el);
+
+      expect(dot(el)).toBeNull();
+      expect({
+        faces: faces(tile(el)),
+        more: slot(el, 'working-agents-tile-more')?.textContent,
+      }).toEqual(before);
+      expect(before).toEqual({ faces: ['Middle'], more: '+1' });
     });
 
     it('counts every other live run, two of one agent as two', () => {
