@@ -2845,8 +2845,8 @@ export function runCliSession(opts: CliSessionOptions): CliSession {
   /**
    * Which of this CLI's answered commands still run, for a CLI that reports a
    * backgrounded command finished; each opens a shell row. Decided by the CLI's
-   * own record where it keeps one (`apps/daemon/AGENTS.md` → ACP and cursor
-   * transport), else by the command's text in the process table under this CLI.
+   * own record where it keeps one (`.claude/rules/daemon-cursor-acp.md`),
+   * else by the command's text in the process table under this CLI.
    *
    * An unanswered call is an ordinary foreground command, which the transcript
    * already shows as running. The result goes through {@link announceShellWork}

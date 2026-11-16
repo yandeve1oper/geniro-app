@@ -1,0 +1,34 @@
+---
+description: Agent instructions — the one seam that composes every turn's instruction block, its parts and their order
+paths:
+  - "apps/daemon/src/v1/agents/**/agent-instructions*"
+  - "apps/daemon/src/v1/agents/**/user-instruction-files*"
+  - "apps/daemon/src/v1/agents/**/host-project-instructions*"
+  - "apps/daemon/src/v1/teams/**/*-instructions*"
+  - "apps/daemon/src/v1/teams/**/stage-text*"
+  - "apps/daemon/src/v1/teams/**/callee-text*"
+  - "apps/daemon/src/v1/teams/**/*instruction-sizes*"
+  - "apps/daemon/src/v1/projects/utils/project-instruction*"
+  - "apps/daemon/src/v1/mcp/services/mcp-server.service*"
+  - "apps/daemon/src/v1/mcp/tools/**/*.instructions.ts"
+  - "apps/daemon/src/v1/agents/adapters/agent-adapter*"
+  - "apps/daemon/src/v1/teams/**/team-chat*"
+---
+
+# Agent instructions
+
+- Every turn's instruction block is composed at one seam: `AgentAdapter.composeSystemPrompt` joins `AgentAdapter.turnInstructionParts` → `turnInstructionParts` (`v1/agents/utils/agent-instructions.ts`). Adapters never join the parts themselves (`.claude/rules/agent-adapters.md`).
+- Order, general → specific (`TURN_INSTRUCTION_SOURCES`): host preamble (`GENIRO_UI_PREAMBLE`), the CLI's background-work note (`AdapterConfig.backgroundWork.agentNote`), the user's reply language (`replyLanguageInstruction`, from `Settings.replyLanguage`), the user's custom instructions, the run's project instructions (`Run.projectInstructions`), the shared memory's index (`Run.memoryIndex`), a board card's `taskInstructions`, the builder chat's `teamInstructions`, the `instructionBlocks` addressed to the member (audience `everyone` or its id), the run's stage map (`stageMapPrompt`), the member's private `instructions` (the `role` part), its `character`, the callee sentence (`ANSWERING_A_CALL`, on every turn that answers a call, a leaf callee included), then the "May call" block.
+- The preamble's tools section names each host tool by the situation it is for and leaves the how to the tool's description: claude lists MCP tools by name only, so a description is unread until the agent decides to load the tool. Name a tool by its `HOST_*_TOOL` wire name, conditionally (the text is not gated on the MCP endpoint, and a team node is offered only some), and name no CLI. Every new tool is named there in the same change, or exempted with its reason in `PREAMBLE_EXEMPT` (`mcp-server.service.spec.ts`, which fails on a listed tool that is neither; `.claude/rules/mcp-tools.md` → *Adding a tool*). Each of claude's own tools geniro withholds (`CLAUDE_WITHHELD_TOOLS`) is named there beside the tool that replaces it, since claude's own prompt still sends the model to it.
+- The background-work note is per CLI because the truth differs: a claude or cursor turn (and the call it answers) is held while its background sub-agents run and the agent is started again with their reports, so it is told to end its turn rather than poll; a codex turn is not held, so it is told to `wait_agent`. Every sentence must stay true of its adapter's hold; never inject a reminder mid-turn instead (it arrives as a user message).
+- Delivery: claude on `--append-system-prompt`; codex as the thread's `developerInstructions`; ACP inside the prompt text, after the user's words, wrapped in `<host-context>` (`HOST_CONTEXT_TAG`). Never lead the ACP prompt with it: the CLI names the chat from the prompt text.
+- On ACP the block is sent once per session and re-sent only when its text changes (**ACP instruction delivery**, `.claude/rules/daemon-cursor-acp.md`).
+- `internalProbe` turns get no preamble, no background-work note and no reply-language line.
+- The reply language is snapshotted onto `Run.replyLanguage` like custom instructions (it joins `sessionKey`). claude also gets it as its own `language` setting, in the turn's own `--settings` object (`claudeSettingsArgs`). A later `--settings` replaces an earlier one, so the last one carries every key — fast mode, the language, and a repeat of the Ollama env the base's env-only flag carries ahead of it.
+- Custom instructions are one global value, `Settings.customInstructions`, sent on chat create and team start under `CustomInstructionsSchema` (no length limit; refuses C0 control characters other than tab, LF and CR, since a NUL in argv makes `spawn` throw on every turn).
+- They are snapshotted onto `Run.customInstructions`, never read live: `AgentAdapter.sessionKey` hashes them, so a live read would respawn the kept CLI and its MCP servers mid-conversation. Editing them affects the next chat.
+- A member's own instructions outrank them; keep them as peer fields, not one joined string.
+- The memory index carries only entries the user wrote, imported or approved (`.claude/rules/daemon-memory.md`): it opens with `MEMORY_INDEX_PREFACE` (data, not instructions), carries titles only (bodies stay behind `memory_read`), is masked again on every turn (`redactSecrets`), and is composed only where the turn's MCP tools were delivered, since it names them.
+- `POST /v1/chats/forget-custom-instructions` (an explicit Settings button) purges the snapshot from existing runs.
+- A team builder chat's brief (`Run.teamInstructions`) is the one instruction part re-composed from live state: before each turn `ChatService.rebriefTeamChat` asks the source `TeamChatService` registers (`useTeamBrief`, since `v1/agents` may not import `v1/teams`) and writes it only when its text changed, so an unchanged brief keeps the kept process and a chat created before a change to the brief (a renamed tool, a moved library) is not left pointing at what no longer exists. A team whose file no longer validates is still briefed, under the name its YAML states (its slug when the YAML itself is broken); a team whose file is gone or cannot be opened keeps the stored brief.
+- Project instructions are a project's `description` and `instructions` (`Project`, edited on the Projects page), composed as `Project: <name>`, then each non-blank paragraph (`projects/utils/project-instructions.ts`); null when both are blank. They are snapshotted onto `Run.projectInstructions` at creation in the two Run builders, beside the memory snapshot, through `ProjectScopeService.placeNewRun` — the same project-of-a-run resolution the shared memory uses (`scopeFor` delegates to it), in the order `.claude/rules/daemon-projects-tasks.md` gives: the chosen project, else none when that choice was none, else the card's project, else the nearest live project folder above the run's resolved root. They join `sessionKey` and are not gated on the MCP tools.

@@ -408,7 +408,7 @@ export class CursorAcpAdapter extends AgentAdapter {
        * a payload it can actually read and otherwise declines as before.
        */
       shells: {
-        // apps/daemon/AGENTS.md → ACP and cursor transport has the measurements.
+        // .claude/rules/daemon-cursor-acp.md has the measurements.
         unreportedDetachReason:
           'cursor-agent reports a backgrounded command as finished, so whether ' +
           'it is still running is read from its terminal records and the process table instead',

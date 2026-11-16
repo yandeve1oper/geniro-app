@@ -74,9 +74,8 @@ function isVolatile<T>(
  * distinct strings would grow this map for its entire lifetime.
  *
  * 200 is a measurement, not a guess: a real cursor account was swept at 34
- * models total (the context-window part of `GET /v1/agents/vocabulary`, see
- * `apps/daemon/AGENTS.md`). Even generously accounting for BOTH shipped
- * CLIs, several accounts/profiles switched across one daemon's lifetime, and
+ * models total (the context-window part of `GET /v1/agents/vocabulary`). Even
+ * generously accounting for BOTH shipped CLIs, several accounts/profiles switched across one daemon's lifetime, and
  * the per-CLI null-model entry, the live working set stays well under a
  * hundred keys — nobody works with hundreds of distinct models in one
  * session. Eviction here therefore only ever reaches a key from an abandoned

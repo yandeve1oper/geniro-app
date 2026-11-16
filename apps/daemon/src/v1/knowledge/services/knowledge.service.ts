@@ -289,7 +289,7 @@ export class KnowledgeService {
     return { kind: 'found', document: await this.toDocument(row, em) };
   }
 
-  /** An agent's write: see the status rules in `apps/daemon/AGENTS.md`. */
+  /** An agent's write: see the status rules in `.claude/rules/daemon-knowledge.md`. */
   save(
     actor: KnowledgeActor,
     input: KnowledgeSaveInput,

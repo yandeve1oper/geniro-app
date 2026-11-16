@@ -32,7 +32,8 @@ To fill a throwaway profile with demo conversations:
 
 The working documentation is [the root AGENTS.md](../AGENTS.md), plus
 [the UI guide](../apps/ui/AGENTS.md), [the Electron main-process guide](../apps/ui/src/main/AGENTS.md) and
-[the daemon guide](../apps/daemon/AGENTS.md). They explain the reasons
+[the daemon guide](../apps/daemon/AGENTS.md), with the area rules in
+[`.claude/rules/`](../.claude/rules/) that the two app guides list. They explain the reasons
 behind the design, not just its structure.
 
 ---

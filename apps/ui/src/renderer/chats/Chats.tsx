@@ -4891,7 +4891,7 @@ export function Chats({
     // label reads, so the two cannot say different things about one press.
     //
     // The WHOLE decision is `followUpDelivery` (chats/follow-up-delivery.ts),
-    // summed up in apps/ui/AGENTS.md → "Sending and the queue". A SYNC
+    // summed up in .claude/rules/ui-chats.md → "Sending and the queue". A SYNC
     // sub-agent is the agent's own tool call, so a message typed during one
     // queues.
     //

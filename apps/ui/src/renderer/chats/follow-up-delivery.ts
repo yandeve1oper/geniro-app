@@ -3,7 +3,7 @@
  * into this thread's queue. The whole rule, in one place — the composer's send
  * path, its button, the button's label and the placeholder all read it, so they
  * cannot say different things about one press. The rules are summed up in
- * `apps/ui/AGENTS.md` → *Sending and the queue*.
+ * `.claude/rules/ui-chats.md` → *Sending and the queue*.
  *
  * ONE principle decides every case: **a message goes straight in when the agent
  * will read it soon, and queues when the agent is busy with something that

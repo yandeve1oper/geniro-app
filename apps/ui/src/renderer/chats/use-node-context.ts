@@ -124,9 +124,8 @@ export function useNodeDurableReadings(
     // Cleared FIRST on a run→run switch, which is what forces it:
     // two runs of one team share node ids, so the previous run's map left
     // mounted while the new fetch is in flight resolves every ring against the
-    // wrong run's row. That is the same defect `apps/ui/AGENTS.md` states the
-    // rule for on the metrics panel — a reading is carried with the run it was
-    // taken from, and a mismatch reads as empty.
+    // wrong run's row. The metrics panel guards the same defect: a reading is
+    // carried with the run it was taken from, and a mismatch reads as empty.
     //
     // A re-read of the SAME run keeps what it has until the answer lands, so a
     // turn settling does not blank every ring for the length of a round trip.

@@ -425,8 +425,8 @@ describe('useNodeDurableReadings', () => {
   it('drops the previous run’s readings the moment the run CHANGES', async () => {
     // Two runs of one team share node ids, so a map left mounted while the
     // new run's fetch is in flight resolves every ring against the wrong run's
-    // row — the defect `apps/ui/AGENTS.md` states the rule for on the metrics
-    // panel. Asserted BEFORE the second fetch settles, which is the window.
+    // row — the defect the metrics panel guards too. Asserted BEFORE the second
+    // fetch settles, which is the window.
     const listTeamRunNodes = vi
       .fn<() => Promise<NodeStateDto[]>>()
       .mockResolvedValueOnce([node('reviewer', 10_000, 200_000)])

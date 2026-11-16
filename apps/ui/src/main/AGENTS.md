@@ -1,6 +1,6 @@
 # apps/ui — main process
 
-The Electron main process (`apps/ui/src/main/`): IPC, git and worktrees, daemon supervision, the terminal panel, the LAN gateway, app updates and the network lockdown. The preload, renderer, design system, chats, teams and settings are in `apps/ui/AGENTS.md`; macOS packaging is in `.claude/rules/packaging-config.md`. Project-wide commands, conventions and constraints are in the root `AGENTS.md`.
+The Electron main process (`apps/ui/src/main/`): IPC, git and worktrees, daemon supervision, the terminal panel, the LAN gateway, app updates and the network lockdown. The preload, renderer, design system and settings keys are in `apps/ui/AGENTS.md`, and the chats, teams and settings pages in `.claude/rules/ui-*.md`; macOS packaging is in `.claude/rules/packaging-config.md`. Project-wide commands, conventions and constraints are in the root `AGENTS.md`.
 
 **Contents**: [Main process](#main-process) (incl. _Git_, _Task worktrees_, **Daemon supervision**, **Terminal panel**, **LAN gateway**) · [App updates](#app-updates) · [Security](#security)
 
