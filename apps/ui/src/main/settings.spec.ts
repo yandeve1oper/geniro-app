@@ -203,6 +203,26 @@ describe('readSettings', () => {
     expect(settings.onboardingComplete).toBe(true);
   });
 
+  it('leaves the session limit automatic by default, and a stored limit survives a read', () => {
+    expect(readSettings().keptSessionLimit).toBeNull();
+
+    writeRaw({ keptSessionLimit: 32 });
+    expect(readSettings().keptSessionLimit).toBe(32);
+
+    writeRaw({ keptSessionLimit: null });
+    expect(readSettings().keptSessionLimit).toBeNull();
+  });
+
+  it('a session limit outside 2–64 whole processes costs only that key', () => {
+    for (const keptSessionLimit of [1, 65, 8.5, '16']) {
+      writeRaw({ keptSessionLimit, onboardingComplete: true });
+
+      const settings = readSettings();
+      expect(settings.keptSessionLimit).toBeNull();
+      expect(settings.onboardingComplete).toBe(true);
+    }
+  });
+
   it('an idle window outside 5–180 whole minutes costs only that key', () => {
     for (const keptSessionIdleMinutes of [4, 181, 12.5, '30']) {
       writeRaw({ keptSessionIdleMinutes, onboardingComplete: true });

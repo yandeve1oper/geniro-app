@@ -263,6 +263,16 @@ export const DEFAULT_KEPT_SESSION_IDLE_MINUTES = 60;
 export const MIN_KEPT_SESSION_IDLE_MINUTES = 5;
 export const MAX_KEPT_SESSION_IDLE_MINUTES = 180;
 
+/**
+ * How many run CLI processes may be kept at once — `Settings.keptSessionLimit`.
+ *
+ * TWIN: `MIN_KEPT_SESSION_LIMIT` and `MAX_KEPT_SESSION_LIMIT` in
+ * `apps/daemon/src/v1/agents/chat.types.ts`, whose route refuses a value
+ * outside these bounds.
+ */
+export const MIN_KEPT_SESSION_LIMIT = 2;
+export const MAX_KEPT_SESSION_LIMIT = 64;
+
 /** Persisted, non-secret application settings. Secrets never live here. */
 export interface OnboardingProgress {
   step: 0 | 1 | 2 | 3;
@@ -690,6 +700,11 @@ export interface Settings {
    */
   keptSessionIdleMinutes: number;
   /**
+   * How many run CLI processes the daemon keeps at once, or null for the
+   * number it picks from this Mac's memory. Pushed with the idle window.
+   */
+  keptSessionLimit: number | null;
+  /**
    * Keep the Mac from idle sleep while any agent works, and only then
    * (`main/keep-awake.ts`). The display still sleeps, and so does a closed lid.
    */
@@ -913,6 +928,7 @@ export const DEFAULT_SETTINGS: Settings = {
   memoryRemoveNotUseful: true,
   historyPageSize: DEFAULT_HISTORY_PAGE_SIZE,
   keptSessionIdleMinutes: DEFAULT_KEPT_SESSION_IDLE_MINUTES,
+  keptSessionLimit: null,
   preventSleepWhileWorking: true,
   agentOptions: {},
   collapseToolSteps: false,

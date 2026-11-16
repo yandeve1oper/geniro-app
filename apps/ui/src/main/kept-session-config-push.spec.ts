@@ -21,11 +21,11 @@ function recordingFetch(status = 200) {
 }
 
 describe('KeptSessionConfigPush', () => {
-  it('PUTs the idle window to the daemon with the launch token', async () => {
+  it('PUTs the idle window and limit to the daemon with the launch token', async () => {
     const http = recordingFetch();
     await new KeptSessionConfigPush(() => undefined, http.fetchImpl).push(
       HANDLE,
-      { idleMinutes: 5 },
+      { idleMinutes: 5, limit: 24 },
     );
 
     expect(http.calls).toHaveLength(1);
@@ -35,20 +35,24 @@ describe('KeptSessionConfigPush', () => {
     expect(call?.init.headers).toMatchObject({
       authorization: 'Bearer launch-token',
     });
-    expect(JSON.parse(String(call?.init.body))).toEqual({ idleMinutes: 5 });
+    expect(JSON.parse(String(call?.init.body))).toEqual({
+      idleMinutes: 5,
+      limit: 24,
+    });
   });
 
-  it('sends only a window the daemon does not already hold', async () => {
+  it('sends only settings the daemon does not already hold', async () => {
     const http = recordingFetch();
     const push = new KeptSessionConfigPush(() => undefined, http.fetchImpl);
-    await push.push(HANDLE, { idleMinutes: 60 });
+    await push.push(HANDLE, { idleMinutes: 60, limit: null });
 
-    await push.pushIfChanged(HANDLE, { idleMinutes: 60 });
-    await push.pushIfChanged(HANDLE, { idleMinutes: 30 });
+    await push.pushIfChanged(HANDLE, { idleMinutes: 60, limit: null });
+    await push.pushIfChanged(HANDLE, { idleMinutes: 60, limit: 8 });
 
     expect(http.calls).toHaveLength(2);
     expect(JSON.parse(String(http.calls[1]?.init.body))).toEqual({
-      idleMinutes: 30,
+      idleMinutes: 60,
+      limit: 8,
     });
   });
 
@@ -60,11 +64,11 @@ describe('KeptSessionConfigPush', () => {
       refusing.fetchImpl,
     );
 
-    await push.push(HANDLE, { idleMinutes: 60 });
-    await push.pushIfChanged(HANDLE, { idleMinutes: 60 });
+    await push.push(HANDLE, { idleMinutes: 60, limit: null });
+    await push.pushIfChanged(HANDLE, { idleMinutes: 60, limit: null });
 
     expect(reports[0]).toContain(
-      'the daemon refused the kept-session idle window (400)',
+      'the daemon refused the kept-session settings (400)',
     );
     expect(refusing.calls).toHaveLength(2);
   });

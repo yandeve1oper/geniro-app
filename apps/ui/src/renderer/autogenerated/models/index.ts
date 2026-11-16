@@ -5102,19 +5102,6 @@ export type ItemKind = typeof ItemKind[keyof typeof ItemKind];
 /**
  * 
  * @export
- * @interface KeptSessionConfigAckDto
- */
-export interface KeptSessionConfigAckDto {
-    /**
-     * 
-     * @type {number}
-     * @memberof KeptSessionConfigAckDto
-     */
-    idleMinutes: number;
-}
-/**
- * 
- * @export
  * @interface KeptSessionConfigDto
  */
 export interface KeptSessionConfigDto {
@@ -5124,6 +5111,55 @@ export interface KeptSessionConfigDto {
      * @memberof KeptSessionConfigDto
      */
     idleMinutes: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof KeptSessionConfigDto
+     */
+    limit: number | null;
+}
+/**
+ * 
+ * @export
+ * @interface KeptSessionConfigStateDto
+ */
+export interface KeptSessionConfigStateDto {
+    /**
+     * 
+     * @type {number}
+     * @memberof KeptSessionConfigStateDto
+     */
+    idleMinutes: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof KeptSessionConfigStateDto
+     */
+    limit: number | null;
+    /**
+     * The limit picked from this Mac's memory
+     * @type {number}
+     * @memberof KeptSessionConfigStateDto
+     */
+    automaticLimit: number;
+    /**
+     * What one kept process is estimated to take
+     * @type {number}
+     * @memberof KeptSessionConfigStateDto
+     */
+    sessionMemoryBytes: number;
+    /**
+     * This Mac's memory
+     * @type {number}
+     * @memberof KeptSessionConfigStateDto
+     */
+    totalMemoryBytes: number;
+    /**
+     * How long after its last use a chat's own process is never closed for room
+     * @type {number}
+     * @memberof KeptSessionConfigStateDto
+     */
+    recentlyUsedMinutes: number;
 }
 /**
  * 

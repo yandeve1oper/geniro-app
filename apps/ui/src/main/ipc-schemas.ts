@@ -17,10 +17,12 @@ import {
   MAX_FAST_ACTION_TEXT,
   MAX_FAST_ACTIONS,
   MAX_KEPT_SESSION_IDLE_MINUTES,
+  MAX_KEPT_SESSION_LIMIT,
   MAX_RUN_CONFIG_NAME,
   MAX_RUN_CONFIGS,
   MIN_AUTO_COMPACT_PERCENT,
   MIN_KEPT_SESSION_IDLE_MINUTES,
+  MIN_KEPT_SESSION_LIMIT,
   PROFILE_COLORS,
   TERMINAL_MAX_COLS,
   TERMINAL_MAX_ROWS,
@@ -493,6 +495,13 @@ export const settingsPatchSchema = z.strictObject({
     .int()
     .min(MIN_KEPT_SESSION_IDLE_MINUTES)
     .max(MAX_KEPT_SESSION_IDLE_MINUTES)
+    .optional(),
+  keptSessionLimit: z
+    .number()
+    .int()
+    .min(MIN_KEPT_SESSION_LIMIT)
+    .max(MAX_KEPT_SESSION_LIMIT)
+    .nullable()
     .optional(),
   preventSleepWhileWorking: z.boolean().optional(),
   // Each CLI's own switches (`AdapterConfig.options` in the daemon), as

@@ -1,11 +1,12 @@
-import { Body, Controller, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ZodResponse } from 'nestjs-zod';
 
 import { DesktopOnlyGuard } from '../../../auth/desktop-only.guard';
+import type { KeptSessionConfigState } from '../chat.types';
 import {
-  KeptSessionConfigAckDto,
   KeptSessionConfigDto,
+  KeptSessionConfigStateDto,
 } from '../dto/kept-sessions.dto';
 import { AgentSessionRegistry } from '../services/agent-session.registry';
 
@@ -21,11 +22,19 @@ import { AgentSessionRegistry } from '../services/agent-session.registry';
 export class KeptSessionsController {
   constructor(private readonly sessions: AgentSessionRegistry) {}
 
+  @Get('config')
+  @ApiOperation({ operationId: 'getKeptSessionConfig' })
+  @ZodResponse({ status: 200, type: KeptSessionConfigStateDto })
+  getConfig(): KeptSessionConfigState {
+    return this.sessions.config;
+  }
+
   @Put('config')
   @ApiOperation({ operationId: 'setKeptSessionConfig' })
-  @ZodResponse({ status: 200, type: KeptSessionConfigAckDto })
-  setConfig(@Body() body: KeptSessionConfigDto): { idleMinutes: number } {
+  @ZodResponse({ status: 200, type: KeptSessionConfigStateDto })
+  setConfig(@Body() body: KeptSessionConfigDto): KeptSessionConfigState {
     this.sessions.setIdleMinutes(body.idleMinutes);
-    return { idleMinutes: this.sessions.idleMinutes };
+    this.sessions.setLimit(body.limit);
+    return this.sessions.config;
   }
 }

@@ -3832,8 +3832,17 @@ export const MIN_KEPT_SESSION_IDLE_MINUTES = 5;
 export const MAX_KEPT_SESSION_IDLE_MINUTES = 180;
 
 /**
+ * How many kept processes a user may allow (`Settings.keptSessionLimit`), and
+ * the floor of the automatic ceiling too: below two there is no point keeping
+ * any, since the second chat would evict the first at every switch. Bounded
+ * the same in `apps/ui/src/main/ipc-schemas.ts`.
+ */
+export const MIN_KEPT_SESSION_LIMIT = 2;
+export const MAX_KEPT_SESSION_LIMIT = 64;
+
+/**
  * TWIN PARSER: the body `apps/ui/src/main/kept-session-config-push.ts` sends,
- * built from `Settings.keptSessionIdleMinutes`.
+ * built from `Settings.keptSessionIdleMinutes` and `Settings.keptSessionLimit`.
  */
 export const KeptSessionConfigSchema = z
   .object({
@@ -3842,9 +3851,43 @@ export const KeptSessionConfigSchema = z
       .int()
       .min(MIN_KEPT_SESSION_IDLE_MINUTES)
       .max(MAX_KEPT_SESSION_IDLE_MINUTES),
+    limit: z
+      .number()
+      .int()
+      .min(MIN_KEPT_SESSION_LIMIT)
+      .max(MAX_KEPT_SESSION_LIMIT)
+      .nullable()
+      .describe('How many processes to keep at once; null for automatic'),
   })
   .meta({ id: 'KeptSessionConfig' });
 export type KeptSessionConfig = z.infer<typeof KeptSessionConfigSchema>;
+
+export const KeptSessionConfigStateSchema = z.object({
+  idleMinutes: z.number().int(),
+  limit: z
+    .number()
+    .int()
+    .nullable()
+    .describe("The user's limit, or null while automatic"),
+  automaticLimit: z
+    .number()
+    .int()
+    .describe("The limit picked from this Mac's memory"),
+  sessionMemoryBytes: z
+    .number()
+    .int()
+    .describe('What one kept process is estimated to take'),
+  totalMemoryBytes: z.number().int().describe("This Mac's memory"),
+  recentlyUsedMinutes: z
+    .number()
+    .int()
+    .describe(
+      "How long after its last use a chat's own process is never closed for room",
+    ),
+});
+export type KeptSessionConfigState = z.infer<
+  typeof KeptSessionConfigStateSchema
+>;
 
 /** TWIN PARSER: `parseAgentActivity` in `apps/ui/src/main/keep-awake.ts`. */
 export const AgentActivitySchema = z.object({

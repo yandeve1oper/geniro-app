@@ -61,6 +61,36 @@ describe('SettingsPanelRow', () => {
     expect(onCheckedChange).toHaveBeenCalledWith(true);
   });
 
+  it('keeps a hint off the row behind a "?" that opens on keyboard focus', () => {
+    act(() => {
+      root.render(
+        <SettingsPanel>
+          <SettingsPanelRow
+            label="Keep the Mac awake while agents work"
+            hint="The display still turns off.">
+            <button type="button">Toggle</button>
+          </SettingsPanelRow>
+        </SettingsPanel>,
+      );
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="About Keep the Mac awake while agents work"]',
+    );
+    expect(trigger).not.toBeNull();
+    expect(trigger?.querySelector('svg')).not.toBeNull();
+    expect(container.textContent).not.toContain('The display still turns off.');
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+      trigger!.focus();
+    });
+
+    expect(
+      container.querySelector('[data-slot="popover-panel"]')?.textContent,
+    ).toBe('The display still turns off.');
+  });
+
   it('renders no heading for a row that is not a setting', () => {
     act(() => {
       root.render(

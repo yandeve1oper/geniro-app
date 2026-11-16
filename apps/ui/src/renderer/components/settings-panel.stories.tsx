@@ -53,6 +53,20 @@ export const Playground: Story = {
   ),
 };
 
+/** A setting whose explanation is too long for the row sits behind a "?" after its name. */
+export const WithHint: Story = {
+  render: () => (
+    <SettingsPanel>
+      <SettingsPanelRow
+        label="Keep the Mac awake while agents work"
+        htmlFor="story-hint-awake"
+        hint="While an agent works the Mac does not go to idle sleep; while it only waits for you, it may. The display still turns off, and closing the lid still sleeps the Mac.">
+        <Toggle id="story-hint-awake" />
+      </SettingsPanelRow>
+    </SettingsPanel>
+  ),
+};
+
 /** Several rows, which is the arrangement the divider and the enclosure are for. */
 export const Stacked: Story = {
   render: () => (

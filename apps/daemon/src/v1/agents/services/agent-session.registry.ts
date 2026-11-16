@@ -19,10 +19,16 @@ import type { AgentAdapter } from '../adapters/agent-adapter';
 import {
   DEFAULT_KEPT_SESSION_IDLE_MINUTES,
   type KeptProcessRoot,
+  type KeptSessionConfigState,
+  MIN_KEPT_SESSION_LIMIT,
 } from '../chat.types';
 import type { RecordedGroup } from '../utils/process-descendants';
 import { runTagEnv } from '../utils/run-process-scan';
-import { runIdOfSessionKey, runSessionKeyPrefix } from '../utils/session-keys';
+import {
+  callConversationOf,
+  runIdOfSessionKey,
+  runSessionKeyPrefix,
+} from '../utils/session-keys';
 import {
   deferredMcpChangeNote,
   endedCommandsNote,
@@ -68,9 +74,10 @@ import { currentRunOwner } from './run-process-attribution.service';
  * - The daemon's own idle exit (10 min with no connected client) still takes
  *   everything the moment the app is closed, so this only ever governs a
  *   session whose window the user still has open.
- * - {@link MAX_LIVE_SESSIONS} still caps how many are held at once, derived
- *   from this machine's memory at ~1GB each. Within the window that ceiling is
- *   what closes the oldest IDLE session rather than the clock — which is the
+ * - The ceiling (the user's limit, else {@link MAX_LIVE_SESSIONS}, derived
+ *   from this machine's memory at ~1GB each) still caps how many are held at
+ *   once. Within the window that ceiling is what closes an idle session
+ *   rather than the clock — which is the
  *   better order anyway: it reclaims the process the user is least likely to
  *   come back to, at the moment the memory is actually wanted, instead of on a
  *   timer that cannot see whether anything needs the room.
@@ -99,13 +106,6 @@ export const SESSION_MEMORY_COST_BYTES = 1024 ** 3;
  * own subprocesses have the rest, and none of them announce themselves here.
  */
 const SESSION_MEMORY_SHARE = 1 / 8;
-
-/**
- * The floor. Below two there is no point keeping any: the benefit is a chat
- * staying warm while you work in another one, and at one the second chat
- * evicts the first every time you switch.
- */
-const MIN_LIVE_SESSIONS = 2;
 
 /**
  * The cap, and it is not about memory — a 512GB machine would compute 64.
@@ -144,12 +144,14 @@ export function sessionCeilingFor(totalMemoryBytes: number): number {
   );
   return Math.min(
     MAX_LIVE_SESSIONS_CAP,
-    Math.max(MIN_LIVE_SESSIONS, affordable),
+    Math.max(MIN_KEPT_SESSION_LIMIT, affordable),
   );
 }
 
+const MACHINE_MEMORY_BYTES = totalmem();
+
 /** The ceiling this daemon runs under — {@link sessionCeilingFor} of this box. */
-export const MAX_LIVE_SESSIONS = sessionCeilingFor(totalmem());
+export const MAX_LIVE_SESSIONS = sessionCeilingFor(MACHINE_MEMORY_BYTES);
 
 /**
  * How long after its last off-turn row a session is still treated as WORKING.
@@ -175,10 +177,19 @@ export const MAX_LIVE_SESSIONS = sessionCeilingFor(totalmem());
  * how the badge and the process come to disagree about whether a chat is busy.
  *
  * It can only ever push the registry OVER the ceiling, never refuse a turn —
- * `evictIfFull` already has that arm, for the case where every session is busy,
- * and this widens what counts as busy rather than adding a new outcome.
+ * `evictIfFull` already has that arm, for the case where no session may be
+ * closed, and this widens what counts as busy rather than adding a new outcome.
  */
 export const OFF_TURN_ACTIVE_MS = 5 * 60_000;
+
+/**
+ * A chat's or a member's own conversation used this recently is never closed
+ * to make room: its person is most likely still reading the answer, and a cold
+ * start costs the next turn a new process, its MCP servers and, for cursor, a
+ * replay of the whole conversation. A callee's conversation has no such claim
+ * once idle — its call has returned — so it is closed first.
+ */
+export const RECENTLY_USED_MS = 10 * 60_000;
 
 /**
  * What made a kept process stale, which decides whether its replacement may
@@ -387,7 +398,10 @@ export class AgentSessionRegistry implements OnApplicationShutdown {
    * desktop, where the computed ceiling differs by a factor of eight. `@Optional`
    * is what lets Nest instantiate this with no provider for `Number`.
    */
-  private readonly ceiling: number;
+  private readonly automaticCeiling: number;
+
+  /** The user's own ceiling (`Settings.keptSessionLimit`), null for {@link automaticCeiling}. */
+  private userLimit: number | null = null;
 
   /** This geniro's owner tag, stamped on every process beside the run id. */
   private readonly runOwner = currentRunOwner();
@@ -397,7 +411,11 @@ export class AgentSessionRegistry implements OnApplicationShutdown {
   private idleWindowPushed = false;
 
   constructor(@Optional() ceiling?: number) {
-    this.ceiling = ceiling ?? MAX_LIVE_SESSIONS;
+    this.automaticCeiling = ceiling ?? MAX_LIVE_SESSIONS;
+  }
+
+  private get ceiling(): number {
+    return this.userLimit ?? this.automaticCeiling;
   }
 
   /**
@@ -906,6 +924,33 @@ export class AgentSessionRegistry implements OnApplicationShutdown {
     }
   }
 
+  /**
+   * Take the user's ceiling (`Settings.keptSessionLimit`), pushed beside the
+   * idle window; null hands it back to {@link sessionCeilingFor}. A lower one
+   * closes idle processes at once, in eviction order and under the same
+   * exemptions, so it may stay over the new ceiling until they lapse.
+   */
+  setLimit(limit: number | null): void {
+    this.userLimit = limit;
+    this.dropUnusable();
+    this.evictWhile(
+      () => this.entries.size > this.ceiling,
+      'the session limit was lowered',
+    );
+  }
+
+  /** What `GET /v1/agents/sessions/config` answers. */
+  get config(): KeptSessionConfigState {
+    return {
+      idleMinutes: this.idleMinutes,
+      limit: this.userLimit,
+      automaticLimit: this.automaticCeiling,
+      sessionMemoryBytes: SESSION_MEMORY_COST_BYTES,
+      totalMemoryBytes: MACHINE_MEMORY_BYTES,
+      recentlyUsedMinutes: RECENTLY_USED_MS / 60_000,
+    };
+  }
+
   /** Runs currently holding a process — for diagnostics and the specs. */
   get liveCount(): number {
     return this.entries.size;
@@ -1393,13 +1438,83 @@ export class AgentSessionRegistry implements OnApplicationShutdown {
   }
 
   /**
-   * Make room for one more process by closing the least-recently-used session
-   * that is not DOING anything. A session with a turn in flight, one parked on
-   * a question, and one carrying on by itself between turns are all exempt —
-   * evicting any of them kills work the user is watching to make room for work
-   * they just asked for.
+   * Make room for one more process by closing a session that is not DOING
+   * anything. A session with a turn in flight, one parked on a question, and
+   * one carrying on by itself between turns are all exempt — evicting any of
+   * them kills work the user is watching to make room for work they just asked
+   * for — and so is an own conversation used within {@link RECENTLY_USED_MS}.
    */
   private evictIfFull(): void {
+    this.dropUnusable();
+    if (
+      !this.evictWhile(
+        () => this.entries.size >= this.ceiling,
+        'the session ceiling was reached',
+      )
+    ) {
+      // Going over the ceiling is the lesser harm: the alternative is refusing
+      // a turn the user asked for, or killing one that is running or about to.
+      this.logger.warn(
+        `none of the ${this.entries.size} agent sessions can be closed (busy, or used in the last ${RECENTLY_USED_MS / 60_000} minutes) — starting another over the ${this.ceiling} ceiling`,
+      );
+    }
+  }
+
+  /** Close evictable sessions while `over` holds; false when none is left to close. */
+  private evictWhile(over: () => boolean, reason: string): boolean {
+    while (over()) {
+      const victim = this.evictionCandidate(Date.now());
+      if (victim === null) {
+        return false;
+      }
+      this.closeEntry(victim[0], victim[1], reason);
+    }
+    return true;
+  }
+
+  /**
+   * The session to close for room: idle callee conversations and sessions not
+   * used within {@link RECENTLY_USED_MS} first — callees before own
+   * conversations — then recently used callees, least recently used first in
+   * each.
+   */
+  private evictionCandidate(now: number): [string, SessionEntry] | null {
+    let best: [string, SessionEntry] | null = null;
+    let bestRank = Number.POSITIVE_INFINITY;
+    for (const candidate of this.entries) {
+      const [key, entry] = candidate;
+      // `parked` alongside `idle`, not folded into it: a session holding a
+      // card the user is looking at is idle in the only sense `idle` claims
+      // (no turn in flight) and busy in the sense that matters here. Evicting
+      // it kills the question rather than the process — the CLI takes the
+      // close as a refusal, and the user's answer arrives at nothing.
+      // `worksOffTurn` alongside the two: a CLI writing rows between turns is
+      // idle in the only sense `idle` claims and busy in the sense that
+      // matters here, exactly as `parked` is. Reported as a thread that
+      // "остановился и ничего не делает" — see {@link OFF_TURN_ACTIVE_MS}.
+      if (!entry.session.idle || this.holdsWork(entry)) {
+        continue;
+      }
+      const recent = now - entry.lastUsedAt < RECENTLY_USED_MS;
+      const callee = callConversationOf(key) !== null;
+      if (recent && !callee) {
+        continue;
+      }
+      const rank = (recent ? 2 : 0) + (callee ? 0 : 1);
+      if (
+        rank < bestRank ||
+        (rank === bestRank &&
+          best !== null &&
+          entry.lastUsedAt < best[1].lastUsedAt)
+      ) {
+        best = candidate;
+        bestRank = rank;
+      }
+    }
+    return best;
+  }
+
+  private dropUnusable(): void {
     // A dead session is not busy, whatever `idle` says about it. Dropping these
     // first is what stops one from occupying a slot forever and getting a LIVE
     // session evicted in its place — `closed` normally removes them, but a
@@ -1412,41 +1527,11 @@ export class AgentSessionRegistry implements OnApplicationShutdown {
         // Alive, idle, and unable to serve a turn — the state a cancelled (or
         // deadline-ended) turn leaves behind. It has to be dropped HERE and not
         // merely skipped: its `lastUsedAt` was just refreshed, so it is the
-        // NEWEST entry, and the loop below would keep it and close a genuinely
+        // NEWEST entry, and eviction would keep it and close a genuinely
         // reusable session instead — re-booting that run's MCP servers to make
         // room for a process nothing can use.
         this.closeEntry(runId, entry, 'it can no longer serve a turn');
       }
-    }
-    while (this.entries.size >= this.ceiling) {
-      let oldest: [string, SessionEntry] | null = null;
-      for (const candidate of this.entries) {
-        // `parked` alongside `idle`, not folded into it: a session holding a
-        // card the user is looking at is idle in the only sense `idle` claims
-        // (no turn in flight) and busy in the sense that matters here. Evicting
-        // it kills the question rather than the process — the CLI takes the
-        // close as a refusal, and the user's answer arrives at nothing.
-        // `worksOffTurn` alongside the two: a CLI writing rows between turns is
-        // idle in the only sense `idle` claims and busy in the sense that
-        // matters here, exactly as `parked` is. Reported as a thread that
-        // "остановился и ничего не делает" — see {@link OFF_TURN_ACTIVE_MS}.
-        if (!candidate[1].session.idle || this.holdsWork(candidate[1])) {
-          continue;
-        }
-        if (oldest === null || candidate[1].lastUsedAt < oldest[1].lastUsedAt) {
-          oldest = candidate;
-        }
-      }
-      if (oldest === null) {
-        // Every session is busy. Going over the ceiling is the lesser harm:
-        // the alternative is refusing a turn the user asked for, or killing
-        // one that is running.
-        this.logger.warn(
-          `all ${this.entries.size} agent sessions are busy — starting another over the ${this.ceiling} ceiling`,
-        );
-        return;
-      }
-      this.closeEntry(oldest[0], oldest[1], 'the session ceiling was reached');
     }
   }
 

@@ -1,6 +1,8 @@
 import { cva, type VariantProps } from 'class-variance-authority';
+import { HelpCircle } from 'lucide-react';
 import type React from 'react';
 
+import { HoverPopover } from './hover-popover';
 import { Label } from './ui/label';
 import { cn } from './ui/utils';
 
@@ -135,6 +137,7 @@ export function SettingsPanelRow({
   label,
   htmlFor,
   description,
+  hint,
   layout,
   children,
 }: {
@@ -142,6 +145,8 @@ export function SettingsPanelRow({
   htmlFor?: string;
   /** One line: what changing this does, never what it is. */
   description?: React.ReactNode;
+  /** A longer explanation behind a "?" after the label, shown on hover or keyboard focus. */
+  hint?: React.ReactNode;
   children: React.ReactNode;
 } & VariantProps<typeof settingsPanelRow>): React.JSX.Element {
   return (
@@ -150,11 +155,33 @@ export function SettingsPanelRow({
       className={cn(settingsPanelRow({ layout }))}>
       {label === undefined ? null : (
         <div className={cn(settingsPanelHeading({ layout }))}>
-          <Label
-            htmlFor={htmlFor}
-            className={htmlFor === undefined ? undefined : 'cursor-pointer'}>
-            {label}
-          </Label>
+          <span className="flex items-center gap-1.5">
+            <Label
+              htmlFor={htmlFor}
+              className={htmlFor === undefined ? undefined : 'cursor-pointer'}>
+              {label}
+            </Label>
+            {hint === undefined ? null : (
+              <HoverPopover
+                slot="settings-panel-hint"
+                label={`About ${label}`}
+                panelLabel={label}
+                side="bottom"
+                align="start"
+                triggerClassName="text-muted-foreground hover:text-foreground"
+                panelClassName="w-80 p-3"
+                trigger={
+                  <HelpCircle
+                    aria-hidden="true"
+                    className="size-3.5 shrink-0"
+                  />
+                }>
+                <p className="text-xs leading-relaxed text-popover-foreground">
+                  {hint}
+                </p>
+              </HoverPopover>
+            )}
+          </span>
           {description === undefined ? null : (
             <span className="text-xs text-muted-foreground">{description}</span>
           )}

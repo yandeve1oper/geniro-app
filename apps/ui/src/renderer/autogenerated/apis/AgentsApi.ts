@@ -25,8 +25,8 @@ import type {
   AgentSkillDto,
   AgentVocabularyDto,
   CopyPluginMcpServerDto,
-  KeptSessionConfigAckDto,
   KeptSessionConfigDto,
+  KeptSessionConfigStateDto,
   RecheckMcpServerDto,
   SetMcpServerEnabledDto,
   WriteMcpConfigDto,
@@ -257,6 +257,43 @@ export class AgentsApi extends runtime.BaseAPI {
      */
     async getAgentActivity(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<AgentActivityDto> {
         const response = await this.getAgentActivityRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
+    async getKeptSessionConfigRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<KeptSessionConfigStateDto>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/agents/sessions/config`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async getKeptSessionConfig(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<KeptSessionConfigStateDto> {
+        const response = await this.getKeptSessionConfigRaw(initOverrides);
         return await response.value();
     }
 
@@ -648,7 +685,7 @@ export class AgentsApi extends runtime.BaseAPI {
     /**
      * 
      */
-    async setKeptSessionConfigRaw(requestParameters: AgentsApiSetKeptSessionConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<KeptSessionConfigAckDto>> {
+    async setKeptSessionConfigRaw(requestParameters: AgentsApiSetKeptSessionConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<KeptSessionConfigStateDto>> {
         if (requestParameters['keptSessionConfigDto'] == null) {
             throw new runtime.RequiredError(
                 'keptSessionConfigDto',
@@ -687,7 +724,7 @@ export class AgentsApi extends runtime.BaseAPI {
     /**
      * 
      */
-    async setKeptSessionConfig(requestParameters: AgentsApiSetKeptSessionConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<KeptSessionConfigAckDto> {
+    async setKeptSessionConfig(requestParameters: AgentsApiSetKeptSessionConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<KeptSessionConfigStateDto> {
         const response = await this.setKeptSessionConfigRaw(requestParameters, initOverrides);
         return await response.value();
     }

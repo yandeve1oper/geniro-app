@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => {
     memoryRemoveNotUseful: true,
     historyPageSize: 1000,
     keptSessionIdleMinutes: 60,
+    keptSessionLimit: null,
     preventSleepWhileWorking: true,
     agentOptions: {},
     collapseToolSteps: false,

@@ -181,7 +181,7 @@ const shareConfigPush = new ShareConfigPush((message) => {
   });
 });
 /**
- * The kept-session idle window, the same way: the daemon holds it in memory
+ * The kept-session idle window and limit, the same way: the daemon holds it in memory
  * (an hour until the first push), so every daemon is told on start, after a
  * restart from Settings, and after any write that changed it.
  */
@@ -220,6 +220,7 @@ onSettingsWritten((settings) => {
   void shareConfigPush.pushIfChanged(supervisor.getHandle(), settings.sharing);
   void keptSessionConfigPush.pushIfChanged(supervisor.getHandle(), {
     idleMinutes: settings.keptSessionIdleMinutes,
+    limit: settings.keptSessionLimit,
   });
   void memoryConfigPush.pushIfChanged(
     supervisor.getHandle(),
@@ -732,6 +733,7 @@ function pushDaemonConfig(handle: DaemonHandle): void {
   void shareConfigPush.push(handle, settings.sharing);
   void keptSessionConfigPush.push(handle, {
     idleMinutes: settings.keptSessionIdleMinutes,
+    limit: settings.keptSessionLimit,
   });
   void memoryConfigPush.push(handle, memoryConfigOf(settings));
   void lessonsConfigPush.push(handle, settings.lessons);

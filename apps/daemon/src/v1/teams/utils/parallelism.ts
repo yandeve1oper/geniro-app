@@ -21,9 +21,10 @@ const MIN_PARALLEL_AGENTS = 4;
  * for the reason that function gives: the same computer gets the same answer
  * on every launch.
  *
- * Two pools of this size can exceed the registry's ceiling between them; the
- * registry goes over its ceiling rather than refuse a turn when every session
- * is busy, so that costs memory, never a deadlock.
+ * Two pools of this size can exceed the registry's ceiling between them, and
+ * so can a lower limit the user set; the registry goes over its ceiling rather
+ * than refuse a turn when no session may be closed (busy, or recently used),
+ * so that costs memory, never a deadlock.
  */
 export function parallelAgentsFor(totalMemoryBytes: number): number {
   return Math.max(MIN_PARALLEL_AGENTS, sessionCeilingFor(totalMemoryBytes));
