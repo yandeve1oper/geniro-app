@@ -32,6 +32,13 @@ const PROPOSAL = {
   dedup: { verdict: 'refines', handle: 'm12' },
 };
 
+const PLACES = {
+  project: true,
+  team: false,
+  projectId: 'proj-1',
+  members: [{ id: 'member-reviewer', name: 'Reviewer' }],
+};
+
 const LESSONS_PAYLOAD = {
   reflectionRunId: 'refl-1',
   segmentId: 'seg-1',
@@ -40,7 +47,7 @@ const LESSONS_PAYLOAD = {
   agentKind: 'claude',
   model: 'claude-haiku-5-5',
   proposals: [PROPOSAL],
-  places: { project: true, team: false },
+  places: PLACES,
   check: null,
 };
 
@@ -54,8 +61,13 @@ const OUTCOME = {
   rule: LESSON_CORRECTION.rule,
   target: { kind: 'memory', scope: 'team', type: 'feedback' },
   memoryHandle: 'm40',
+  resultRef: null,
   reason: null,
 };
+
+function proposalWithTarget(target: unknown): unknown {
+  return { ...PROPOSAL, target };
+}
 
 describe('readLessons', () => {
   it('reads a reflection with its proposals as the card draws them', () => {
@@ -76,7 +88,7 @@ describe('readLessons', () => {
           dedup: { verdict: 'refines', handle: 'm12' },
         },
       ],
-      places: { project: true, team: false },
+      places: PLACES,
       check: null,
     });
   });
@@ -99,10 +111,21 @@ describe('readLessons', () => {
       readLessons(
         row(50, 'lessons', {
           ...LESSONS_PAYLOAD,
-          places: { project: false, team: true },
+          places: {
+            ...PLACES,
+            project: false,
+            team: true,
+            projectId: null,
+            members: [],
+          },
         }),
       )?.places,
-    ).toEqual({ project: false, team: true });
+    ).toEqual({
+      project: false,
+      team: true,
+      projectId: null,
+      members: [],
+    });
   });
 
   it('offers every place a row written before the places were named', () => {
@@ -112,6 +135,24 @@ describe('readLessons', () => {
     ).toEqual({
       project: true,
       team: true,
+      projectId: null,
+      members: [],
+    });
+  });
+
+  it('reads a row written before the project and members were named with neither', () => {
+    expect(
+      readLessons(
+        row(50, 'lessons', {
+          ...LESSONS_PAYLOAD,
+          places: { project: true, team: false },
+        }),
+      )?.places,
+    ).toEqual({
+      project: true,
+      team: false,
+      projectId: null,
+      members: [],
     });
   });
 
@@ -120,10 +161,94 @@ describe('readLessons', () => {
       readLessons(
         row(50, 'lessons', {
           ...LESSONS_PAYLOAD,
-          places: { project: 'no', team: false },
+          places: { ...PLACES, project: 'no' },
         }),
       )?.places,
-    ).toEqual({ project: true, team: false });
+    ).toEqual({ ...PLACES, project: true });
+  });
+
+  it('drops a member that does not read and keeps the ones that do', () => {
+    expect(
+      readLessons(
+        row(50, 'lessons', {
+          ...LESSONS_PAYLOAD,
+          places: {
+            ...PLACES,
+            members: [{ id: 'member-broken' }, { id: 'm-2', name: 'Writer' }],
+          },
+        }),
+      )?.places.members,
+    ).toEqual([{ id: 'm-2', name: 'Writer' }]);
+  });
+
+  it('reads a project-instructions target', () => {
+    const card = readLessons(
+      row(50, 'lessons', {
+        ...LESSONS_PAYLOAD,
+        proposals: [proposalWithTarget({ kind: 'project_instructions' })],
+      }),
+    );
+
+    expect(card?.proposals[0]?.target).toEqual({
+      kind: 'project_instructions',
+    });
+  });
+
+  it('reads a member-instructions target with its member', () => {
+    const card = readLessons(
+      row(50, 'lessons', {
+        ...LESSONS_PAYLOAD,
+        proposals: [
+          proposalWithTarget({
+            kind: 'member_instructions',
+            memberId: 'member-reviewer',
+          }),
+        ],
+      }),
+    );
+
+    expect(card?.proposals[0]?.target).toEqual({
+      kind: 'member_instructions',
+      memberId: 'member-reviewer',
+    });
+  });
+
+  it('reads a knowledge target, whether it files a new document or appends to one', () => {
+    const card = readLessons(
+      row(50, 'lessons', {
+        ...LESSONS_PAYLOAD,
+        proposals: [
+          {
+            ...PROPOSAL,
+            id: 'p-new',
+            target: { kind: 'knowledge', handle: null },
+          },
+          {
+            ...PROPOSAL,
+            id: 'p-append',
+            target: { kind: 'knowledge', handle: 'k-release' },
+          },
+        ],
+      }),
+    );
+
+    expect(card?.proposals.map((proposal) => proposal.target)).toEqual([
+      { kind: 'knowledge', handle: null },
+      { kind: 'knowledge', handle: 'k-release' },
+    ]);
+  });
+
+  it('drops a proposal whose target kind it does not know and keeps the others', () => {
+    const card = readLessons(
+      row(50, 'lessons', {
+        ...LESSONS_PAYLOAD,
+        proposals: [proposalWithTarget({ kind: 'mystery' }), PROPOSAL],
+      }),
+    );
+
+    expect(card?.proposals.map((proposal) => proposal.id)).toEqual([
+      'p-correction',
+    ]);
   });
 
   it('reads an empty proposal list as a reflection that proposed nothing', () => {
@@ -178,8 +303,45 @@ describe('readLessonOutcome', () => {
       rule: LESSON_CORRECTION.rule,
       target: { kind: 'memory', scope: 'team', type: 'feedback' },
       memoryHandle: 'm40',
+      resultRef: null,
       reason: null,
     });
+  });
+
+  it('reads where a save outside memory landed', () => {
+    expect(
+      readLessonOutcome(
+        row(60, 'lesson_outcome', {
+          ...OUTCOME,
+          target: { kind: 'knowledge', handle: 'k-release' },
+          memoryHandle: null,
+          resultRef: 'k-release',
+        }),
+      )?.resultRef,
+    ).toBe('k-release');
+  });
+
+  it('reads a save to project or member instructions as its own target', () => {
+    expect(
+      readLessonOutcome(
+        row(60, 'lesson_outcome', {
+          ...OUTCOME,
+          target: {
+            kind: 'member_instructions',
+            memberId: 'member-reviewer',
+          },
+          memoryHandle: null,
+        }),
+      )?.target,
+    ).toEqual({ kind: 'member_instructions', memberId: 'member-reviewer' });
+  });
+
+  it('reads an outcome written before resultRef existed with none', () => {
+    const { resultRef: _resultRef, ...older } = OUTCOME;
+
+    expect(
+      readLessonOutcome(row(60, 'lesson_outcome', older))?.resultRef,
+    ).toBeNull();
   });
 
   it('reads an automatic outcome as written by the run', () => {
@@ -227,6 +389,14 @@ describe('readLessonOutcome', () => {
     expect(
       readLessonOutcome(
         row(60, 'lesson_outcome', { ...OUTCOME, status: 'maybe' }),
+      ),
+    ).toBeNull();
+  });
+
+  it('answers null for an outcome whose target kind it does not know', () => {
+    expect(
+      readLessonOutcome(
+        row(60, 'lesson_outcome', { ...OUTCOME, target: { kind: 'mystery' } }),
       ),
     ).toBeNull();
   });

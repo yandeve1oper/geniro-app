@@ -9,6 +9,7 @@ import { ConflictException, NotFoundException } from '@packages/common';
 import type { Subscription } from 'rxjs';
 
 import { environment } from '../../../environments';
+import { HOST_LESSONS_TOOL } from '../../agents/chat.types';
 import { ItemDao } from '../../agents/dao/item.dao';
 import { RunDao } from '../../agents/dao/run.dao';
 import { AgentEventBus } from '../../agents/services/agent-events.bus';
@@ -32,6 +33,7 @@ import {
   type ReflectLessons,
   type ThreadLessonsState,
 } from '../lessons.types';
+import { placesOfRun } from '../utils/lesson-places';
 import {
   lessonsReflectionBrief,
   lessonsReflectionGuide,
@@ -61,12 +63,19 @@ export interface LessonsReflectStarted {
  * back to the queue, and after `LESSON_SEGMENT_MAX_ATTEMPTS` is left `failed`
  * with the reason, for the Settings readout.
  */
+const ENDED_WITHOUT_FILING = 'the reflection ended without filing lessons';
+
+/** The one follow-up a reflection that ended without its call is sent. */
+export const LESSONS_FILE_NUDGE = `You ended without calling ${HOST_LESSONS_TOOL}, so nothing was recorded. Call it now, once — with an empty list if no lesson passed all five gates — then reply in one sentence.`;
+
 @Injectable()
 export class LessonReflectionService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LessonReflectionService.name);
   private subscriptions: Subscription[] = [];
   /** Sources between a start's checks and its chat, so a second press cannot start a twin. */
   private readonly starting = new Set<string>();
+  /** Reflections already asked once to file what they found. */
+  private readonly nudged = new Set<string>();
 
   constructor(
     private readonly em: EntityManager,
@@ -295,6 +304,7 @@ export class LessonReflectionService implements OnModuleInit, OnModuleDestroy {
             title: proposal.title,
             reason: proposal.rejectReason ?? proposal.checkReason,
           })),
+          places: placesOfRun(place, source),
         }),
       );
     } catch (error) {
@@ -327,24 +337,43 @@ export class LessonReflectionService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  /** A reflection ended: a stretch it never filed lessons for is a failed attempt. */
+  /**
+   * A reflection ended without filing. One that finished cleanly — no error,
+   * not stopped — only forgot the call, so the same chat is asked once to
+   * make it: a turn on its warm cache, where a new attempt would pay for the
+   * whole read again. Anything else, or a second miss, is a failed attempt.
+   */
   private async settled(runId: string): Promise<void> {
     const em = this.em.fork();
     const segment = await this.segments.ofReflection(runId, em);
     if (segment === null || segment.status !== 'reflecting') {
+      this.nudged.delete(runId);
       return;
     }
     const run = await this.runDao.getById(runId, em);
-    await this.failAttempt(
-      segment,
-      await runFailureOf(
-        this.itemDao,
-        run,
-        'the reflection ended without filing lessons',
-        em,
-      ),
+    const reason = await runFailureOf(
+      this.itemDao,
+      run,
+      ENDED_WITHOUT_FILING,
       em,
     );
+    if (
+      run?.status === 'completed' &&
+      reason === ENDED_WITHOUT_FILING &&
+      !this.nudged.has(runId)
+    ) {
+      this.nudged.add(runId);
+      try {
+        await this.chats.sendMessage(runId, LESSONS_FILE_NUDGE);
+        return;
+      } catch (error) {
+        this.logger.warn(
+          `lessons reflection ${runId} not asked to file: ${messageOf(error)}`,
+        );
+      }
+    }
+    this.nudged.delete(runId);
+    await this.failAttempt(segment, reason, em);
   }
 
   /** Back to the queue for another attempt, or `failed` with the reason once the attempts are spent. */

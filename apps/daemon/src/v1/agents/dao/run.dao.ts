@@ -490,6 +490,24 @@ export class RunDao extends BaseDao<Run> {
     return out;
   }
 
+  /** Which of these runs still exist. */
+  async existingIds(
+    runIds: readonly string[],
+    txEm?: EntityManager,
+  ): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const batch of idBatches([...new Set(runIds)])) {
+      const rows = await this.getRepo(txEm).find(
+        { id: { $in: batch } },
+        { fields: ['id'], disableIdentityMap: true },
+      );
+      for (const run of rows) {
+        out.add(run.id);
+      }
+    }
+    return out;
+  }
+
   /**
    * Forget the snapshotted custom instructions on every run still holding any,
    * and report how many were cleared.

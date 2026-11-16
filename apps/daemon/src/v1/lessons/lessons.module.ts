@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { DesktopOnlyGuard } from '../../auth/desktop-only.guard';
 import { AgentsModule } from '../agents/agents.module';
+import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { MemoryModule } from '../memory/memory.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { UsageEventDao } from '../stats/dao/usage-event.dao';
@@ -35,11 +36,18 @@ import { LessonsEventBus } from './services/lessons-events.bus';
  * its run (`LessonReflectionService`). It provides the usage ledger's DAO it
  * reads rather than importing `StatsModule`; `McpModule` imports it for
  * `propose_lessons`, and the notifications gateway for `lessons_changed`.
- * `TeamsModule` comes in for the team's own lessons setting and the team-run
- * delete; it does not import this module.
+ * `TeamsModule` comes in for the team's own lessons setting, the team-run
+ * delete and a lesson saved into a member's instructions; `KnowledgeModule`
+ * for a lesson saved as a knowledge document. Neither imports this module.
  */
 @Module({
-  imports: [AgentsModule, MemoryModule, ProjectsModule, TeamsModule],
+  imports: [
+    AgentsModule,
+    KnowledgeModule,
+    MemoryModule,
+    ProjectsModule,
+    TeamsModule,
+  ],
   controllers: [
     ThreadLessonsController,
     LessonsController,

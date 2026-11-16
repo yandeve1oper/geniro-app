@@ -30,6 +30,7 @@ import {
   LESSON_SEGMENT_MAX_ATTEMPTS,
   LESSON_TITLE_MAX_CHARS,
   LESSONS_REFLECTION_APPROVAL,
+  type LessonTarget,
 } from '../lessons.types';
 import {
   lessonsCheckBrief,
@@ -183,7 +184,7 @@ export class LessonCheckService implements OnModuleInit, OnModuleDestroy {
             signalKind: row.signalKind,
             evidenceSeq: row.evidenceSeq,
             evidenceQuote: row.evidenceQuote,
-            scope: (JSON.parse(row.target) as { scope: string }).scope,
+            target: JSON.parse(row.target) as LessonTarget,
             dedup: row.dedup,
           })),
         }),

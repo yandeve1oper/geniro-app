@@ -74,6 +74,7 @@ import {
 import { type CheckClient, useMemoryCheck } from './use-memory-check';
 import { type CleanupClient, useMemoryCleanup } from './use-memory-cleanup';
 import { useMemoryTriage } from './use-memory-triage';
+import { useWaitingLessons, WaitingLessons } from './waiting-lessons';
 
 type MemoriesClient = Pick<
   MemoriesApi,
@@ -374,6 +375,7 @@ export function Memory({
   capabilitiesLoading = false,
   lessonsApi = null,
   lessonsClient = null,
+  knowledgeApi = null,
   cliDetections = null,
 }: {
   api: MemoriesClient | null;
@@ -381,6 +383,8 @@ export function Memory({
   /** The lessons spend reads, and the live socket that re-reads them. */
   lessonsApi?: DaemonApis['lessons'] | null;
   lessonsClient?: Pick<DaemonClient, 'onLessonsChanged'> | null;
+  /** A waiting lesson's target picker lists the project's documents. */
+  knowledgeApi?: DaemonApis['knowledge'] | null;
   /** Which CLIs this machine can run, for the lessons pickers; null until probed. */
   cliDetections?: readonly CliDetection[] | null;
   /** The team library, whose agents' profiles the import reads too. */
@@ -408,6 +412,14 @@ export function Memory({
   const [pendingCut, setPendingCut] = useState(false);
   const [indexPreview, setIndexPreview] =
     useState<MemoryIndexPreviewDto | null>(null);
+  const [waitingTab, setWaitingTab] = useState<'entries' | 'lessons' | null>(
+    null,
+  );
+  const waitingLessons = useWaitingLessons({
+    lessonsApi,
+    client: lessonsClient,
+  });
+  const lessonCount = waitingLessons.proposals?.length ?? 0;
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const {
@@ -811,14 +823,22 @@ export function Memory({
     }
     return 'a new chat in no project';
   })();
+  const waitingCount = pending.length + lessonCount;
   const tabs: TabStripTab<EntryTab>[] = ENTRY_TABS.map((tab) =>
-    tab.id === 'pending' && pending.length > 0
+    tab.id === 'pending' && waitingCount > 0
       ? {
           ...tab,
-          count: `${pending.length.toLocaleString('en-US')}${pendingCut ? '+' : ''}`,
+          count: `${waitingCount.toLocaleString('en-US')}${pendingCut ? '+' : ''}`,
         }
       : tab,
   );
+  const waitingTabShown =
+    waitingTab ??
+    (pending.length > 0 || lessonCount === 0 ? 'entries' : 'lessons');
+  const lessonsShown =
+    focus === null &&
+    filters.status === 'pending' &&
+    waitingTabShown === 'lessons';
 
   const scopeGroups = [
     {
@@ -1160,7 +1180,28 @@ export function Memory({
               }
               data-slot="memory-entries"
               className="flex min-w-0 flex-col">
-              {loaded && entries.length === 0 ? (
+              {focus === null && filters.status === 'pending' ? (
+                <TabStrip
+                  label="Waiting for review"
+                  idPrefix="memory-waiting"
+                  tabs={[
+                    { id: 'entries', label: 'Entries', count: pending.length },
+                    { id: 'lessons', label: 'Lessons', count: lessonCount },
+                  ]}
+                  value={waitingTabShown}
+                  className="mt-1"
+                  onSelect={setWaitingTab}
+                />
+              ) : null}
+              {lessonsShown ? (
+                <div className="mt-2">
+                  <WaitingLessons
+                    waiting={waitingLessons}
+                    lessonsApi={lessonsApi}
+                    knowledgeApi={knowledgeApi}
+                  />
+                </div>
+              ) : loaded && entries.length === 0 ? (
                 focus !== null ? (
                   <EmptyState className="h-auto py-8">
                     No entry {focus}.
@@ -1188,7 +1229,7 @@ export function Memory({
                   ))}
                 </ul>
               )}
-              {next !== null ? (
+              {next !== null && !lessonsShown ? (
                 <Button
                   type="button"
                   size="sm"

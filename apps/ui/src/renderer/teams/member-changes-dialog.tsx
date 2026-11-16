@@ -53,6 +53,7 @@ const SOURCE_LABEL: Record<string, string> = {
   chat: 'from a chat',
   restore: 'by a restore',
   migration: 'by a migration',
+  lesson: 'from a saved lesson',
 };
 
 const EFFECT_TITLE =

@@ -307,15 +307,16 @@ export const PROJECT_INSTRUCTION_FIELDS = [
 export type ProjectInstructionField =
   (typeof PROJECT_INSTRUCTION_FIELDS)[number];
 
-/** Who changed a project's texts: the user, an analysis applying `P-` items, or a chat the user asked. */
-export type ProjectInstructionChangeSource = 'user' | 'analysis' | 'chat';
+/** Who changed a project's texts: the user, an analysis applying `P-` items, a chat the user asked, or a lesson the user saved. */
+export type ProjectInstructionChangeSource =
+  'user' | 'analysis' | 'chat' | 'lesson';
 
 /** Consecutive user edits of one field this close together are logged as one change. */
 export const PROJECT_CHANGE_COALESCE_MS = 10 * 60 * 1000;
 
-/** What an analysis's or the project chat's write carries into the change log. */
+/** What an analysis's, a chat's or a saved lesson's write carries into the change log; a lesson names its thread as the chat. */
 export interface ProjectChangeOrigin {
-  source: 'analysis' | 'chat';
+  source: 'analysis' | 'chat' | 'lesson';
   recommendationIds: readonly string[];
   chatRunId: string;
   cardSeq: number | null;

@@ -10,6 +10,7 @@ import {
   LessonReflectionFactsDto,
   RejectLessonDto,
   SaveLessonDto,
+  UpdateLessonRuleDto,
 } from '../dto/lessons.dto';
 import type {
   LessonProposalWire,
@@ -38,9 +39,12 @@ export class LessonsController {
   }
 
   /**
-   * Save a proposed lesson to the shared memory, as the user. 409
-   * `LESSON_DECIDED`, `MEMORY_NEAR_DUPLICATE`, `LESSON_NO_PROJECT` or
-   * `LESSON_NO_TEAM`.
+   * Save a proposed lesson where its target says, as the user: memory, one
+   * line of the project's or a member's instructions, or a project knowledge
+   * document. 409 `LESSON_DECIDED`, `MEMORY_NEAR_DUPLICATE`,
+   * `LESSON_NO_PROJECT`, `LESSON_NO_TEAM`, `PROJECT_INSTRUCTIONS_DRIFT`,
+   * `LESSON_INSTRUCTIONS_TOO_LONG`, `LESSON_MEMBER_GONE`, `LESSON_TEAM_GONE`,
+   * `LESSON_HASH_DRIFT`, `LESSON_DOCUMENT_GONE` or `LESSON_DOCUMENT_CHANGED`.
    */
   @Post('proposals/:proposalId/save')
   @ApiOperation({ operationId: 'saveLesson' })
@@ -60,6 +64,25 @@ export class LessonsController {
     @Body() dto: RejectLessonDto,
   ): Promise<LessonProposalWire> {
     return this.proposals.reject(proposalId, dto);
+  }
+
+  /** "Update rule" on a lesson that refines a memory entry: the entry takes its text as the user's edit. 409 `LESSON_NOT_A_REFINEMENT`, `LESSON_ENTRY_GONE` or `MEMORY_STALE`. */
+  @Post('proposals/:proposalId/update-rule')
+  @ApiOperation({ operationId: 'updateLessonRule' })
+  @ZodResponse({ status: 201, type: LessonProposalDto })
+  updateRule(
+    @Param('proposalId') proposalId: string,
+    @Body() dto: UpdateLessonRuleDto,
+  ): Promise<LessonProposalWire> {
+    return this.proposals.updateRule(proposalId, dto);
+  }
+
+  /** "Move up" on a rule broken again: into the project's instructions, or its entry into the memory index. 409 `LESSON_NOT_BROKEN_AGAIN`. */
+  @Post('proposals/:proposalId/move-up')
+  @ApiOperation({ operationId: 'moveLessonUp' })
+  @ZodResponse({ status: 201, type: LessonProposalDto })
+  moveUp(@Param('proposalId') proposalId: string): Promise<LessonProposalWire> {
+    return this.proposals.moveUp(proposalId);
   }
 
   /** "Undo" on a lesson filed on its own: its memory entry is forgotten, restorable. 409 `LESSON_NOT_FILED`. */

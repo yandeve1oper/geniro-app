@@ -19,6 +19,7 @@ import {
   SaveLessonSchema,
   ThreadLessonEstimateSchema,
   ThreadLessonsStateSchema,
+  UpdateLessonRuleSchema,
 } from '../lessons.types';
 
 export class LessonSegmentListQueryDto extends createZodDto(
@@ -38,6 +39,8 @@ export class LessonsSpendDto extends createZodDto(
 ) {}
 
 export class EditLessonDto extends createZodDto(EditLessonSchema) {}
+
+export class UpdateLessonRuleDto extends createZodDto(UpdateLessonRuleSchema) {}
 
 export class LessonEstimateQueryDto extends createZodDto(
   LessonEstimateQuerySchema,

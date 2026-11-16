@@ -661,6 +661,107 @@ describe('TeamChangeService', () => {
     expect(await readdir(join(dir, TEAM_BACKUP_DIR))).toHaveLength(2);
   });
 
+  describe('a lesson saved into one member', () => {
+    const LESSON = {
+      slug: 'dev-team',
+      memberId: 'builder',
+      line: '- Check the cache before rerunning it.',
+      proposalId: 'lp-1',
+      sourceRunId: 'src',
+      summary: 'Lesson for builder: Check the cache',
+    };
+
+    it("appends the line after the member's own instructions, backing the file up first", async () => {
+      await store.save('dev-team', {
+        ...WF,
+        members: [
+          { ...WF.members[0]!, instructions: 'Review carefully.' },
+          WF.members[1]!,
+        ],
+      });
+      const before = await readFile(join(dir, 'dev-team.team.yaml'), 'utf8');
+
+      const result = await service.appendMemberLine(LESSON);
+
+      expect(result).toMatchObject({ saved: true });
+      expect((await store.get('dev-team')).team.members[0]).toMatchObject({
+        instructions:
+          'Review carefully.\n- Check the cache before rerunning it.',
+      });
+      const backups = await readdir(join(dir, TEAM_BACKUP_DIR));
+      expect(backups).toHaveLength(1);
+      expect(
+        await readFile(join(dir, TEAM_BACKUP_DIR, backups[0]!), 'utf8'),
+      ).toBe(before);
+    });
+
+    it('writes the line alone when the member had no instructions', async () => {
+      await service.appendMemberLine({ ...LESSON, memberId: 'reviewer' });
+
+      expect((await store.get('dev-team')).team.members[1]).toMatchObject({
+        instructions: '- Check the cache before rerunning it.',
+      });
+    });
+
+    it('logs the change under the lesson, naming its thread and its backup', async () => {
+      const result = await service.appendMemberLine(LESSON);
+      const backups = await readdir(join(dir, TEAM_BACKUP_DIR));
+
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toMatchObject({
+        slug: 'dev-team',
+        source: 'lesson',
+        summary: LESSON.summary,
+        chatRunId: 'src',
+        backup: `${TEAM_BACKUP_DIR}/${backups[0]}`,
+      });
+      expect(result).toMatchObject({ saved: true });
+    });
+
+    it('refuses with HASH_DRIFT when the file changes while saving, keeping the other write', async () => {
+      const realSave = store.save.bind(store);
+      let first = true;
+      store.save = async (slug, team, baseHash) => {
+        if (first) {
+          first = false;
+          // A team editor autosave lands between the service's check and its write.
+          await realSave(slug, { ...WF, description: 'builder autosave' });
+        }
+        return realSave(slug, team, baseHash);
+      };
+
+      const result = await service.appendMemberLine(LESSON);
+
+      expect(result).toMatchObject({ saved: false, error: 'HASH_DRIFT' });
+      expect((await store.get('dev-team')).team.description).toBe(
+        'builder autosave',
+      );
+      expect(logged).toEqual([]);
+    });
+
+    it('refuses a member the team no longer has, writing nothing', async () => {
+      const result = await service.appendMemberLine({
+        ...LESSON,
+        memberId: 'ghost',
+      });
+
+      expect(result).toMatchObject({ saved: false, error: 'MEMBER_GONE' });
+      expect((await store.get('dev-team')).team).toEqual(WF);
+      await expect(readdir(dir)).resolves.not.toContain(TEAM_BACKUP_DIR);
+      expect(logged).toEqual([]);
+    });
+
+    it('refuses a team whose file was deleted, rather than re-creating it', async () => {
+      await store.delete('dev-team');
+
+      expect(await service.appendMemberLine(LESSON)).toMatchObject({
+        saved: false,
+        error: 'TEAM_GONE',
+      });
+      await expect(readdir(dir)).resolves.not.toContain('dev-team.team.yaml');
+    });
+  });
+
   describe('an O- item', () => {
     const OVERLAY = { members: { reviewer: { settings: { effort: 'low' } } } };
     const overlaySave = (

@@ -92,9 +92,17 @@ export class LessonProposal extends TimestampsEntity {
   @Property({ type: 'text', nullable: true })
   checkReason: string | null = null;
 
-  /** The memory entry's handle (`m12`) a save wrote, or the near duplicate that kept it from being written. */
+  /**
+   * Where a save landed: the memory entry's handle (`m12`) or the near
+   * duplicate that kept it from being written; the project id, the team slug
+   * or the knowledge document's handle for a save outside memory.
+   */
   @Property({ type: 'string', nullable: true })
   resultRef: string | null = null;
+
+  /** `LessonPlaces` as JSON: what the source thread had a place for when it was filed. */
+  @Property({ type: 'text', nullable: true })
+  places: string | null = null;
 
   @Property({ type: DateTimeType, nullable: true })
   decidedAt: Date | null = null;

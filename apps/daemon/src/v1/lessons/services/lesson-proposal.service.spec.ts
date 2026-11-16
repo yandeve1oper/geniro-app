@@ -3,14 +3,25 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ItemDao } from '../../agents/dao/item.dao';
 import type { RunDao } from '../../agents/dao/run.dao';
+import type { KnowledgeService } from '../../knowledge/services/knowledge.service';
 import type { MemoryService } from '../../memory/services/memory.service';
+import { PROJECT_INSTRUCTIONS_MAX } from '../../projects/projects.types';
+import type { ProjectsService } from '../../projects/services/projects.service';
 import type { UsageEventDao } from '../../stats/dao/usage-event.dao';
+import type { TeamChangeService } from '../../teams/services/team-change.service';
 import type { LessonProposalDao } from '../dao/lesson-proposal.dao';
 import { LessonProposal } from '../entity/lesson-proposal.entity';
-import { LessonProposalService } from './lesson-proposal.service';
+import {
+  LessonProposalService,
+  moveUpOf,
+  placesOf,
+  ruleLine,
+  withLessonLine,
+} from './lesson-proposal.service';
 import type { LessonRowWriter } from './lesson-row.writer';
 
 const TARGET_PROJECT = { kind: 'memory', scope: 'project', type: 'feedback' };
+const PROJECT = { id: 'p1', instructionBlocks: [], instructionsRevision: 4 };
 const BODY_RULE =
   'Rerun a failing check only after changing what it exercises.';
 const BODY_WHY = 'The same check was retried three times unchanged.';
@@ -50,6 +61,10 @@ function proposal(overrides: Partial<LessonProposal> = {}): LessonProposal {
   });
 }
 
+function applied(handle: string) {
+  return { kind: 'applied', document: { handle }, created: true };
+}
+
 function build(
   row: LessonProposal | null,
   memoryOutcome: unknown = {
@@ -64,9 +79,11 @@ function build(
   } as unknown as EntityManager & { flush: ReturnType<typeof vi.fn> };
   const proposals = {
     getById: vi.fn(() => Promise.resolve(row)),
+    list: vi.fn(() => Promise.resolve([] as LessonProposal[])),
   };
   const runDao = {
     getById: vi.fn(() => Promise.resolve(null)),
+    existingIds: vi.fn(() => Promise.resolve(new Set(['src']))),
   };
   const usage = {
     rowsByRuns: vi.fn(() => Promise.resolve([])),
@@ -89,6 +106,19 @@ function build(
       Promise.resolve([]),
     ),
   };
+  const projects = {
+    get: vi.fn(() => Promise.resolve(PROJECT)),
+    update: vi.fn(() => Promise.resolve()),
+  };
+  const teamChange = {
+    appendMemberLine: vi.fn(() => Promise.resolve({ saved: true })),
+  };
+  const knowledge = {
+    create: vi.fn(() => Promise.resolve(applied('k-new'))),
+    list: vi.fn(() => Promise.resolve({ documents: [] as { id: string }[] })),
+    get: vi.fn(() => Promise.resolve(null)),
+    edit: vi.fn(() => Promise.resolve(applied('k-1'))),
+  };
   const service = new LessonProposalService(
     em,
     proposals as unknown as LessonProposalDao,
@@ -97,8 +127,23 @@ function build(
     memory as unknown as MemoryService,
     rows as unknown as LessonRowWriter,
     items as unknown as ItemDao,
+    projects as unknown as ProjectsService,
+    teamChange as unknown as TeamChangeService,
+    knowledge as unknown as KnowledgeService,
   );
-  return { service, em, proposals, runDao, usage, memory, rows, items };
+  return {
+    service,
+    em,
+    proposals,
+    runDao,
+    usage,
+    memory,
+    rows,
+    items,
+    projects,
+    teamChange,
+    knowledge,
+  };
 }
 
 describe('LessonProposalService.save', () => {
@@ -134,6 +179,7 @@ describe('LessonProposalService.save', () => {
         rule: BODY_RULE,
         target: TARGET_PROJECT,
         memoryHandle: 'm7',
+        resultRef: 'm7',
         reason: null,
       },
     });
@@ -330,6 +376,7 @@ describe('LessonProposalService.reject', () => {
         rule: BODY_RULE,
         target: TARGET_PROJECT,
         memoryHandle: null,
+        resultRef: null,
         reason: 'Too narrow.',
       },
     });
@@ -465,6 +512,7 @@ describe('LessonProposalService.undo', () => {
         rule: BODY_RULE,
         target: TARGET_PROJECT,
         memoryHandle: 'm7',
+        resultRef: 'm7',
         reason: null,
       },
     });
@@ -597,6 +645,597 @@ describe.each(['undo', 'edit', 'approve'] as const)(
     );
   },
 );
+
+const PROJECT_TARGET = { kind: 'project_instructions' } as const;
+const MEMBER_TARGET = { kind: 'member_instructions', memberId: 'builder' };
+const KNOWLEDGE_NEW = { kind: 'knowledge', handle: null } as const;
+
+describe('LessonProposalService.save into project instructions', () => {
+  it('appends one line to a new Lessons block at the revision it read, logged as a lesson of its thread', async () => {
+    const row = proposal({ target: JSON.stringify(PROJECT_TARGET) });
+    const { service, projects, rows } = build(row);
+    projects.get.mockResolvedValueOnce({
+      id: 'p1',
+      instructionBlocks: [{ id: 'notes', title: 'Notes', text: 'Use pnpm.' }],
+      instructionsRevision: 4,
+    } as never);
+
+    const wire = await service.save('lp-1', {});
+
+    expect(projects.update).toHaveBeenCalledWith(
+      'p1',
+      {
+        instructionBlocks: [
+          { id: 'notes', title: 'Notes', text: 'Use pnpm.' },
+          { id: 'lessons', title: 'Lessons', text: `- ${BODY_RULE}` },
+        ],
+        expectedInstructionsRevision: 4,
+      },
+      {
+        source: 'lesson',
+        recommendationIds: [],
+        chatRunId: 'src',
+        cardSeq: null,
+      },
+    );
+    expect(wire).toMatchObject({
+      status: 'saved',
+      target: PROJECT_TARGET,
+      resultRef: 'p1',
+      memoryHandle: null,
+    });
+    expect(rows.write).toHaveBeenCalledWith('src', {
+      kind: 'lesson_outcome',
+      payload: {
+        proposalId: 'lp-1',
+        status: 'saved',
+        by: 'user',
+        title: row.title,
+        rule: BODY_RULE,
+        target: PROJECT_TARGET,
+        memoryHandle: null,
+        resultRef: 'p1',
+        reason: null,
+      },
+    });
+  });
+
+  it('appends to the lines the Lessons block already holds', async () => {
+    const { service, projects } = build(
+      proposal({ target: JSON.stringify(PROJECT_TARGET) }),
+    );
+    projects.get.mockResolvedValueOnce({
+      id: 'p1',
+      instructionBlocks: [
+        { id: 'lessons', title: 'Lessons', text: '- Old rule.' },
+      ],
+      instructionsRevision: 7,
+    } as never);
+
+    await service.save('lp-1', {});
+
+    expect(projects.update).toHaveBeenCalledWith(
+      'p1',
+      {
+        instructionBlocks: [
+          {
+            id: 'lessons',
+            title: 'Lessons',
+            text: `- Old rule.\n- ${BODY_RULE}`,
+          },
+        ],
+        expectedInstructionsRevision: 7,
+      },
+      expect.objectContaining({ source: 'lesson' }),
+    );
+  });
+
+  it('refuses instructions that would run past the limit, with 409 LESSON_INSTRUCTIONS_TOO_LONG, writing no update', async () => {
+    const row = proposal({ target: JSON.stringify(PROJECT_TARGET) });
+    const { service, projects, rows } = build(row);
+    projects.get.mockResolvedValueOnce({
+      id: 'p1',
+      instructionBlocks: [
+        {
+          id: 'notes',
+          title: 'Notes',
+          text: 'a'.repeat(PROJECT_INSTRUCTIONS_MAX),
+        },
+      ],
+      instructionsRevision: 4,
+    } as never);
+
+    await expect(service.save('lp-1', {})).rejects.toMatchObject({
+      errorCode: 'LESSON_INSTRUCTIONS_TOO_LONG',
+    });
+    expect(projects.update).not.toHaveBeenCalled();
+    expect(rows.write).not.toHaveBeenCalled();
+    expect(row).toMatchObject({ status: 'proposed', resultRef: null });
+  });
+});
+
+describe('LessonProposalService decisions', () => {
+  it('refuses a second press while the first still writes, so the rule is appended once', async () => {
+    const row = proposal({ target: JSON.stringify(PROJECT_TARGET) });
+    const { service, projects } = build(row);
+    let release: () => void = () => undefined;
+    projects.update.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const first = service.save('lp-1', {});
+    await vi.waitFor(() => expect(projects.update).toHaveBeenCalled());
+    await expect(service.save('lp-1', {})).rejects.toMatchObject({
+      errorCode: 'LESSON_DECIDING',
+    });
+    release();
+    await first;
+
+    expect(projects.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a rule with invisible characters before writing anything', async () => {
+    const row = proposal({ target: JSON.stringify(PROJECT_TARGET) });
+    const { service, projects, rows } = build(row);
+
+    await expect(
+      service.save('lp-1', { rule: 'Run pnpm​ test first' }),
+    ).rejects.toMatchObject({ errorCode: 'LESSON_HIDDEN_TEXT' });
+    expect(projects.update).not.toHaveBeenCalled();
+    expect(rows.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('LessonProposalService.save into member instructions', () => {
+  it("appends the rule as one line to the member's instructions in the library team, logged as a lesson of its thread", async () => {
+    const row = proposal({
+      teamSlug: 'team-a',
+      target: JSON.stringify(MEMBER_TARGET),
+    });
+    const { service, teamChange, rows } = build(row);
+
+    await service.save('lp-1', {});
+
+    expect(teamChange.appendMemberLine).toHaveBeenCalledWith({
+      slug: 'team-a',
+      memberId: 'builder',
+      line: `- ${BODY_RULE}`,
+      proposalId: 'lp-1',
+      sourceRunId: 'src',
+      summary: `Lesson for builder: ${row.title}`,
+    });
+    expect(rows.write).toHaveBeenCalledWith('src', {
+      kind: 'lesson_outcome',
+      payload: expect.objectContaining({
+        status: 'saved',
+        target: MEMBER_TARGET,
+        memoryHandle: null,
+        resultRef: 'team-a',
+      }),
+    });
+  });
+
+  it('refuses a member the library team no longer has, with 409 LESSON_MEMBER_GONE, and leaves the proposal open', async () => {
+    const row = proposal({
+      teamSlug: 'team-a',
+      target: JSON.stringify(MEMBER_TARGET),
+    });
+    const { service, teamChange, rows } = build(row);
+    teamChange.appendMemberLine.mockResolvedValueOnce({
+      saved: false,
+      error: 'MEMBER_GONE',
+      message: "the team 'team-a' no longer has the member 'builder'",
+    } as never);
+
+    await expect(service.save('lp-1', {})).rejects.toMatchObject({
+      errorCode: 'LESSON_MEMBER_GONE',
+    });
+    expect(row).toMatchObject({ status: 'proposed', resultRef: null });
+    expect(rows.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('LessonProposalService.save into knowledge', () => {
+  it("files a new document in the project's place when the lesson names none", async () => {
+    const row = proposal({ target: JSON.stringify(KNOWLEDGE_NEW) });
+    const { service, knowledge, rows } = build(row);
+
+    await service.save('lp-1', {});
+
+    expect(knowledge.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        place: 'project:p1',
+        title: row.title,
+        body: expect.stringContaining(BODY_RULE),
+      }),
+    );
+    expect(rows.write).toHaveBeenCalledWith('src', {
+      kind: 'lesson_outcome',
+      payload: expect.objectContaining({
+        status: 'saved',
+        target: KNOWLEDGE_NEW,
+        memoryHandle: null,
+        resultRef: 'k-new',
+      }),
+    });
+  });
+
+  it('appends the lesson as a section to the document it names, at the revision it reads', async () => {
+    const row = proposal({
+      target: JSON.stringify({ kind: 'knowledge', handle: 'k-1' }),
+    });
+    const { service, knowledge } = build(row);
+    knowledge.list.mockResolvedValueOnce({
+      documents: [{ id: 'kd-1' }],
+    } as never);
+    knowledge.get.mockResolvedValueOnce({
+      id: 'kd-1',
+      handle: 'k-1',
+      rev: 7,
+      title: 'Cache procedure',
+      whenToRead: 'When migrating the cache',
+      body: 'Step one.',
+    } as never);
+
+    const wire = await service.save('lp-1', {});
+
+    expect(knowledge.list).toHaveBeenCalledWith({
+      place: 'project:p1',
+      handle: 'k-1',
+      status: 'active',
+      limit: 1,
+    });
+    expect(knowledge.edit).toHaveBeenCalledWith('kd-1', {
+      rev: 7,
+      title: 'Cache procedure',
+      whenToRead: 'When migrating the cache',
+      body: `Step one.\n\n## ${row.title}\n\n${BODY_RULE}\n\nWhy: ${BODY_WHY}\n\nLesson from "Migrate the cache", message #7: “use pnpm not npm”\n`,
+    });
+    expect(wire).toMatchObject({ status: 'saved', resultRef: 'k-1' });
+  });
+
+  it('refuses a document that is gone, with 409 LESSON_DOCUMENT_GONE, writing nothing', async () => {
+    const row = proposal({
+      target: JSON.stringify({ kind: 'knowledge', handle: 'k-gone' }),
+    });
+    const { service, knowledge, rows } = build(row);
+
+    await expect(service.save('lp-1', {})).rejects.toMatchObject({
+      errorCode: 'LESSON_DOCUMENT_GONE',
+    });
+    expect(knowledge.edit).not.toHaveBeenCalled();
+    expect(row).toMatchObject({ status: 'proposed', resultRef: null });
+    expect(rows.write).not.toHaveBeenCalled();
+  });
+
+  it("passes on the knowledge store's refusal under a lesson code, leaving the lesson open", async () => {
+    const row = proposal({ target: JSON.stringify(KNOWLEDGE_NEW) });
+    const { service, knowledge, rows } = build(row);
+    knowledge.create.mockResolvedValueOnce({
+      kind: 'refused',
+      code: 'INVALID_DOCUMENT',
+      reason: 'the body is too long',
+    } as never);
+
+    await expect(service.save('lp-1', {})).rejects.toMatchObject({
+      errorCode: 'LESSON_INVALID_DOCUMENT',
+    });
+    expect(row).toMatchObject({ status: 'proposed', resultRef: null });
+    expect(rows.write).not.toHaveBeenCalled();
+  });
+
+  it('refuses a document that changed while the lesson was saved, with 409 LESSON_DOCUMENT_CHANGED', async () => {
+    const row = proposal({
+      target: JSON.stringify({ kind: 'knowledge', handle: 'k-1' }),
+    });
+    const { service, knowledge, rows } = build(row);
+    const document = {
+      id: 'kd-1',
+      handle: 'k-1',
+      rev: 7,
+      title: 'Cache procedure',
+      whenToRead: 'When migrating the cache',
+      body: 'Step one.',
+    };
+    knowledge.list.mockResolvedValueOnce({
+      documents: [{ id: 'kd-1' }],
+    } as never);
+    knowledge.get.mockResolvedValueOnce(document as never);
+    knowledge.edit.mockResolvedValueOnce({
+      kind: 'stale',
+      current: document,
+    } as never);
+
+    await expect(service.save('lp-1', {})).rejects.toMatchObject({
+      errorCode: 'LESSON_DOCUMENT_CHANGED',
+    });
+    expect(row).toMatchObject({ status: 'proposed', resultRef: null });
+    expect(rows.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('LessonProposalService.updateRule', () => {
+  it('rewrites the entry a refines lesson names, at the rev it reads, as the user, and records the save under that entry', async () => {
+    const row = proposal({
+      dedup: JSON.stringify({ verdict: 'refines', handle: 'm7' }),
+    });
+    const { service, memory, rows } = build(row);
+
+    const wire = await service.updateRule('lp-1', {
+      rule: 'Change the input first.',
+    });
+
+    expect(memory.edit).toHaveBeenCalledWith('mem-7', {
+      rev: 3,
+      title: row.title,
+      body: `Change the input first.\n\nWhy: ${BODY_WHY}\n\nLesson from "Migrate the cache", message #7: “use pnpm not npm”`,
+      type: 'feedback',
+      projectId: 'p1',
+      teamSlug: null,
+    });
+    expect(wire).toMatchObject({
+      status: 'saved',
+      memoryHandle: 'm7',
+      resultRef: 'm7',
+    });
+    expect(rows.write).toHaveBeenCalledWith(
+      'src',
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          status: 'saved',
+          memoryHandle: 'm7',
+          resultRef: 'm7',
+        }),
+      }),
+    );
+  });
+
+  it('refuses Update rule when the refined entry was forgotten, with 409 LESSON_ENTRY_GONE, leaving the lesson open', async () => {
+    const row = proposal({
+      dedup: JSON.stringify({ verdict: 'refines', handle: 'm7' }),
+    });
+    const { service, memory, rows } = build(row, undefined, {
+      ...FILED_ENTRY,
+      status: 'forgotten',
+    });
+
+    await expect(service.updateRule('lp-1', {})).rejects.toMatchObject({
+      errorCode: 'LESSON_ENTRY_GONE',
+    });
+    expect(memory.edit).not.toHaveBeenCalled();
+    expect(rows.write).not.toHaveBeenCalled();
+    expect(row.status).toBe('proposed');
+  });
+
+  it('keeps Undo off the entry an Update rule changed: that entry was not written by the lesson', async () => {
+    const row = proposal({
+      dedup: JSON.stringify({ verdict: 'refines', handle: 'm7' }),
+    });
+    const { service, memory } = build(row);
+    await service.updateRule('lp-1', {});
+
+    await expect(service.undo('lp-1')).rejects.toMatchObject({
+      errorCode: 'LESSON_NOT_FILED',
+    });
+    expect(memory.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('refuses Update rule on a new lesson with 409 LESSON_NOT_A_REFINEMENT, touching nothing', async () => {
+    const { service, memory, rows } = build(proposal());
+
+    await expect(
+      service.updateRule('lp-1', { rule: 'Change the input first.' }),
+    ).rejects.toMatchObject({ errorCode: 'LESSON_NOT_A_REFINEMENT' });
+    expect(memory.edit).not.toHaveBeenCalled();
+    expect(rows.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('LessonProposalService.moveUp', () => {
+  const BROKEN_AGAIN = JSON.stringify({
+    verdict: 'broken_again',
+    handle: 'm7',
+  });
+
+  it("moves a rule broken again into the project's Lessons block, and the lesson becomes a project-instructions lesson", async () => {
+    const row = proposal({ dedup: BROKEN_AGAIN });
+    const { service, projects, memory } = build(row);
+
+    const wire = await service.moveUp('lp-1');
+
+    expect(projects.update).toHaveBeenCalledWith(
+      'p1',
+      {
+        instructionBlocks: [
+          { id: 'lessons', title: 'Lessons', text: `- ${BODY_RULE}` },
+        ],
+        expectedInstructionsRevision: 4,
+      },
+      expect.objectContaining({ source: 'lesson' }),
+    );
+    expect(memory.setStatus).not.toHaveBeenCalled();
+    expect(wire).toMatchObject({
+      status: 'saved',
+      target: PROJECT_TARGET,
+      resultRef: 'p1',
+    });
+  });
+
+  it('approves the entry a rule broken again names into the memory index, as the user, when the thread has no project', async () => {
+    const row = proposal({ projectId: null, dedup: BROKEN_AGAIN });
+    const { service, memory, projects, rows } = build(row, undefined, {
+      ...FILED_ENTRY,
+      status: 'pending',
+    });
+
+    await service.moveUp('lp-1');
+
+    expect(memory.setStatus).toHaveBeenCalledWith(
+      { kind: 'user' },
+      'mem-7',
+      'active',
+    );
+    expect(projects.update).not.toHaveBeenCalled();
+    expect(rows.write).toHaveBeenCalledWith(
+      'src',
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          status: 'saved',
+          memoryHandle: 'm7',
+        }),
+      }),
+    );
+  });
+
+  it('refuses to move up a lesson whose rule was not broken again, with 409 LESSON_NOT_BROKEN_AGAIN, touching nothing', async () => {
+    const { service, memory, projects, rows } = build(proposal());
+
+    await expect(service.moveUp('lp-1')).rejects.toMatchObject({
+      errorCode: 'LESSON_NOT_BROKEN_AGAIN',
+    });
+    expect(projects.update).not.toHaveBeenCalled();
+    expect(memory.setStatus).not.toHaveBeenCalled();
+    expect(rows.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('LessonProposalService.list', () => {
+  it("answers the proposals of the statuses named, and says whether each one's thread still exists", async () => {
+    const kept = proposal({ id: 'lp-kept', sourceRunId: 'src' });
+    const orphan = proposal({
+      id: 'lp-orphan',
+      sourceRunId: 'gone',
+      status: 'check_failed',
+    });
+    const { service, proposals, runDao } = build(null);
+    proposals.list.mockResolvedValueOnce([kept, orphan]);
+
+    const wires = await service.list({ status: 'proposed,check_failed' });
+
+    expect(proposals.list).toHaveBeenCalledWith(
+      { statuses: ['proposed', 'check_failed'], sourceRunId: undefined },
+      expect.anything(),
+    );
+    expect(runDao.existingIds).toHaveBeenCalledWith(
+      ['src', 'gone'],
+      expect.anything(),
+    );
+    expect(wires.map((wire) => [wire.id, wire.sourceExists])).toEqual([
+      ['lp-kept', true],
+      ['lp-orphan', false],
+    ]);
+  });
+
+  it('drops a status name it does not know, and filters by no status when none is named', async () => {
+    const { service, proposals } = build(null);
+
+    await service.list({ status: 'proposed,bogus' });
+    expect(proposals.list).toHaveBeenLastCalledWith(
+      { statuses: ['proposed'], sourceRunId: undefined },
+      expect.anything(),
+    );
+
+    await service.list({});
+    expect(proposals.list).toHaveBeenLastCalledWith(
+      { statuses: undefined, sourceRunId: undefined },
+      expect.anything(),
+    );
+  });
+});
+
+describe('LessonProposalService.undo on a lesson saved outside memory', () => {
+  it('refuses to undo a lesson saved to project instructions, with 409 LESSON_NOT_FILED, touching nothing', async () => {
+    const row = proposal({
+      status: 'saved',
+      resultRef: 'p1',
+      target: JSON.stringify(PROJECT_TARGET),
+    });
+    const { service, memory, rows } = build(row);
+
+    await expect(service.undo('lp-1')).rejects.toMatchObject({
+      errorCode: 'LESSON_NOT_FILED',
+    });
+    expect(memory.setStatus).not.toHaveBeenCalled();
+    expect(rows.write).not.toHaveBeenCalled();
+    expect(row.status).toBe('saved');
+  });
+});
+
+describe('lesson proposal helpers', () => {
+  it('turns a rule into one instructions line, its line breaks folded', () => {
+    expect(ruleLine('  Use pnpm\n   not npm. ')).toBe('- Use pnpm not npm.');
+  });
+
+  it('appends the line to the Lessons block, and starts the block when it is missing or empty', () => {
+    const notes = { id: 'notes', title: 'Notes', text: 'Use pnpm.' };
+
+    expect(withLessonLine([notes], '- A')).toEqual([
+      notes,
+      { id: 'lessons', title: 'Lessons', text: '- A' },
+    ]);
+    expect(
+      withLessonLine(
+        [notes, { id: 'lessons', title: 'Lessons', text: '- A\n' }],
+        '- B',
+      ),
+    ).toEqual([notes, { id: 'lessons', title: 'Lessons', text: '- A\n- B' }]);
+    expect(
+      withLessonLine([{ id: 'lessons', title: 'Lessons', text: '' }], '- B'),
+    ).toEqual([{ id: 'lessons', title: 'Lessons', text: '- B' }]);
+  });
+
+  it('moves up only a memory lesson broken again: into the project when it has one, else the index', () => {
+    const broken = {
+      dedup: JSON.stringify({ verdict: 'broken_again', handle: 'm7' }),
+      target: JSON.stringify(TARGET_PROJECT),
+      projectId: 'p1',
+    };
+
+    expect(moveUpOf(broken)).toBe('project_instructions');
+    expect(moveUpOf({ ...broken, projectId: null })).toBe('memory_index');
+    expect(
+      moveUpOf({
+        ...broken,
+        dedup: JSON.stringify({ verdict: 'refines', handle: 'm7' }),
+      }),
+    ).toBeNull();
+    expect(
+      moveUpOf({
+        ...broken,
+        dedup: JSON.stringify({ verdict: 'broken_again', handle: null }),
+      }),
+    ).toBeNull();
+    expect(
+      moveUpOf({
+        ...broken,
+        target: JSON.stringify(PROJECT_TARGET),
+      }),
+    ).toBeNull();
+  });
+
+  it('reads the places a row stored, and reads an older row off its own project and team columns', () => {
+    const places = { project: true, team: false, projectId: 'p1', members: [] };
+
+    expect(
+      placesOf({
+        places: JSON.stringify(places),
+        projectId: 'p1',
+        teamSlug: null,
+      }),
+    ).toEqual(places);
+    expect(
+      placesOf({ places: null, projectId: 'p1', teamSlug: 'team-a' }),
+    ).toEqual({
+      project: true,
+      team: true,
+      projectId: 'p1',
+      members: [],
+    });
+  });
+});
 
 describe('LessonProposalService.reflectionFacts for the check', () => {
   it('serves a lessons_check run with its agent, model and effort', async () => {

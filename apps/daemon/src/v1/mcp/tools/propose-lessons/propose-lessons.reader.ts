@@ -39,7 +39,7 @@ export function proposeLessonsResultText(
   }
   const noun = outcome.count === 1 ? 'lesson' : 'lessons';
   return {
-    text: `${outcome.count} ${noun} recorded; geniro files them into the shared memory and shows them on the thread's card. Reply in one or two sentences; do not repeat them.`,
+    text: `${outcome.count} ${noun} recorded; geniro files the new memory lessons and shows every lesson on the thread's card, where the rest wait for the user. Reply in one or two sentences; do not repeat them.`,
     isError: false,
   };
 }

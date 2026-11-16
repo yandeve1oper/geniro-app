@@ -221,9 +221,26 @@ describe('LessonProposalDao (in-memory sqlite)', () => {
     });
 
     it('narrows to one status', async () => {
-      const rows = await dao.list({ status: 'proposed' });
+      const rows = await dao.list({ statuses: ['proposed'] });
 
       expect(rows.map((row) => row.id)).toEqual(['b-proposed', 'a-proposed']);
+    });
+
+    it('narrows to several statuses at once, newest first', async () => {
+      await insert({
+        id: 'a-check-failed',
+        sourceRunId: 'run-a',
+        status: 'check_failed',
+        createdAt: new Date(4_000),
+      });
+
+      const rows = await dao.list({ statuses: ['proposed', 'check_failed'] });
+
+      expect(rows.map((row) => row.id)).toEqual([
+        'a-check-failed',
+        'b-proposed',
+        'a-proposed',
+      ]);
     });
 
     it('narrows to one source thread', async () => {
@@ -233,7 +250,10 @@ describe('LessonProposalDao (in-memory sqlite)', () => {
     });
 
     it('narrows to both at once', async () => {
-      const rows = await dao.list({ status: 'proposed', sourceRunId: 'run-a' });
+      const rows = await dao.list({
+        statuses: ['proposed'],
+        sourceRunId: 'run-a',
+      });
 
       expect(rows.map((row) => row.id)).toEqual(['a-proposed']);
     });

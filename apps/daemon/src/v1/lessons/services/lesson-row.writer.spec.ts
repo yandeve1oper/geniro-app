@@ -99,7 +99,7 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
         agentKind: 'claude',
         model: 'opus',
         proposals: [],
-        places: { project: false, team: false },
+        places: { project: false, team: false, projectId: null, members: [] },
         check: null,
       },
     });
@@ -112,6 +112,7 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
         rule: 'Rule in full.',
         target: { kind: 'memory', scope: 'global', type: 'feedback' },
         memoryHandle: null,
+        resultRef: null,
         reason: 'Too narrow.',
         by: 'user',
       },
@@ -138,6 +139,53 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
     expect(published).toHaveLength(2);
   });
 
+  it('keeps the places a lessons row names and the resultRef an outcome names, as written', async () => {
+    await runDao.create({ id: 'live', archivedAt: null });
+    await runDao.create({ id: 'other', archivedAt: null });
+    const places = {
+      project: true,
+      team: true,
+      projectId: 'p1',
+      members: [{ id: 'builder', name: 'Builder' }],
+    };
+
+    await writer.write('live', {
+      kind: 'lessons',
+      payload: {
+        reflectionRunId: 'refl',
+        segmentId: 'seg',
+        fromSeq: -1,
+        toSeq: 4,
+        agentKind: 'claude',
+        model: 'opus',
+        proposals: [],
+        places,
+        check: null,
+      },
+    });
+    await writer.write('other', {
+      kind: 'lesson_outcome',
+      payload: {
+        proposalId: 'lp-2',
+        status: 'saved',
+        by: 'user',
+        title: 'Rule',
+        rule: 'Rule in full.',
+        target: { kind: 'member_instructions', memberId: 'builder' },
+        memoryHandle: null,
+        resultRef: 'reviewers',
+        reason: null,
+      },
+    });
+
+    const [lessons] = await itemDao.getByRun('live');
+    const [outcome] = await itemDao.getByRun('other');
+    expect(JSON.parse(lessons!.payload)).toMatchObject({ places });
+    expect(JSON.parse(outcome!.payload)).toMatchObject({
+      resultRef: 'reviewers',
+    });
+  });
+
   it('writes nothing for a thread that is gone, and reserves no seq for it', async () => {
     const reserve = vi.fn(() => Promise.resolve(42));
     const gone = new LessonRowWriter(
@@ -159,7 +207,7 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
         agentKind: 'claude',
         model: 'opus',
         proposals: [],
-        places: { project: false, team: false },
+        places: { project: false, team: false, projectId: null, members: [] },
         check: null,
       },
     });
@@ -194,7 +242,7 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
         agentKind: 'claude',
         model: 'opus',
         proposals: [],
-        places: { project: false, team: false },
+        places: { project: false, team: false, projectId: null, members: [] },
         check: null,
       },
     });
@@ -208,7 +256,7 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
         agentKind: 'claude',
         model: 'opus',
         proposals: [],
-        places: { project: false, team: false },
+        places: { project: false, team: false, projectId: null, members: [] },
         check: null,
       },
     });

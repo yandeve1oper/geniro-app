@@ -18,7 +18,6 @@ import type {
   EditLessonDto,
   LessonProposal,
   LessonProposalListDto,
-  LessonProposalStatus,
   LessonReflectionFactsDto,
   LessonSegment,
   LessonSegmentListDto,
@@ -31,6 +30,7 @@ import type {
   SaveLessonDto,
   ThreadLessonEstimateDto,
   ThreadLessonsStateDto,
+  UpdateLessonRuleDto,
 } from '../models/index';
 
 export interface LessonsApiApproveLessonRequest {
@@ -55,13 +55,17 @@ export interface LessonsApiGetThreadLessonsStateRequest {
 }
 
 export interface LessonsApiListLessonProposalsRequest {
-    status?: LessonProposalStatus;
+    status?: string;
     sourceRunId?: string;
 }
 
 export interface LessonsApiListLessonSegmentsRequest {
     status?: string;
     runId?: string;
+}
+
+export interface LessonsApiMoveLessonUpRequest {
+    proposalId: string;
 }
 
 export interface LessonsApiReflectLessonsRequest {
@@ -89,6 +93,11 @@ export interface LessonsApiSkipLessonSegmentRequest {
 
 export interface LessonsApiUndoLessonRequest {
     proposalId: string;
+}
+
+export interface LessonsApiUpdateLessonRuleRequest {
+    proposalId: string;
+    updateLessonRuleDto: UpdateLessonRuleDto;
 }
 
 /**
@@ -464,6 +473,51 @@ export class LessonsApi extends runtime.BaseAPI {
     /**
      * 
      */
+    async moveLessonUpRaw(requestParameters: LessonsApiMoveLessonUpRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<LessonProposal>> {
+        if (requestParameters['proposalId'] == null) {
+            throw new runtime.RequiredError(
+                'proposalId',
+                'Required parameter "proposalId" was null or undefined when calling moveLessonUp().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/lessons/proposals/{proposalId}/move-up`;
+        urlPath = urlPath.replace(`{${"proposalId"}}`, encodeURIComponent(String(requestParameters['proposalId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async moveLessonUp(requestParameters: LessonsApiMoveLessonUpRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<LessonProposal> {
+        const response = await this.moveLessonUpRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
     async reflectLessonsRaw(requestParameters: LessonsApiReflectLessonsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<LessonsReflectStartedDto>> {
         if (requestParameters['runId'] == null) {
             throw new runtime.RequiredError(
@@ -760,6 +814,61 @@ export class LessonsApi extends runtime.BaseAPI {
      */
     async undoLesson(requestParameters: LessonsApiUndoLessonRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<LessonProposal> {
         const response = await this.undoLessonRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
+    async updateLessonRuleRaw(requestParameters: LessonsApiUpdateLessonRuleRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<LessonProposal>> {
+        if (requestParameters['proposalId'] == null) {
+            throw new runtime.RequiredError(
+                'proposalId',
+                'Required parameter "proposalId" was null or undefined when calling updateLessonRule().'
+            );
+        }
+
+        if (requestParameters['updateLessonRuleDto'] == null) {
+            throw new runtime.RequiredError(
+                'updateLessonRuleDto',
+                'Required parameter "updateLessonRuleDto" was null or undefined when calling updateLessonRule().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/lessons/proposals/{proposalId}/update-rule`;
+        urlPath = urlPath.replace(`{${"proposalId"}}`, encodeURIComponent(String(requestParameters['proposalId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: requestParameters['updateLessonRuleDto'],
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async updateLessonRule(requestParameters: LessonsApiUpdateLessonRuleRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<LessonProposal> {
+        const response = await this.updateLessonRuleRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

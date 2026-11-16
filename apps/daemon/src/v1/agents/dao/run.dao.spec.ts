@@ -62,6 +62,23 @@ describe('RunDao (in-memory sqlite)', () => {
     expect(run!.createdAt.toISOString()).toBe(old.toISOString());
   });
 
+  describe('existingIds', () => {
+    it('answers the ids of the runs that still exist, archived ones included, and nothing for a run deleted or never made', async () => {
+      await dao.create({ id: 'live-1', archivedAt: null });
+      await dao.create({ id: 'live-2', archivedAt: new Date(1_000) });
+
+      expect(
+        await dao.existingIds(['live-1', 'gone', 'live-1', 'live-2']),
+      ).toEqual(new Set(['live-1', 'live-2']));
+    });
+
+    it('answers an empty set for no ids', async () => {
+      await dao.create({ id: 'live-1', archivedAt: null });
+
+      expect(await dao.existingIds([])).toEqual(new Set());
+    });
+  });
+
   describe('listChats', () => {
     it('lists chat runs only (teamId null), newest first', async () => {
       // Oldest inserted first, with explicit createdAt values: a dropped

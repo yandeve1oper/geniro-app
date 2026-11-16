@@ -6008,6 +6008,64 @@ export interface LessonEvidence {
 /**
  * 
  * @export
+ * @interface LessonKnowledgeTarget
+ */
+export interface LessonKnowledgeTarget {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonKnowledgeTarget
+     */
+    kind: LessonKnowledgeTargetKindEnum;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonKnowledgeTarget
+     */
+    handle: string | null;
+}
+
+
+/**
+ * @export
+ */
+export const LessonKnowledgeTargetKindEnum = {
+    Knowledge: 'knowledge'
+} as const;
+export type LessonKnowledgeTargetKindEnum = typeof LessonKnowledgeTargetKindEnum[keyof typeof LessonKnowledgeTargetKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface LessonMemberInstructionsTarget
+ */
+export interface LessonMemberInstructionsTarget {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonMemberInstructionsTarget
+     */
+    kind: LessonMemberInstructionsTargetKindEnum;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonMemberInstructionsTarget
+     */
+    memberId: string;
+}
+
+
+/**
+ * @export
+ */
+export const LessonMemberInstructionsTargetKindEnum = {
+    MemberInstructions: 'member_instructions'
+} as const;
+export type LessonMemberInstructionsTargetKindEnum = typeof LessonMemberInstructionsTargetKindEnum[keyof typeof LessonMemberInstructionsTargetKindEnum];
+
+/**
+ * 
+ * @export
  * @interface LessonMemoryTarget
  */
 export interface LessonMemoryTarget {
@@ -6118,6 +6176,79 @@ export type LessonOverride = typeof LessonOverride[keyof typeof LessonOverride];
 /**
  * 
  * @export
+ * @interface LessonPlaceMember
+ */
+export interface LessonPlaceMember {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonPlaceMember
+     */
+    id: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonPlaceMember
+     */
+    name: string;
+}
+/**
+ * 
+ * @export
+ * @interface LessonPlaces
+ */
+export interface LessonPlaces {
+    /**
+     * 
+     * @type {boolean}
+     * @memberof LessonPlaces
+     */
+    project: boolean;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof LessonPlaces
+     */
+    team: boolean;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonPlaces
+     */
+    projectId: string | null;
+    /**
+     * 
+     * @type {Array<LessonPlaceMember>}
+     * @memberof LessonPlaces
+     */
+    members: Array<LessonPlaceMember>;
+}
+/**
+ * 
+ * @export
+ * @interface LessonProjectInstructionsTarget
+ */
+export interface LessonProjectInstructionsTarget {
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProjectInstructionsTarget
+     */
+    kind: LessonProjectInstructionsTargetKindEnum;
+}
+
+
+/**
+ * @export
+ */
+export const LessonProjectInstructionsTargetKindEnum = {
+    ProjectInstructions: 'project_instructions'
+} as const;
+export type LessonProjectInstructionsTargetKindEnum = typeof LessonProjectInstructionsTargetKindEnum[keyof typeof LessonProjectInstructionsTargetKindEnum];
+
+/**
+ * 
+ * @export
  * @interface LessonProposal
  */
 export interface LessonProposal {
@@ -6189,10 +6320,10 @@ export interface LessonProposal {
     evidence: LessonEvidence;
     /**
      * 
-     * @type {LessonMemoryTarget}
+     * @type {LessonTarget}
      * @memberof LessonProposal
      */
-    target: LessonMemoryTarget;
+    target: LessonTarget;
     /**
      * 
      * @type {LessonDedup}
@@ -6234,6 +6365,30 @@ export interface LessonProposal {
      * @type {string}
      * @memberof LessonProposal
      */
+    resultRef: string | null;
+    /**
+     * 
+     * @type {LessonPlaces}
+     * @memberof LessonProposal
+     */
+    places: LessonPlaces;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
+    moveUp: LessonProposalMoveUpEnum | null;
+    /**
+     * False once the thread the lesson came from was deleted
+     * @type {boolean}
+     * @memberof LessonProposal
+     */
+    sourceExists: boolean;
+    /**
+     * 
+     * @type {string}
+     * @memberof LessonProposal
+     */
     createdAt: string;
     /**
      * 
@@ -6253,6 +6408,15 @@ export const LessonProposalCheckVerdictEnum = {
     Drop: 'drop'
 } as const;
 export type LessonProposalCheckVerdictEnum = typeof LessonProposalCheckVerdictEnum[keyof typeof LessonProposalCheckVerdictEnum];
+
+/**
+ * @export
+ */
+export const LessonProposalMoveUpEnum = {
+    ProjectInstructions: 'project_instructions',
+    MemoryIndex: 'memory_index'
+} as const;
+export type LessonProposalMoveUpEnum = typeof LessonProposalMoveUpEnum[keyof typeof LessonProposalMoveUpEnum];
 
 /**
  * 
@@ -6537,6 +6701,12 @@ export interface LessonSpendByStep {
      */
     check: number;
 }
+/**
+ * @type LessonTarget
+ * 
+ * @export
+ */
+export type LessonTarget = LessonKnowledgeTarget | LessonMemberInstructionsTarget | LessonMemoryTarget | LessonProjectInstructionsTarget;
 /**
  * 
  * @export
@@ -13340,10 +13510,10 @@ export interface SaveLessonDto {
     rule?: string;
     /**
      * 
-     * @type {LessonMemoryTarget}
+     * @type {LessonTarget}
      * @memberof SaveLessonDto
      */
-    target?: LessonMemoryTarget;
+    target?: LessonTarget;
 }
 /**
  * 
@@ -17762,6 +17932,25 @@ export interface UpdateLabelInstructionDto {
      * @memberof UpdateLabelInstructionDto
      */
     instructions?: string;
+}
+/**
+ * 
+ * @export
+ * @interface UpdateLessonRuleDto
+ */
+export interface UpdateLessonRuleDto {
+    /**
+     * 
+     * @type {string}
+     * @memberof UpdateLessonRuleDto
+     */
+    title?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof UpdateLessonRuleDto
+     */
+    rule?: string;
 }
 /**
  * 

@@ -24,7 +24,10 @@ import {
   type LessonModelChoice,
   type LessonsConfig,
 } from '../lessons.types';
-import { LessonReflectionService } from './lesson-reflection.service';
+import {
+  LessonReflectionService,
+  LESSONS_FILE_NUDGE,
+} from './lesson-reflection.service';
 import { LessonsConfigService } from './lessons-config.service';
 import { LessonsEventBus } from './lessons-events.bus';
 
@@ -865,10 +868,31 @@ describe('LessonReflectionService: a reflection that ends without filing', () =>
     attempts,
   });
 
-  it('puts its stretch back in the queue with the reason when its terminal status arrives while the stretch is still reflecting', async () => {
+  it('asks the same chat once to call propose_lessons when it finished cleanly without the call, starting no new run', async () => {
     const fixture = build({ reflectionSegment: reflecting(1) });
     fixture.service.onModuleInit();
 
+    fixture.statuses.next({ runId: 'refl-9', status: 'completed' });
+
+    await vi.waitFor(() =>
+      expect(fixture.chats.sendMessage).toHaveBeenCalledWith(
+        'refl-9',
+        LESSONS_FILE_NUDGE,
+      ),
+    );
+    expect(fixture.segments.updateById).not.toHaveBeenCalled();
+    expect(fixture.chats.createChat).not.toHaveBeenCalled();
+    fixture.service.onModuleDestroy();
+  });
+
+  it('puts its stretch back in the queue with the reason when it ends without filing a second time', async () => {
+    const fixture = build({ reflectionSegment: reflecting(1) });
+    fixture.service.onModuleInit();
+
+    fixture.statuses.next({ runId: 'refl-9', status: 'completed' });
+    await vi.waitFor(() =>
+      expect(fixture.chats.sendMessage).toHaveBeenCalledTimes(1),
+    );
     fixture.statuses.next({ runId: 'refl-9', status: 'completed' });
 
     await vi.waitFor(() =>
@@ -882,6 +906,54 @@ describe('LessonReflectionService: a reflection that ends without filing', () =>
         fixture.em,
       ),
     );
+    expect(fixture.chats.sendMessage).toHaveBeenCalledTimes(1);
+    fixture.service.onModuleDestroy();
+  });
+
+  it('retries with no nudge a reflection that failed or was stopped', async () => {
+    const fixture = build({
+      reflectionSegment: reflecting(1),
+      source: { status: 'failed' },
+    });
+    fixture.service.onModuleInit();
+
+    fixture.statuses.next({ runId: 'refl-9', status: 'failed' });
+
+    await vi.waitFor(() =>
+      expect(fixture.segments.updateById).toHaveBeenCalledWith(
+        'seg-9',
+        expect.objectContaining({ status: 'queued' }),
+        fixture.em,
+      ),
+    );
+    expect(fixture.chats.sendMessage).not.toHaveBeenCalled();
+    fixture.service.onModuleDestroy();
+  });
+
+  it('retries with no nudge a reflection that completed over an error row, such as a signed-out CLI', async () => {
+    const fixture = build({
+      reflectionSegment: reflecting(1),
+      runItems: [
+        {
+          seq: 1,
+          kind: 'error',
+          role: null,
+          payload: JSON.stringify({ message: 'not signed in' }),
+        },
+      ],
+    });
+    fixture.service.onModuleInit();
+
+    fixture.statuses.next({ runId: 'refl-9', status: 'completed' });
+
+    await vi.waitFor(() =>
+      expect(fixture.segments.updateById).toHaveBeenCalledWith(
+        'seg-9',
+        expect.objectContaining({ failReason: 'not signed in' }),
+        fixture.em,
+      ),
+    );
+    expect(fixture.chats.sendMessage).not.toHaveBeenCalled();
     fixture.service.onModuleDestroy();
   });
 
@@ -912,10 +984,13 @@ describe('LessonReflectionService: a reflection that ends without filing', () =>
   });
 
   it('leaves the stretch failed once its attempts are spent', async () => {
-    const fixture = build({ reflectionSegment: reflecting(3) });
+    const fixture = build({
+      reflectionSegment: reflecting(3),
+      source: { status: 'failed' },
+    });
     fixture.service.onModuleInit();
 
-    fixture.statuses.next({ runId: 'refl-9', status: 'completed' });
+    fixture.statuses.next({ runId: 'refl-9', status: 'failed' });
 
     await vi.waitFor(() =>
       expect(fixture.segments.updateById).toHaveBeenCalledWith(
@@ -928,14 +1003,17 @@ describe('LessonReflectionService: a reflection that ends without filing', () =>
   });
 
   it('announces the stretch on its thread', async () => {
-    const fixture = build({ reflectionSegment: reflecting(1) });
+    const fixture = build({
+      reflectionSegment: reflecting(1),
+      source: { status: 'cancelled' },
+    });
     const announced: (string | null)[] = [];
     fixture.events
       .allChanges()
       .subscribe((event) => announced.push(event.runId));
     fixture.service.onModuleInit();
 
-    fixture.statuses.next({ runId: 'refl-9', status: 'completed' });
+    fixture.statuses.next({ runId: 'refl-9', status: 'cancelled' });
 
     await vi.waitFor(() => expect(announced).toEqual(['src']));
     fixture.service.onModuleDestroy();

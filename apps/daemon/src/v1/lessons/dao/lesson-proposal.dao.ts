@@ -20,12 +20,15 @@ export class LessonProposalDao extends BaseDao<LessonProposal> {
 
   /** Proposals newest first, narrowed by status and source thread. */
   list(
-    filter: { status?: LessonProposalStatus; sourceRunId?: string },
+    filter: {
+      statuses?: readonly LessonProposalStatus[];
+      sourceRunId?: string;
+    },
     txEm?: EntityManager,
   ): Promise<LessonProposal[]> {
     const where: FilterQuery<LessonProposal> = {};
-    if (filter.status !== undefined) {
-      where.status = filter.status;
+    if (filter.statuses !== undefined) {
+      where.status = { $in: [...filter.statuses] };
     }
     if (filter.sourceRunId !== undefined) {
       where.sourceRunId = filter.sourceRunId;

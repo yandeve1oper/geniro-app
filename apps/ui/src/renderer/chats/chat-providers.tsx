@@ -26,6 +26,7 @@ import {
   LessonsAgentsApiContext,
   LessonsApiContext,
   LessonsJumpContext,
+  LessonsKnowledgeApiContext,
 } from './lessons-api-context';
 import { RunActivityContext, RunSettledContext } from './live-row';
 import {
@@ -139,6 +140,7 @@ export function ChatProviders({
   loadMemory = null,
   loadKnowledge = null,
   lessonsApi = null,
+  lessonsKnowledgeApi = null,
   lessonsAgentsApi = null,
   lessonsJump = null,
   children,
@@ -231,6 +233,8 @@ export function ChatProviders({
   loadKnowledge?: KnowledgeLoader | null;
   /** A lessons card's Save and Reject — see `LessonsApiContext`. */
   lessonsApi?: DaemonApis['lessons'] | null;
+  /** A lesson's target picker reads the project's documents — see `LessonsKnowledgeApiContext`. */
+  lessonsKnowledgeApi?: DaemonApis['knowledge'] | null;
   /** A lessons card's model names — see `LessonsAgentsApiContext`. */
   lessonsAgentsApi?: DaemonApis['agents'] | null;
   /** A lesson's "Show in thread" — see `LessonsJumpContext`. */
@@ -267,13 +271,16 @@ export function ChatProviders({
                                           value={loadKnowledge}>
                                           <LessonsApiContext.Provider
                                             value={lessonsApi}>
-                                            <LessonsAgentsApiContext.Provider
-                                              value={lessonsAgentsApi}>
-                                              <LessonsJumpContext.Provider
-                                                value={lessonsJump}>
-                                                {children}
-                                              </LessonsJumpContext.Provider>
-                                            </LessonsAgentsApiContext.Provider>
+                                            <LessonsKnowledgeApiContext.Provider
+                                              value={lessonsKnowledgeApi}>
+                                              <LessonsAgentsApiContext.Provider
+                                                value={lessonsAgentsApi}>
+                                                <LessonsJumpContext.Provider
+                                                  value={lessonsJump}>
+                                                  {children}
+                                                </LessonsJumpContext.Provider>
+                                              </LessonsAgentsApiContext.Provider>
+                                            </LessonsKnowledgeApiContext.Provider>
                                           </LessonsApiContext.Provider>
                                           {chatActions === null ? null : (
                                             <CommandConfirmDialog

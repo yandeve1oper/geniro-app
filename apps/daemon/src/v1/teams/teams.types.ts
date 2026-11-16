@@ -1077,8 +1077,9 @@ export type PendingTeamProposal = z.infer<typeof PendingTeamProposalSchema>;
 /**
  * Who wrote a change to a library team, as its change log names it: an
  * analysis's applied recommendations, an approved card in the team's
- * builder chat or in another chat, a recorded version written back, or the
- * conversion of a node graph into a team (the first version run after it).
+ * builder chat or in another chat, a recorded version written back, the
+ * conversion of a node graph into a team (the first version run after it), or
+ * a lesson the user saved into a member's instructions.
  */
 export const TEAM_CHANGE_SOURCES = [
   'analysis',
@@ -1086,6 +1087,7 @@ export const TEAM_CHANGE_SOURCES = [
   'chat',
   'restore',
   'migration',
+  'lesson',
 ] as const;
 export type TeamChangeSource = (typeof TEAM_CHANGE_SOURCES)[number];
 

@@ -4,8 +4,11 @@ import type { AnalysisTurn } from '../../agents/chat.types';
 import type { ItemDao } from '../../agents/dao/item.dao';
 import type { RunDao } from '../../agents/dao/run.dao';
 import { clearSecrets, registerSecret } from '../../diagnostics/utils/redact';
+import type { KnowledgeService } from '../../knowledge/services/knowledge.service';
 import type { MemoryService } from '../../memory/services/memory.service';
 import type { ProjectScopeService } from '../../projects/services/project-scope.service';
+import { member, teamOf } from '../../teams/__tests__/team-builders';
+import { teamSnapshotOf } from '../../teams/utils/team-snapshot';
 import type { LessonProposalDao } from '../dao/lesson-proposal.dao';
 import type { LessonSegmentDao } from '../dao/lesson-segment.dao';
 import { LessonProposal } from '../entity/lesson-proposal.entity';
@@ -41,6 +44,10 @@ type SavedOutcome =
 const SEGMENT_FROM = 4;
 const SEGMENT_TO = 9;
 const LEASE = new Date('2026-11-15T10:00:00.000Z');
+const TEAM = teamOf([member('builder'), member('reviewer')], {
+  name: 'Reviewers',
+});
+const TEAM_SNAPSHOT = teamSnapshotOf(TEAM);
 
 const ITEMS: Item[] = [
   message(4, 'the earlier stretch says use pnpm not npm too'),
@@ -92,8 +99,13 @@ function lesson(overrides: Partial<ProposedLesson> = {}): ProposedLesson {
 function build(
   options: {
     turn?: AnalysisTurn;
-    source?: { reflectedThroughSeq: number | null; teamId?: string } | null;
+    source?: {
+      reflectedThroughSeq: number | null;
+      teamId?: string;
+      teamSnapshot?: string | null;
+    } | null;
     project?: { id: string } | null;
+    documents?: { id: string }[];
     visible?: { handle: string; title: string }[];
     items?: Item[];
     closedBy?: 'manual' | 'archive' | 'delete';
@@ -107,6 +119,7 @@ function build(
           id: 'src',
           title: 'Migrate the cache',
           teamId: null,
+          teamSnapshot: null,
           reflectedThroughSeq: SEGMENT_FROM,
         }
       : options.source === null
@@ -115,6 +128,7 @@ function build(
             id: 'src',
             title: 'Migrate the cache',
             teamId: null,
+            teamSnapshot: null,
             ...options.source,
           };
   const reflection = {
@@ -175,6 +189,11 @@ function build(
   const projectScope = {
     projectOfRun: vi.fn(() => Promise.resolve(options.project ?? null)),
   };
+  const knowledge = {
+    list: vi.fn(() =>
+      Promise.resolve({ documents: options.documents ?? [{ id: 'kd-1' }] }),
+    ),
+  };
   const segments = {
     ofReflection: vi.fn(() => Promise.resolve(segment)),
     updateById: vi.fn((_id: string, patch: Partial<typeof segment>) => {
@@ -205,6 +224,7 @@ function build(
     rows as unknown as LessonRowWriter,
     config as unknown as LessonsConfigService,
     events as unknown as LessonsEventBus,
+    knowledge as unknown as KnowledgeService,
   );
   return {
     service,
@@ -375,6 +395,17 @@ describe('LessonFilingService.file', () => {
     expect(result).toEqual({ status: 'recorded', count: 1 });
   });
 
+  it('refuses a lesson whose rule hides invisible characters', async () => {
+    const fixture = build();
+
+    const result = await fixture.service.file(fixture.turn, [
+      lesson({ rule: 'Run the tests‮ before you push.' }),
+    ]);
+
+    expect(codesOf(result)).toEqual(['HIDDEN_TEXT']);
+    expectNothingWritten(fixture);
+  });
+
   it('refuses a lesson that carries a secret the daemon knows', async () => {
     registerSecret('ghp_exampleToken0123456789', 'github token');
     const fixture = build();
@@ -538,7 +569,7 @@ describe('LessonFilingService.file', () => {
             dedup: second.dedup,
           },
         ],
-        places: { project: false, team: false },
+        places: { project: false, team: false, projectId: null, members: [] },
         check: null,
       },
     });
@@ -555,7 +586,12 @@ describe('LessonFilingService.file', () => {
     expect(fixture.rows.write).toHaveBeenCalledWith('src', {
       kind: 'lessons',
       payload: expect.objectContaining({
-        places: { project: true, team: true },
+        places: {
+          project: true,
+          team: true,
+          projectId: 'proj-1',
+          members: [],
+        },
       }),
     });
     expect(persistedOf(fixture)).toEqual([
@@ -639,6 +675,7 @@ describe('LessonFilingService.file', () => {
         status: 'saved',
         by: 'auto',
         memoryHandle: 'm-new',
+        resultRef: 'm-new',
       }),
     });
     expect(fixture.proposals.updateById).toHaveBeenCalledWith(
@@ -741,6 +778,157 @@ describe('LessonFilingService.file', () => {
     expect(starter).not.toHaveBeenCalled();
     expect(fixture.memory.fileLesson).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    ['project instructions', { kind: 'project_instructions' }],
+    ['a new knowledge document', { kind: 'knowledge', handle: null }],
+    ['a team member', { kind: 'member_instructions', memberId: 'builder' }],
+  ])(
+    'records a lesson for %s as proposed, files no memory entry, and puts it on the card',
+    async (_, target) => {
+      const fixture = build({
+        project: { id: 'proj-1' },
+        source: {
+          reflectedThroughSeq: SEGMENT_FROM,
+          teamId: 'reviewers',
+          teamSnapshot: TEAM_SNAPSHOT,
+        },
+      });
+
+      const result = await fixture.service.file(fixture.turn, [
+        lesson({ target: target as LessonTarget }),
+      ]);
+
+      expect(result).toEqual({ status: 'recorded', count: 1 });
+      expect(persistedOf(fixture).map((row) => row.status)).toEqual([
+        'proposed',
+      ]);
+      expect(fixture.memory.fileLesson).not.toHaveBeenCalled();
+      expect(fixture.rows.write).toHaveBeenCalledTimes(1);
+      expect(fixture.rows.write).toHaveBeenCalledWith('src', {
+        kind: 'lessons',
+        payload: expect.objectContaining({
+          proposals: [expect.objectContaining({ target })],
+        }),
+      });
+    },
+  );
+
+  it('stores the places the thread had on the proposal: its project and its team run members', async () => {
+    const fixture = build({
+      project: { id: 'proj-1' },
+      source: {
+        reflectedThroughSeq: SEGMENT_FROM,
+        teamId: 'reviewers',
+        teamSnapshot: TEAM_SNAPSHOT,
+      },
+    });
+
+    await fixture.service.file(fixture.turn, [
+      lesson({ target: { kind: 'project_instructions' } }),
+    ]);
+
+    expect(JSON.parse(persistedOf(fixture)[0]!.places!)).toEqual({
+      project: true,
+      team: true,
+      projectId: 'proj-1',
+      members: [
+        { id: 'builder', name: 'builder' },
+        { id: 'reviewer', name: 'reviewer' },
+      ],
+    });
+  });
+
+  it.each([
+    [
+      'project instructions on a thread with no project',
+      { kind: 'project_instructions' },
+      {
+        source: {
+          reflectedThroughSeq: SEGMENT_FROM,
+          teamId: 'reviewers',
+          teamSnapshot: TEAM_SNAPSHOT,
+        },
+      },
+      'NO_PLACE_FOR_TARGET',
+    ],
+    [
+      'a knowledge document on a thread with no project',
+      { kind: 'knowledge', handle: null },
+      { source: { reflectedThroughSeq: SEGMENT_FROM } },
+      'NO_PLACE_FOR_TARGET',
+    ],
+    [
+      'member instructions on a thread that is not a team run',
+      { kind: 'member_instructions', memberId: 'builder' },
+      { project: { id: 'proj-1' } },
+      'NO_PLACE_FOR_TARGET',
+    ],
+    [
+      'member instructions for a member the team run does not have',
+      { kind: 'member_instructions', memberId: 'ghost' },
+      {
+        project: { id: 'proj-1' },
+        source: {
+          reflectedThroughSeq: SEGMENT_FROM,
+          teamId: 'reviewers',
+          teamSnapshot: TEAM_SNAPSHOT,
+        },
+      },
+      'UNKNOWN_MEMBER',
+    ],
+    [
+      'a knowledge document the project does not have',
+      { kind: 'knowledge', handle: 'k-missing' },
+      { project: { id: 'proj-1' }, documents: [] },
+      'UNKNOWN_DOCUMENT',
+    ],
+  ])('refuses %s, writing nothing', async (_, target, options, code) => {
+    const fixture = build(options);
+
+    const result = await fixture.service.file(fixture.turn, [
+      lesson({ target: target as LessonTarget }),
+    ]);
+
+    expect(codesOf(result)).toEqual([code]);
+    expectNothingWritten(fixture);
+  });
+
+  it.each(['refines', 'broken_again'] as const)(
+    'keeps a memory lesson that %s an entry as proposed, filing no entry for it, while a new lesson beside it is filed',
+    async (verdict) => {
+      const fixture = build({
+        visible: [{ handle: 'm3', title: 'Run pnpm test before a commit' }],
+      });
+
+      const result = await fixture.service.file(fixture.turn, [
+        lesson({
+          target: { kind: 'memory', scope: 'global', type: 'feedback' },
+          dedup: { verdict, handle: 'm3' },
+        }),
+        lesson({
+          title: 'Keep cache keys free of run ids',
+          rule: 'Derive cache keys from content only, never from a run id.',
+          evidence: { seq: 9, quote: 'cache key must not include the run id' },
+          target: { kind: 'memory', scope: 'global', type: 'feedback' },
+          dedup: { verdict: 'new', handle: null },
+        }),
+      ]);
+
+      expect(result).toEqual({ status: 'recorded', count: 2 });
+      expect(persistedOf(fixture).map((row) => row.status)).toEqual([
+        'proposed',
+        'saved',
+      ]);
+      expect(fixture.memory.fileLesson).toHaveBeenCalledTimes(1);
+      expect(fixture.memory.fileLesson).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ title: 'Keep cache keys free of run ids' }),
+        expect.anything(),
+        expect.anything(),
+      );
+    },
+  );
 
   it('refuses a second filing of the same reflection, writing nothing more', async () => {
     const fixture = build();

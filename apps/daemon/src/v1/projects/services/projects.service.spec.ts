@@ -424,6 +424,32 @@ describe('ProjectsService (in-memory sqlite)', () => {
       });
     });
 
+    it('logs a saved lesson on its own row, not merged into the user edits around it', async () => {
+      const project = await service.create({ name: 'Board', folder });
+      await service.update(project.id, { ...asBlock('Use pnpm.') });
+      await service.update(
+        project.id,
+        { ...asBlock('Use pnpm. Run full-check.') },
+        {
+          source: 'lesson',
+          recommendationIds: [],
+          chatRunId: 'lesson-run',
+          cardSeq: null,
+        },
+      );
+      await service.update(project.id, {
+        ...asBlock('Use pnpm. Run full-check first.'),
+      });
+
+      const rows = await changeDao.recentFor(project.id, 20);
+      expect(rows.map((row) => [row.source, row.next])).toEqual([
+        ['user', 'Use pnpm. Run full-check first.'],
+        ['lesson', 'Use pnpm. Run full-check.'],
+        ['user', 'Use pnpm.'],
+      ]);
+      expect(rows[1]).toMatchObject({ chatRunId: 'lesson-run' });
+    });
+
     it('marks a projects_changed that touched only the texts', async () => {
       const project = await service.create({ name: 'Board', folder });
       const events: { projectId: string; textsOnly?: boolean }[] = [];

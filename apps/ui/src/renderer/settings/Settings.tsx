@@ -1246,6 +1246,7 @@ export function Settings({
               capabilities={capabilities}
               capabilitiesLoading={capabilitiesLoading}
               lessonsApi={apis?.lessons ?? null}
+              knowledgeApi={apis?.knowledge ?? null}
               lessonsClient={client}
               cliDetections={clis}
             />

@@ -98,7 +98,11 @@ function proposalOf(
     signalKind: 'user_correction',
     evidenceSeq: 5,
     evidenceQuote: `quote of ${id}`,
-    target: JSON.stringify({ scope: 'project', type: 'feedback' }),
+    target: JSON.stringify({
+      kind: 'memory',
+      scope: 'project',
+      type: 'feedback',
+    }),
     dedup: 'new',
     status: 'checking',
     checkRunId: null,
@@ -308,6 +312,7 @@ describe('LessonCheckService.start', () => {
       expect(brief).toContain(`quote of ${id}`);
       expect(brief).toContain(`Rule ${id}`);
     }
+    expect(brief).toContain('goes to: memory, scope project');
   });
 
   it('counts a chat that cannot be created as a failed attempt and tries again', async () => {

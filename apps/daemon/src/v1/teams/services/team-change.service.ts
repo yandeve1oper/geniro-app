@@ -71,6 +71,17 @@ export type TeamChangeAuthority =
        * one it now holds, whatever its hash or mtime.
        */
       acceptsAnyVersion: boolean;
+    }
+  | {
+      kind: 'lesson';
+      /** The lesson the user saved. */
+      proposalId: string;
+      /** The thread the lesson came from, logged as the change's chat. */
+      sourceRunId: string;
+      /** The version the rule was appended to. */
+      baseHash: string;
+      /** The change log's line for it. */
+      summary: string;
     };
 
 /** An analysis's write of a project's overlay through `save_team_change` (O- items). */
@@ -402,7 +413,9 @@ export class TeamChangeService {
     const reread =
       authority.kind === 'apply'
         ? 'read view=team again'
-        : 'read the team again with read_teams';
+        : authority.kind === 'lesson'
+          ? 'save the lesson again'
+          : 'read the team again with read_teams';
     const file = await this.readFile(change.slug);
     if (file === null) {
       return refuse(
@@ -468,9 +481,10 @@ export class TeamChangeService {
       return { saved: false, diff, message: 'nothing to change', ...version };
     }
     // A builder chat backs its file up when its agent decides
-    // (`backup_team`, through `backUp`); an analysis's save always does.
+    // (`backup_team`, through `backUp`); an analysis's save and a saved
+    // lesson always do.
     const backup =
-      authority.kind === 'apply'
+      authority.kind === 'apply' || authority.kind === 'lesson'
         ? await backUpTeam(
             this.store.locate(change.slug).directory,
             change.slug,
@@ -506,6 +520,17 @@ export class TeamChangeService {
     if (authority.kind === 'apply') {
       await this.logApplied(change.slug, authority, current.team, next, backup);
     }
+    if (authority.kind === 'lesson') {
+      await this.changeLog.record({
+        slug: change.slug,
+        source: 'lesson',
+        before: current.team,
+        after: next,
+        summary: authority.summary,
+        chatRunId: authority.sourceRunId,
+        backup,
+      });
+    }
     return {
       saved: true,
       ...(backup === null ? {} : { backup }),
@@ -514,6 +539,62 @@ export class TeamChangeService {
       hash: saved.hash,
       diff,
     };
+  }
+
+  /**
+   * A lesson the user saved into one member's private instructions: `line`
+   * appended at their end, against the version read here, backed up and
+   * logged as the lesson's change.
+   */
+  async appendMemberLine(input: {
+    slug: string;
+    memberId: string;
+    line: string;
+    proposalId: string;
+    sourceRunId: string;
+    summary: string;
+  }): Promise<Answer> {
+    const file = await this.readFile(input.slug);
+    if (file === null) {
+      return refuse(
+        'TEAM_GONE',
+        `the team '${input.slug}' is no longer in the library`,
+      );
+    }
+    let team: Team;
+    try {
+      team = parseTeamYaml(file.source);
+    } catch {
+      return refuse(
+        'TEAM_UNREADABLE',
+        'the team file cannot be loaded — open it in the team editor first',
+      );
+    }
+    const member = team.members.find(({ id }) => id === input.memberId);
+    if (member === undefined) {
+      return refuse(
+        'MEMBER_GONE',
+        `the team '${input.slug}' no longer has the member '${input.memberId}'`,
+      );
+    }
+    const before = (member.instructions ?? '').trimEnd();
+    return this.save({
+      slug: input.slug,
+      dryRun: false,
+      edits: [
+        {
+          path: `members/${input.memberId}/instructions`,
+          value: before === '' ? input.line : `${before}\n${input.line}`,
+        },
+      ],
+      authority: {
+        kind: 'lesson',
+        proposalId: input.proposalId,
+        sourceRunId: input.sourceRunId,
+        baseHash: file.hash,
+        summary: input.summary,
+      },
+    });
   }
 
   /**
@@ -663,7 +744,7 @@ function changedSinceRead(
   authority: TeamChangeAuthority,
   current: CurrentTeam,
 ): boolean {
-  if (authority.kind === 'apply') {
+  if (authority.kind === 'apply' || authority.kind === 'lesson') {
     return current.hash !== authority.baseHash;
   }
   if (authority.acceptsAnyVersion) {

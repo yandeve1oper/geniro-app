@@ -23,6 +23,35 @@ describe('readProposeLessons', () => {
     });
   });
 
+  it.each([
+    ['a project instructions', { kind: 'project_instructions' }],
+    [
+      'a member instructions',
+      { kind: 'member_instructions', memberId: 'builder' },
+    ],
+    ['a new knowledge document', { kind: 'knowledge', handle: null }],
+    ['an appended knowledge document', { kind: 'knowledge', handle: 'k-1' }],
+  ])('reads a lesson whose target is %s', (_, target) => {
+    expect(readProposeLessons({ lessons: [{ ...LESSON, target }] })).toEqual({
+      ok: true,
+      query: { lessons: [{ ...LESSON, target }] },
+    });
+  });
+
+  it.each([
+    ['an unknown target kind', { kind: 'global_memory' }],
+    ['a member target without a member', { kind: 'member_instructions' }],
+    ['a knowledge target without a handle field', { kind: 'knowledge' }],
+    [
+      'a field a non-memory target does not take',
+      { kind: 'project_instructions', scope: 'project' },
+    ],
+  ])('refuses a lesson with %s', (_, target) => {
+    expect(readProposeLessons({ lessons: [{ ...LESSON, target }] }).ok).toBe(
+      false,
+    );
+  });
+
   it('refuses an unknown field at the top level and inside a lesson', () => {
     expect(readProposeLessons({ lessons: [], run_id: 'run-a' }).ok).toBe(false);
     expect(
@@ -61,10 +90,10 @@ describe('proposeLessonsResultText', () => {
   it('counts the lessons recorded, singular and plural', () => {
     expect(
       proposeLessonsResultText({ status: 'recorded', count: 1 }).text,
-    ).toMatch(/^1 lesson recorded; geniro files them /);
+    ).toMatch(/^1 lesson recorded; geniro files the new memory lessons /);
     expect(
       proposeLessonsResultText({ status: 'recorded', count: 2 }).text,
-    ).toMatch(/^2 lessons recorded; geniro files them /);
+    ).toMatch(/^2 lessons recorded; geniro files the new memory lessons /);
   });
 
   it('tells the reflection to reply in its own words when the thread is unreachable', () => {

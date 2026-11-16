@@ -78,7 +78,6 @@ export const LessonProposalStatusSchema = z
 export const LESSON_MEMORY_SCOPES = ['project', 'team', 'global'] as const;
 export type LessonMemoryScope = (typeof LESSON_MEMORY_SCOPES)[number];
 
-/** Where a saved lesson is written. Only a memory entry is saved today. */
 export const LessonMemoryTargetSchema = z
   .object({
     kind: z.literal('memory'),
@@ -88,8 +87,74 @@ export const LessonMemoryTargetSchema = z
   .meta({ id: 'LessonMemoryTarget' });
 export type LessonMemoryTarget = z.infer<typeof LessonMemoryTargetSchema>;
 
-export const LessonTargetSchema = LessonMemoryTargetSchema;
-export type LessonTarget = LessonMemoryTarget;
+export const LessonProjectInstructionsTargetSchema = z
+  .object({ kind: z.literal('project_instructions') })
+  .meta({ id: 'LessonProjectInstructionsTarget' });
+
+export const LessonMemberInstructionsTargetSchema = z
+  .object({
+    kind: z.literal('member_instructions'),
+    memberId: z.string().min(1).max(200),
+  })
+  .meta({ id: 'LessonMemberInstructionsTarget' });
+
+export const LessonKnowledgeTargetSchema = z
+  .object({
+    kind: z.literal('knowledge'),
+    handle: z
+      .string()
+      .min(1)
+      .max(200)
+      .nullable()
+      .describe(
+        'The project document the lesson is appended to; null files a new one',
+      ),
+  })
+  .meta({ id: 'LessonKnowledgeTarget' });
+
+/**
+ * Where a saved lesson is written. Only a memory target is ever written
+ * without the user: instructions and knowledge are shared, always-loaded
+ * texts, so those lessons wait for Save.
+ */
+export const LessonTargetSchema = z
+  .discriminatedUnion('kind', [
+    LessonMemoryTargetSchema,
+    LessonProjectInstructionsTargetSchema,
+    LessonMemberInstructionsTargetSchema,
+    LessonKnowledgeTargetSchema,
+  ])
+  .meta({ id: 'LessonTarget' });
+export type LessonTarget = z.infer<typeof LessonTargetSchema>;
+
+/** One member of the source team run, for the card's member picker. */
+export const LessonPlaceMemberSchema = z
+  .object({ id: z.string(), name: z.string() })
+  .meta({ id: 'LessonPlaceMember' });
+
+/**
+ * What the source thread had a place for when the lesson was filed: its
+ * project (memory, instructions, knowledge) and its team's members.
+ */
+export const LessonPlacesSchema = z
+  .object({
+    project: z.boolean(),
+    team: z.boolean(),
+    projectId: z.string().nullable(),
+    members: z.array(LessonPlaceMemberSchema),
+  })
+  .meta({ id: 'LessonPlaces' });
+export type LessonPlaces = z.infer<typeof LessonPlacesSchema>;
+
+/**
+ * Where "Move up" puts a rule broken again: the project's instructions when
+ * the thread has a project, else the memory index (the entry approved).
+ */
+export const LESSON_MOVE_UP_PLACES = [
+  'project_instructions',
+  'memory_index',
+] as const;
+export type LessonMoveUpPlace = (typeof LESSON_MOVE_UP_PLACES)[number];
 
 /** How a proposal relates to what agents are already told. */
 export const LessonDedupSchema = z
@@ -138,7 +203,7 @@ export const LessonsPayloadSchema = z.object({
   agentKind: AgentKindSchema,
   model: z.string().nullable(),
   proposals: z.array(LessonProposalCardSchema),
-  places: z.object({ project: z.boolean(), team: z.boolean() }),
+  places: LessonPlacesSchema,
   check: z
     .object({
       runId: z.string(),
@@ -172,6 +237,12 @@ export const LessonOutcomePayloadSchema = z.object({
   rule: z.string(),
   target: LessonTargetSchema,
   memoryHandle: z.string().nullable(),
+  resultRef: z
+    .string()
+    .nullable()
+    .describe(
+      'Where a save outside memory landed: the knowledge document handle, the team slug or the project id',
+    ),
   reason: z.string().nullable(),
 });
 export type LessonOutcomePayload = z.infer<typeof LessonOutcomePayloadSchema>;
@@ -442,6 +513,17 @@ export const LessonProposalWireSchema = z
     checkVerdict: z.enum(['keep', 'rewrite', 'drop']).nullable(),
     checkReason: z.string().nullable(),
     memoryHandle: z.string().nullable(),
+    resultRef: z.string().nullable(),
+    places: LessonPlacesSchema,
+    moveUp: z
+      .enum(LESSON_MOVE_UP_PLACES)
+      .nullable()
+      .describe(
+        'Where "Move up" would put a rule that was broken again; null when it does not apply',
+      ),
+    sourceExists: z
+      .boolean()
+      .describe('False once the thread the lesson came from was deleted'),
     createdAt: z.string(),
     decidedAt: z.string().nullable(),
   })
@@ -453,12 +535,24 @@ export const LessonProposalListSchema = z.object({
 });
 
 export const LessonProposalListQuerySchema = z.object({
-  status: LessonProposalStatusSchema.optional(),
+  status: z
+    .preprocess(
+      (value) => (Array.isArray(value) ? value.join(',') : value),
+      z.string().max(200).optional(),
+    )
+    .describe('Comma-separated statuses; omitted = every status'),
   sourceRunId: z.string().min(1).max(200).optional(),
 });
 export type LessonProposalListQuery = z.infer<
   typeof LessonProposalListQuerySchema
 >;
+
+/** "Update rule" on a `refines` lesson: the named entry takes the lesson's text, as the user's edit. */
+export const UpdateLessonRuleSchema = z.object({
+  title: z.string().trim().min(1).max(LESSON_TITLE_MAX_CHARS).optional(),
+  rule: z.string().trim().min(1).max(LESSON_RULE_MAX_CHARS).optional(),
+});
+export type UpdateLessonRule = z.infer<typeof UpdateLessonRuleSchema>;
 
 /** The user's Save: the text as edited on the card, and where it goes. */
 export const SaveLessonSchema = z.object({
@@ -516,18 +610,64 @@ export const ProposeLessonsCallSchema = z.object({
             })
             .strict(),
           target: z
-            .object({
-              kind: z.literal('memory'),
-              scope: z
-                .enum(LESSON_MEMORY_SCOPES)
-                .describe(
-                  'global: how the user wants to work anywhere; project: this project; team: one role of this team',
-                ),
-              type: z
-                .enum(MEMORY_TYPES)
-                .describe('feedback for a way of working, project for a fact'),
-            })
-            .strict(),
+            .discriminatedUnion('kind', [
+              z
+                .object({
+                  kind: z.literal('memory'),
+                  scope: z
+                    .enum(LESSON_MEMORY_SCOPES)
+                    .describe(
+                      'global: how the user wants to work anywhere; project: this project; team: one role of this team',
+                    ),
+                  type: z
+                    .enum(MEMORY_TYPES)
+                    .describe(
+                      'feedback for a way of working, project for a fact',
+                    ),
+                })
+                .strict(),
+              z
+                .object({
+                  kind: z
+                    .literal('project_instructions')
+                    .describe(
+                      "A rule that must hold in every run of this thread's project",
+                    ),
+                })
+                .strict(),
+              z
+                .object({
+                  kind: z
+                    .literal('member_instructions')
+                    .describe(
+                      'How one member of this team run should work, appended to its instructions',
+                    ),
+                  memberId: z
+                    .string()
+                    .min(1)
+                    .describe('The member id as your brief lists it'),
+                })
+                .strict(),
+              z
+                .object({
+                  kind: z
+                    .literal('knowledge')
+                    .describe(
+                      "A long procedure, filed in the project's knowledge store",
+                    ),
+                  handle: z
+                    .string()
+                    .min(1)
+                    .nullable()
+                    .describe(
+                      'The handle of an existing document of this project to append to; null for a new document',
+                    ),
+                })
+                .strict(),
+            ])
+            .describe(
+              'Where the lesson goes. Only memory is written at once; the others wait for the user',
+            ),
           dedup: z
             .object({
               verdict: z

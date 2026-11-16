@@ -9897,6 +9897,7 @@ export function Chats({
         loadMemory={loadMemory}
         loadKnowledge={loadKnowledge}
         lessonsApi={apis.lessons}
+        lessonsKnowledgeApi={apis.knowledge}
         lessonsAgentsApi={agentsApi}
         lessonsJump={jumpToSeq}>
         <AttachmentLoaderContext.Provider value={loadAttachment}>
