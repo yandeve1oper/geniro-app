@@ -7753,6 +7753,7 @@ export class TeamExecutorService
                 callee.name ?? callee.id,
                 sessionMember,
                 attempts[0]!,
+                pool?.preferred ?? null,
               ),
             );
             attemptPrompt = await transcriptPrompt();
@@ -7841,6 +7842,8 @@ export class TeamExecutorService
                 attempt.member,
                 next,
                 outcome,
+                'call',
+                pool?.preferred ?? null,
               ),
             );
             // Back on the member holding the conversation's session: it

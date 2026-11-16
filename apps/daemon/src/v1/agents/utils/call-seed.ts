@@ -50,6 +50,10 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function isMemberNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1;
+}
+
 function positiveNumber(value: unknown): number | null {
   const number = asNumber(value);
   return positive(number) ? number : null;
@@ -171,13 +175,17 @@ export function readCallSeed(rows: readonly CallSeedRow[]): RunCallSeed {
     }
     if (row.kind === 'call_result') {
       const sessionId = readString(fields.sessionId);
-      const member =
-        typeof fields.member === 'number' && Number.isInteger(fields.member)
-          ? {
-              member: fields.member,
-              ...(fields.memberPinned === true ? { memberPinned: true } : {}),
-            }
-          : {};
+      const preferredMember = isMemberNumber(fields.preferredMember)
+        ? fields.preferredMember
+        : fields.memberPinned === true && isMemberNumber(fields.member)
+          ? fields.member
+          : null;
+      const member = isMemberNumber(fields.member)
+        ? {
+            member: fields.member,
+            ...(preferredMember !== null ? { preferredMember } : {}),
+          }
+        : {};
       const cache = cacheFactsOf(fields, row.createdAt);
       const existing = records.get(callId);
       if (existing) {

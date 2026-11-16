@@ -18,6 +18,7 @@ import {
   poolMoveNotice,
   poolSize,
   poolSwitchNotice,
+  preferredAttemptOrder,
 } from './agent-pool';
 
 function pooled(): TeamMember {
@@ -142,6 +143,37 @@ describe('poolAttemptOrder', () => {
   });
 });
 
+describe('preferredAttemptOrder', () => {
+  const ordered = (
+    standings: (PoolStanding | null)[],
+    preferred: number | null,
+  ): number[] =>
+    preferredAttemptOrder(poolAttemptOrder(standings), standings, preferred);
+
+  it('starts on the member asked for while it is unspent, the rest in pool order after it', () => {
+    expect(ordered([null, null, null], 3)).toEqual([3, 1, 2]);
+    expect(ordered([null, 'limit', null, 'limit'], 3)).toEqual([3, 1, 2, 4]);
+  });
+
+  it('keeps the member asked for ahead of every member spent worse, when it is alone in its standing', () => {
+    expect(ordered([null, 'limit'], 1)).toEqual([1, 2]);
+    expect(ordered(['limit', null], 2)).toEqual([2, 1]);
+    expect(ordered([null, 'unavailable', 'limit'], 2)).toEqual([1, 2, 3]);
+    expect(ordered(['limit', 'limit', 'unavailable'], 3)).toEqual([3, 1, 2]);
+  });
+
+  it('keeps a spent member asked for behind the unspent ones, first among those spent like it', () => {
+    expect(ordered(['limit', null], 1)).toEqual([2, 1]);
+    expect(ordered([null, 'limit', null, 'limit'], 4)).toEqual([1, 3, 4, 2]);
+    expect(ordered(['unavailable', 'unavailable', null], 2)).toEqual([3, 2, 1]);
+  });
+
+  it('is the pool order itself when no member, or one the pool lacks, was asked for', () => {
+    expect(ordered(['limit', null, null], null)).toEqual([2, 3, 1]);
+    expect(ordered([null, null], 5)).toEqual([1, 2]);
+  });
+});
+
 describe('conversationStartMember', () => {
   const start = (
     patch: Partial<Parameters<typeof conversationStartMember>[0]> & {
@@ -188,6 +220,51 @@ describe('conversationStartMember', () => {
     expect(
       start({ standings: [null, null], proven: [false, true], held: 2 }),
     ).toBe(2);
+  });
+
+  describe('with a member the caller asked for', () => {
+    const preferring = (
+      preferred: number,
+      patch: Partial<Parameters<typeof conversationStartMember>[0]> & {
+        standings: (PoolStanding | null)[];
+      },
+    ): number =>
+      start({
+        order: preferredAttemptOrder(
+          poolAttemptOrder(patch.standings),
+          patch.standings,
+          preferred,
+        ),
+        preferred,
+        ...patch,
+      });
+
+    it('moves the conversation back to it from an earlier member once it is proven again', () => {
+      expect(preferring(2, { standings: [null, null], held: 1 })).toBe(2);
+      expect(preferring(3, { standings: [null, null, null], held: 1 })).toBe(3);
+    });
+
+    it('keeps it off the member asked for while that member is spent or unproven', () => {
+      expect(preferring(2, { standings: [null, 'limit'], held: 1 })).toBe(1);
+      expect(
+        preferring(2, {
+          standings: [null, null],
+          proven: [true, false],
+          held: 1,
+        }),
+      ).toBe(1);
+      expect(
+        preferring(2, { standings: [null, null], held: 1, holdsWork: true }),
+      ).toBe(1);
+    });
+
+    it('never moves it from the member asked for to an earlier one in pool order', () => {
+      expect(preferring(2, { standings: [null, null], held: 2 })).toBe(2);
+    });
+
+    it('moves it off the member asked for when a limit spent it', () => {
+      expect(preferring(1, { standings: ['limit', null], held: 1 })).toBe(2);
+    });
   });
 });
 
@@ -263,6 +340,19 @@ describe('poolHandOffNotice', () => {
       'Senior Engineer: pool member 1 hit a usage limit (resets 8pm (Asia/Dubai)) — handing the call to member 3 (codex · gpt-5.5).',
     );
   });
+
+  it('says the conversation goes back to the member the caller asked for', () => {
+    const [, second] = poolAttempts(pooled(), [1, 2, 3]);
+    const outcome = failed({ failureClass: 'rate_limited', resetsAt: null });
+    expect(
+      poolHandOffNotice('Researcher', 1, second!, outcome, 'call', 1),
+    ).toBe(
+      'Researcher: pool member 1 hit a usage limit — handing the call to member 2 (claude · separate profile). Later turns move back to member 1, the member asked for, once it is available again.',
+    );
+    expect(
+      poolHandOffNotice('Researcher', 2, second!, outcome, 'call', 1),
+    ).not.toContain('move back');
+  });
 });
 
 describe('poolMoveNotice', () => {
@@ -273,6 +363,16 @@ describe('poolMoveNotice', () => {
     );
     expect(poolMoveNotice('Engineer', 1, third!)).toBe(
       'Engineer: pool member 1 is unavailable — starting the turn on member 3 (codex · gpt-5.5).',
+    );
+  });
+
+  it('calls a move to the member the caller asked for a move back', () => {
+    const [first, , third] = poolAttempts(pooled(), [1, 2, 3]);
+    expect(poolMoveNotice('Engineer', 1, third!, 3)).toContain(
+      'is available again — moving the conversation back to it from member 1',
+    );
+    expect(poolMoveNotice('Engineer', 3, first!, 3)).toBe(
+      'Engineer: pool member 3 is unavailable — starting the turn on member 1 (claude · opus · effort high · separate profile).',
     );
   });
 });

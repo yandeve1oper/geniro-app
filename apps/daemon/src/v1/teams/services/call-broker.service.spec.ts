@@ -5554,23 +5554,54 @@ describe('CallBroker — agent pool', () => {
     ]);
   });
 
-  it('refuses a member that disagrees with the thread’s own', async () => {
+  it('starts a call on the member asked for and still plans the rest of the pool as its fallbacks', async () => {
     const { broker, launches } = harness({ calleesOf: pooledCallees() });
     await broker.callAgent('run-1', 'orch', {
-      title: 'open',
+      title: 'named',
       agent: 'helper',
       message: 'm',
-      member: 2,
-    });
-    const envelope = await broker.callAgent('run-1', 'orch', {
-      title: 'more',
-      agent: 'helper',
-      message: 'm',
-      thread: 'call-1',
       member: 1,
     });
-    expect(errorOf(envelope)).toContain('THREAD_MEMBER_MISMATCH');
-    expect(launches).toHaveLength(1);
+    expect(launches[0]!.callee.agent).toBe('claude');
+    expect(launches[0]!.pool).toMatchObject({ member: 1, preferred: 1 });
+    expect(launches[0]!.pool!.fallbacks.map((f) => f.member)).toEqual([2]);
+  });
+
+  it('starts a call on the member asked for while another member is the one a limit spent', async () => {
+    const { broker, launches } = harness({ calleesOf: pooledCallees() });
+    broker.poolCooldowns.record(
+      poolMemberNode(POOLED, 2)!,
+      { cwd: null, runId: 'run-1', memberId: 'helper' },
+      { status: 'failed', failureClass: 'rate_limited', resetsAt: null },
+      true,
+    );
+    await broker.callAgent('run-1', 'orch', {
+      title: 'named',
+      agent: 'helper',
+      message: 'm',
+      member: 1,
+    });
+    expect(launches[0]!.callee.agent).toBe('claude');
+    expect(launches[0]!.pool!.fallbacks.map((f) => f.member)).toEqual([2]);
+  });
+
+  it('starts a call past the member asked for while a limit has it spent', async () => {
+    const { broker, launches } = harness({ calleesOf: pooledCallees() });
+    broker.poolCooldowns.record(
+      poolMemberNode(POOLED, 1)!,
+      { cwd: null, runId: 'run-1', memberId: 'helper' },
+      { status: 'failed', failureClass: 'rate_limited', resetsAt: null },
+      true,
+    );
+    await broker.callAgent('run-1', 'orch', {
+      title: 'named',
+      agent: 'helper',
+      message: 'm',
+      member: 1,
+    });
+    expect(launches[0]!.callee.agent).toBe('codex');
+    expect(launches[0]!.pool).toMatchObject({ member: 2, preferred: 1 });
+    expect(launches[0]!.pool!.fallbacks.map((f) => f.member)).toEqual([1]);
   });
 
   it('starts a new call past a member the shared record holds spent, and on member 1 again once it answers', async () => {
@@ -5708,24 +5739,55 @@ describe('CallBroker — agent pool', () => {
       });
     });
 
-    it('keeps a thread the caller pinned to member 2 there, across a restart too', async () => {
+    it('takes a member that differs from the thread’s own as its preference, moving there once it is proven', async () => {
+      const { broker, launches } = await threadOnMemberTwo();
+      const named = await broker.callAgent('run-1', 'orch', {
+        title: 'more',
+        agent: 'helper',
+        message: 'more',
+        thread: 'call-1',
+        member: 1,
+      });
+      expect(named.status).toBe('ok');
+      expect(launches[1]!.pool).toMatchObject({
+        member: 2,
+        sessionMember: 2,
+        preferred: 1,
+      });
+
+      reopen(broker, 1);
+      await broker.callAgent('run-1', 'orch', {
+        title: 'again',
+        agent: 'helper',
+        message: 'again',
+        thread: 'call-2',
+      });
+      expect(launches[2]!.callee.agent).toBe('claude');
+      expect(launches[2]!.pool).toMatchObject({
+        member: 1,
+        sessionMember: 2,
+        preferred: 1,
+      });
+    });
+
+    it('goes back to the member asked for once it is available again, across a restart too', async () => {
       const { broker, launches, items, capability } = harness({
         calleesOf: pooledCallees(),
       });
+      spend(broker, 2);
       await broker.callAgent('run-1', 'orch', {
         title: 'open',
         agent: 'helper',
         message: 'm',
         member: 2,
       });
-      await continueThread(broker);
-      expect(launches[1]!.callee.agent).toBe('codex');
+      expect(launches[0]!.callee.agent).toBe('claude');
       expect(
         items.find(
           (item) =>
-            item.kind === 'call_result' && item.payload.callId === 'call-2',
-        )?.payload.memberPinned,
-      ).toBe(true);
+            item.kind === 'call_result' && item.payload.callId === 'call-1',
+        )?.payload,
+      ).toMatchObject({ member: 1, preferredMember: 2 });
 
       broker.registerRun(
         'run-1',
@@ -5739,6 +5801,10 @@ describe('CallBroker — agent pool', () => {
             .map((item) => ({ kind: item.kind, payload: item.payload })),
         ),
       );
+      await continueThread(broker);
+      expect(launches[1]!.callee.agent).toBe('claude');
+
+      reopen(broker, 2);
       await broker.callAgent('run-1', 'orch', {
         title: 'again',
         agent: 'helper',
@@ -5746,6 +5812,51 @@ describe('CallBroker — agent pool', () => {
         thread: 'call-2',
       });
       expect(launches[2]!.callee.agent).toBe('codex');
+      expect(launches[2]!.pool).toMatchObject({
+        member: 2,
+        sessionMember: 1,
+        preferred: 2,
+      });
+    });
+
+    it('reads an older result’s pin as a preference for the member it ran on', async () => {
+      const { broker, launches, items, capability } = harness({
+        calleesOf: pooledCallees(),
+      });
+      await broker.callAgent('run-1', 'orch', {
+        title: 'open',
+        agent: 'helper',
+        message: 'm',
+        member: 2,
+      });
+      expect(launches[0]!.callee.agent).toBe('codex');
+
+      broker.registerRun(
+        'run-1',
+        capability,
+        readCallSeed(
+          items
+            .filter(
+              (item) =>
+                item.kind === 'call_started' || item.kind === 'call_result',
+            )
+            .map((item) => {
+              const { preferredMember: _preferred, ...payload } =
+                item.payload as Record<string, unknown>;
+              return {
+                kind: item.kind,
+                payload:
+                  item.kind === 'call_result'
+                    ? { ...payload, memberPinned: true }
+                    : payload,
+              };
+            }),
+        ),
+      );
+      reopen(broker, 1);
+      await continueThread(broker);
+      expect(launches[1]!.callee.agent).toBe('codex');
+      expect(launches[1]!.pool).toMatchObject({ member: 2, preferred: 2 });
     });
   });
 

@@ -118,19 +118,67 @@ export function poolAttempts(
 }
 
 /**
+ * The groups {@link poolAttemptOrder} tries, best first: unspent members, then
+ * those spent on an ordinary failure, whose cooldown is only a guess, then
+ * those a limit spent — still tried, since a limit may have reset unseen.
+ */
+const STANDING_RANK: readonly (PoolStanding | null)[] = [
+  null,
+  'unavailable',
+  'limit',
+];
+
+/**
  * The order a NEW conversation tries a pool's members in, from each member's
- * standing (index 0 is member 1): unspent members in pool order, then those
- * spent on an ordinary failure, whose cooldown is only a guess, then those a
- * limit spent — still tried, in pool order, since a limit may have reset
- * unseen.
+ * standing (index 0 is member 1): {@link STANDING_RANK}'s groups in turn, each
+ * in pool order.
  */
 export function poolAttemptOrder(
   standings: readonly (PoolStanding | null)[],
 ): number[] {
   const members = standings.map((_, i) => i + 1);
-  const having = (standing: PoolStanding | null): number[] =>
-    members.filter((member) => standings[member - 1] === standing);
-  return [...having(null), ...having('unavailable'), ...having('limit')];
+  return STANDING_RANK.flatMap((standing) =>
+    members.filter((member) => standings[member - 1] === standing),
+  );
+}
+
+/**
+ * {@link poolAttemptOrder}'s order with the member a caller asked for ahead of
+ * every member spent the same or worse: it starts the conversation unless it
+ * is spent, and stays among the members to try either way.
+ */
+export function preferredAttemptOrder(
+  order: readonly number[],
+  standings: readonly (PoolStanding | null)[],
+  preferred: number | null,
+): number[] {
+  if (preferred === null || !order.includes(preferred)) {
+    return [...order];
+  }
+  const rest = order.filter((member) => member !== preferred);
+  const rank = (member: number): number =>
+    STANDING_RANK.indexOf(standings[member - 1] ?? null);
+  const at = rest.findIndex((member) => rank(member) >= rank(preferred));
+  rest.splice(at === -1 ? rest.length : at, 0, preferred);
+  return rest;
+}
+
+/**
+ * Whether `member` comes before `than` in the pool's priority: the member a
+ * caller asked for first, then pool order.
+ */
+function ranksBefore(
+  member: number,
+  than: number,
+  preferred: number | null,
+): boolean {
+  if (member === than) {
+    return false;
+  }
+  if (member === preferred) {
+    return true;
+  }
+  return than !== preferred && member < than;
 }
 
 /**
@@ -143,6 +191,8 @@ export function poolAttemptOrder(
  * cooldown lapsing, which would only meet the same limit again) — never while
  * the member it is on still runs work of its own, which leaving would stop. A
  * member spent on an ordinary failure keeps the conversation it has.
+ * "Earlier" is pool order, with the member a caller asked for (`preferred`,
+ * whose `order` is {@link preferredAttemptOrder}'s) ahead of every other.
  */
 export function conversationStartMember(input: {
   standings: readonly (PoolStanding | null)[];
@@ -151,6 +201,7 @@ export function conversationStartMember(input: {
   held: number;
   hasSession: boolean;
   holdsWork: boolean;
+  preferred?: number | null;
 }): number {
   const { standings, proven, order, held, hasSession, holdsWork } = input;
   const first = order[0]!;
@@ -160,7 +211,9 @@ export function conversationStartMember(input: {
   if (standings[held - 1] === 'limit') {
     return standings[first - 1] === 'limit' ? held : first;
   }
-  return first < held && proven[first - 1] === true && !holdsWork
+  return ranksBefore(first, held, input.preferred ?? null) &&
+    proven[first - 1] === true &&
+    !holdsWork
     ? first
     : held;
 }
@@ -194,7 +247,8 @@ export function fallsThroughPool(
 /**
  * The transcript sentence for a call handed from one member to the next,
  * filed in the call's block so the reader sees why a different account
- * answered.
+ * answered — and, when the caller asked for the member it leaves, that the
+ * conversation goes back to it.
  */
 export function poolHandOffNotice(
   calleeName: string,
@@ -202,6 +256,7 @@ export function poolHandOffNotice(
   to: CalleePoolAttempt,
   outcome: CalleeTurnOutcome,
   scope: 'call' | 'turn' = 'call',
+  preferred: number | null = null,
 ): string {
   const why =
     outcome.failureClass === 'rate_limited'
@@ -209,7 +264,11 @@ export function poolHandOffNotice(
       : outcome.failureClass === 'auth_expired'
         ? 'is signed out'
         : 'failed before doing any work';
-  return `${calleeName}: pool member ${from} ${why} — handing the ${scope} to ${namedMember(to)}.`;
+  const back =
+    from === preferred
+      ? ` Later turns move back to member ${from}, the member asked for, once it is available again.`
+      : '';
+  return `${calleeName}: pool member ${from} ${why} — handing the ${scope} to ${namedMember(to)}.${back}`;
 }
 
 /**
@@ -221,8 +280,9 @@ export function poolMoveNotice(
   nodeName: string,
   from: number,
   to: CalleePoolAttempt,
+  preferred: number | null = null,
 ): string {
-  return to.member < from
+  return ranksBefore(to.member, from, preferred)
     ? `${nodeName}: pool ${namedMember(to)} is available again — moving the conversation back to it from member ${from}.`
     : `${nodeName}: pool member ${from} is unavailable — starting the turn on ${namedMember(to)}.`;
 }

@@ -33,6 +33,7 @@ import {
   poolAttempts,
   poolMemberNode,
   poolSize,
+  preferredAttemptOrder,
 } from '../utils/agent-pool';
 import { calleeFailedEnvelopeError } from '../utils/callee-failure';
 import {
@@ -425,11 +426,11 @@ interface ThreadRecord {
    */
   member: number;
   /**
-   * Whether the caller chose that member by name (`member`), for this call or
-   * the one it continued — a thread it pinned is never moved back to an
-   * earlier member.
+   * The pool member the caller last asked for by name (`member`), in this call
+   * or one it continued, or null: the conversation starts there while it is
+   * available and goes back to it once it is again.
    */
-  memberPinned: boolean;
+  preferredMember: number | null;
   /**
    * The call its owner was answering when it made this one
    * (`ActiveCall.madeIn`) — what a cancel of that call silences once this one
@@ -866,7 +867,7 @@ export class CallBroker implements OnModuleInit {
             ? null
             : threads.get(record.thread)?.conversationId) ?? record.callId,
         member: record.member ?? 1,
-        memberPinned: record.memberPinned === true,
+        preferredMember: record.preferredMember ?? null,
         cache: {
           endedAt: record.endedAt ?? null,
           promptCacheTtlMs: record.promptCacheTtlMs ?? null,
@@ -1250,8 +1251,9 @@ export class CallBroker implements OnModuleInit {
        */
       title: string;
       /**
-       * The callee POOL member (1-based) to run this call on, pinned — no
-       * handing on. Absent = the first available member in pool order.
+       * The callee POOL member (1-based) the caller prefers: the call starts
+       * on it while it is available and still hands on. Absent = the first
+       * available member in pool order.
        */
       member?: number;
       /**
@@ -1419,7 +1421,7 @@ export class CallBroker implements OnModuleInit {
     let resumeSessionId: string | null = null;
     let conversationId: string | null = null;
     let continuedMember: number | null = null;
-    let memberPinned = args.member !== undefined;
+    let preferredMember = args.member ?? null;
     if (args.thread !== undefined) {
       let thread = state.threads.get(args.thread);
       if (!thread || thread.owner !== caller) {
@@ -1468,14 +1470,14 @@ export class CallBroker implements OnModuleInit {
       resumeSessionId = thread.sessionId;
       conversationId = thread.conversationId;
       continuedMember = thread.member;
-      memberPinned ||= thread.memberPinned;
+      preferredMember ??= thread.preferredMember;
     }
     const selected = this.selectPoolMember(
       { cwd: state.capability.cwd ?? null, runId, memberId: callee.id },
       callee,
       args.member ?? null,
+      preferredMember,
       continuedMember,
-      memberPinned,
       () =>
         conversationId !== null &&
         state.capability.conversationHoldsWork?.(conversationId) === true,
@@ -1575,7 +1577,7 @@ export class CallBroker implements OnModuleInit {
           sessionId: outcome.sessionId,
           conversationId: call.conversationId,
           member,
-          memberPinned,
+          preferredMember: selected.plan?.preferred ?? null,
           madeIn: call.madeIn,
           cache,
         });
@@ -1644,8 +1646,8 @@ export class CallBroker implements OnModuleInit {
           mode,
           sessionId: threadSessionId,
           ...(threadMember !== null ? { member: threadMember } : {}),
-          ...(threadMember !== null && memberPinned
-            ? { memberPinned: true }
+          ...(threadMember !== null && selected.plan?.preferred != null
+            ? { preferredMember: selected.plan.preferred }
             : {}),
           ...cacheResultFields(threadCache),
           ...final,
@@ -4081,21 +4083,21 @@ export class CallBroker implements OnModuleInit {
    *
    * A continued thread starts on the member holding its session, unless
    * `conversationStartMember` moves it — back to an earlier member whose limit
-   * has reset, or off one a limit spent, unless the caller pinned the thread
-   * to its member by name; a move or a fallback carries its history into a
-   * fresh session. An explicitly named member is
-   * pinned, since handing it on would overrule the caller. A new
-   * conversation starts with the first available member in pool order, with
-   * members that recently failed on a limit or a sign-in moved to the back,
-   * and may fall through to every member after the one it starts on. A callee
-   * with no pool runs as itself, planless.
+   * has reset, or off one a limit spent; a move or a fallback carries its
+   * history into a fresh session. A new conversation starts with the first
+   * available member in pool order, with members that recently failed on a
+   * limit or a sign-in moved to the back, and may fall through to every
+   * member after the one it starts on. The member a caller asked for
+   * (`preferred`: `requested`, else the one the thread was asked for) only
+   * comes first in that order; it never stops a hand-on. A callee with no
+   * pool runs as itself, planless.
    */
   private selectPoolMember(
     site: PoolSite,
     callee: TeamMember,
     requested: number | null,
+    preferred: number | null,
     threadMember: number | null,
-    memberPinned: boolean,
     holdsWork: () => boolean,
   ):
     | { refused: CallEnvelope }
@@ -4111,15 +4113,6 @@ export class CallBroker implements OnModuleInit {
           : `UNKNOWN_MEMBER: '${callee.id}' has pool members 1–${size}, not ${requested}`,
       );
     }
-    if (
-      requested !== null &&
-      threadMember !== null &&
-      requested !== threadMember
-    ) {
-      return refuse(
-        `THREAD_MEMBER_MISMATCH: that thread runs on pool member ${threadMember} of '${callee.id}', whose session it is — continue it without a member, or start a new conversation on member ${requested}`,
-      );
-    }
     // A session belongs to the member that opened it; resuming it as any other
     // would hand a CLI a session id it has never seen.
     if (
@@ -4133,30 +4126,24 @@ export class CallBroker implements OnModuleInit {
     if (size === 1) {
       return { node: callee, plan: null };
     }
-    if (requested !== null) {
-      return {
-        node: poolMemberNode(callee, requested)!,
-        plan: {
-          member: requested,
-          fallbacks: [],
-          sessionMember: threadMember,
-        },
-      };
-    }
-    const { standings, proven, order } = this.poolCooldowns.order(callee, site);
+    const pool = this.poolCooldowns.order(callee, site);
+    const wanted =
+      preferred !== null && poolMemberNode(callee, preferred) !== null
+        ? preferred
+        : null;
+    const order = preferredAttemptOrder(pool.order, pool.standings, wanted);
     const first =
       threadMember === null
         ? order[0]!
-        : memberPinned
-          ? threadMember
-          : conversationStartMember({
-              standings,
-              proven,
-              order,
-              held: threadMember,
-              hasSession: true,
-              holdsWork: holdsWork(),
-            });
+        : conversationStartMember({
+            standings: pool.standings,
+            proven: pool.proven,
+            order,
+            held: threadMember,
+            hasSession: true,
+            holdsWork: holdsWork(),
+            preferred: wanted,
+          });
     return {
       node: poolMemberNode(callee, first)!,
       plan: {
@@ -4166,6 +4153,7 @@ export class CallBroker implements OnModuleInit {
           order.filter((member) => member !== first),
         ),
         sessionMember: threadMember,
+        preferred: wanted,
       },
     };
   }

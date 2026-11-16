@@ -1600,10 +1600,15 @@ export interface CalleePoolPlan {
   member: number;
   /**
    * The members to hand the call to, in order, when an attempt fails in a way
-   * another account could get past (`fallsThroughPool`). Empty for a call
-   * pinned to a member the caller explicitly named.
+   * another account could get past (`fallsThroughPool`).
    */
   fallbacks: readonly CalleePoolAttempt[];
+  /**
+   * The member the caller asked for by name, for this call or the
+   * conversation it continues, or null — what the transcript says the
+   * conversation goes back to.
+   */
+  preferred: number | null;
   /**
    * The member whose CLI session the call's `resumeSessionId` is — the one a
    * continued thread was left on — or null for a new conversation. Only an

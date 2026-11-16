@@ -10608,12 +10608,18 @@ describe('TeamExecutorService — agent calls', () => {
         contextTokens: 20,
         contextWindowTokens: 200,
       });
+      // Member 1's account answers again, so a call asking for it runs on the
+      // other CLI from the root's session.
+      callBroker.poolCooldowns.record(
+        { agent: 'claude' },
+        { cwd: dir, runId: run.id, memberId: 'orch' },
+        { status: 'completed', failureClass: null, resetsAt: null },
+        false,
+      );
       const reply = callBroker.callAgent(run.id, 'client', {
         title: 'clarify',
         agent: 'orch',
         message: 'clarify this',
-        // Member 1 is cooling after the root's limit, so only a pinned
-        // member puts the call on the other CLI from the root's session.
         member: 1,
       });
       await drain();
@@ -11505,24 +11511,93 @@ describe('TeamExecutorService — agent calls', () => {
       await drain();
     });
 
-    it('runs a member the caller NAMED, and never hands it on', async () => {
-      const { claude, cursor, callBroker, run } = await startPoolRun();
+    it('starts on the member the caller NAMED and hands the call on when that member hits its usage limit', async () => {
+      const { claude, cursor, callBroker, itemDao, run } = await startPoolRun();
 
       const envelope = callBroker.callAgent(run.id, 'orch', {
-        title: 'pinned',
+        title: 'named',
+        agent: 'helper',
+        message: 'x',
+        member: 1,
+      });
+      await drain();
+      expect(claude.starts).toHaveLength(2);
+      expect(cursor.starts).toHaveLength(0);
+      claude.starts[1]!.emit({
+        type: 'error',
+        message: "You've hit your weekly limit · resets 2pm (Asia/Almaty)",
+      });
+      claude.starts[1]!.finish();
+      await drain();
+      expect(cursor.starts).toHaveLength(1);
+      completeTurn(cursor.starts[0]!, 'done on member 2');
+
+      expect(await envelope).toMatchObject({
+        status: 'ok',
+        result: { member: 2 },
+      });
+      const notices = [...itemDao.items.values()]
+        .flat()
+        .filter((row) => row.kind === 'system')
+        .map((row) => JSON.parse(row.payload) as { message?: string })
+        .map((payload) => payload.message ?? '');
+      expect(
+        notices.some((message) =>
+          message.includes(
+            'Later turns move back to member 1, the member asked for, once it is available again.',
+          ),
+        ),
+      ).toBe(true);
+
+      completeTurn(claude.starts[0]!, 'done');
+      await drain();
+    });
+
+    it('moves a thread back to the member the caller NAMED once that member answers again', async () => {
+      const { claude, cursor, callBroker, itemDao, run } = await startPoolRun();
+
+      const first = callBroker.callAgent(run.id, 'orch', {
+        title: 'named',
         agent: 'helper',
         message: 'x',
         member: 2,
       });
       await drain();
-      expect(cursor.starts).toHaveLength(1);
       cursor.starts[0]!.emit({ type: 'error', message: 'boom' });
       cursor.starts[0]!.finish();
+      await drain();
+      claude.starts[1]!.emit({ type: 'session', sessionId: 'on-member-1' });
+      completeTurn(claude.starts[1]!, 'done on member 1');
+      expect(await first).toMatchObject({ result: { member: 1 } });
 
-      const settled = await envelope;
-      expect(settled.status).toBe('error');
-      // Only the orchestrator's own turn ran on claude: member 1 was not tried.
-      expect(claude.starts).toHaveLength(1);
+      callBroker.poolCooldowns.record(
+        { agent: 'cursor-agent' },
+        { cwd: dir, runId: run.id, memberId: 'helper' },
+        { status: 'completed', failureClass: null, resetsAt: null },
+        false,
+      );
+      const again = callBroker.callAgent(run.id, 'orch', {
+        title: 'more',
+        agent: 'helper',
+        message: 'more',
+        thread: 'call-1',
+      });
+      await drain();
+      expect(cursor.starts).toHaveLength(2);
+      completeTurn(cursor.starts[1]!, 'back on member 2');
+      expect(await again).toMatchObject({ result: { member: 2 } });
+      const notices = [...itemDao.items.values()]
+        .flat()
+        .filter((row) => row.kind === 'system')
+        .map((row) => JSON.parse(row.payload) as { message?: string })
+        .map((payload) => payload.message ?? '');
+      expect(
+        notices.some((message) =>
+          message.includes(
+            'is available again — moving the conversation back to it from member 1.',
+          ),
+        ),
+      ).toBe(true);
 
       completeTurn(claude.starts[0]!, 'done');
       await drain();
