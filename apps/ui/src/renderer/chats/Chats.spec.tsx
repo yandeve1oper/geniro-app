@@ -1220,7 +1220,7 @@ function typeInto(input: HTMLInputElement, value: string): void {
  */
 async function pickScope(
   container: HTMLElement,
-  label: 'Active chats' | 'Show all' | 'Archived only',
+  label: 'Active chats' | 'Show all' | 'Archived only' | 'Today',
 ): Promise<void> {
   const trigger = container.querySelector<HTMLButtonElement>(
     'aside button[aria-label="Filter chats"]',
@@ -13469,6 +13469,40 @@ describe('Chats sidebar list', () => {
     expect(client.leaveRun).toHaveBeenCalledWith('r1');
     expect(container.textContent).toContain('What are we building?');
   });
+
+  it.each([
+    [
+      'closes a thread last active before the window',
+      '2020-01-01T00:00:00.000Z',
+      true,
+    ],
+    ['keeps a thread active inside the window', null, false],
+  ] as const)(
+    'narrowing to Today %s',
+    async (_label, lastActivityAt, closes) => {
+      const row = {
+        ...run1,
+        status: 'completed' as const,
+        lastActivityAt: lastActivityAt ?? new Date().toISOString(),
+      };
+      api.listChats.mockResolvedValue([row]);
+      const { client } = makeClient();
+      const container = await mount(client);
+      await clickRun(container, 'My chat');
+
+      await pickScope(container, 'Today');
+
+      expect(api.listChats).toHaveBeenLastCalledWith(
+        expect.objectContaining({ activeSince: expect.any(String) }),
+      );
+      if (closes) {
+        expect(client.leaveRun).toHaveBeenCalledWith('r1');
+        expect(container.textContent).toContain('What are we building?');
+      } else {
+        expect(client.leaveRun).not.toHaveBeenCalledWith('r1');
+      }
+    },
+  );
 
   it('a failed archive keeps the confirm up with the reason, and the row alive', async () => {
     // Mirrors the delete failure test. `run1` is running, so this goes through

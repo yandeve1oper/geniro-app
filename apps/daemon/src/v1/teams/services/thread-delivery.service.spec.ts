@@ -7,6 +7,7 @@ import type {
   HostWake,
   HostWakeOwner,
   RunStatusEvent,
+  ThreadListFilter,
 } from '../../agents/chat.types';
 import type { ItemDao } from '../../agents/dao/item.dao';
 import type { RunDao } from '../../agents/dao/run.dao';
@@ -81,6 +82,7 @@ function runOf(extra: Partial<Run> = {}): Run {
     archivedAt: null,
     projectId: null,
     cwd: '/tmp',
+    createdAt: new Date(0),
     updatedAt: new Date(0),
     editsTeamSlug: null,
     editsProjectId: null,
@@ -219,13 +221,23 @@ function harness(
       return () => undefined;
     },
   };
+  const listThreads = vi.fn(async (filter: ThreadListFilter) => ({
+    runs: [...runs.values()]
+      .filter((run) => run.id !== filter.excludeRunId)
+      .map((run) => ({
+        run,
+        lastActivityAt: run.id === TARGET ? new Date(5_000) : null,
+        lastUserMessageAt: null,
+      })),
+    next: filter.limit < runs.size - 1 ? { rank: 1, sortAt: 7, id: 'x' } : null,
+  }));
   const published: HostWake[] = [];
   const statuses = new Subject<RunStatusEvent>();
   const service = new ThreadDeliveryService(
     { fork: () => ({}) } as never,
     {
       getById: async (id: string) => runs.get(id) ?? null,
-      listThreads: async () => [...runs.values()],
+      listThreads,
     } as unknown as RunDao,
     {
       listAll: async () => [{ id: 'p1', name: 'One' }],
@@ -265,6 +277,7 @@ function harness(
   return {
     service,
     runs,
+    listThreads,
     messages,
     inbox,
     chats,
@@ -693,7 +706,7 @@ describe('ThreadDeliveryService: a turn parked on the user’s question', () => 
     const h = harness({ status: 'running' }, { running: true });
     h.approvals.awaitingFor.mockReturnValue('question');
 
-    const rows = await h.service.listThreads(SENDER, { limit: 20 });
+    const rows = (await h.service.listThreads(SENDER, { limit: 20 })).threads;
 
     expect(rows.find((row) => row.thread === TARGET)?.status).toBe(
       'needs_user',
@@ -721,7 +734,7 @@ describe('ThreadDeliveryService: a turn parked on a tool approval', () => {
     const h = harness({ status: 'running' }, { running: true });
     h.approvals.awaitingFor.mockReturnValue('approval');
 
-    const rows = await h.service.listThreads(SENDER, { limit: 20 });
+    const rows = (await h.service.listThreads(SENDER, { limit: 20 })).threads;
 
     expect(rows.find((row) => row.thread === TARGET)?.status).toBe(
       'needs_user',
@@ -733,7 +746,7 @@ describe('ThreadDeliveryService: a turn parked on a tool approval', () => {
   it('lists it as working again once the card is answered', async () => {
     const h = harness({ status: 'running' }, { running: true });
 
-    const rows = await h.service.listThreads(SENDER, { limit: 20 });
+    const rows = (await h.service.listThreads(SENDER, { limit: 20 })).threads;
 
     expect(rows.find((row) => row.thread === TARGET)?.status).toBe('working');
   });
@@ -745,7 +758,7 @@ describe('ThreadDeliveryService: a turn parked on a tool approval', () => {
       ignore: (card: { standing: boolean }) => boolean,
     ) => (ignore({ standing: true }) ? null : 'approval')) as never);
 
-    const rows = await h.service.listThreads(SENDER, { limit: 20 });
+    const rows = (await h.service.listThreads(SENDER, { limit: 20 })).threads;
 
     expect(rows.find((row) => row.thread === TARGET)?.status).toBe('working');
   });
@@ -1109,7 +1122,7 @@ describe('ThreadDeliveryService: who may reach whom', () => {
     await expect(h.service.senderTarget(TARGET)).resolves.toBe(expected);
   });
 
-  it('lists other threads with a truthful status, its own project first', async () => {
+  it('lists other threads with a truthful status, asking the listing to rank the caller’s project and hide the caller', async () => {
     const h = harness({ status: 'failed', projectId: 'p2' });
     const caller = runOf({ id: SENDER, projectId: 'p1', title: 'Sender' });
     h.runs.set(SENDER, caller);
@@ -1120,27 +1133,98 @@ describe('ThreadDeliveryService: who may reach whom', () => {
         title: 'Same',
         projectId: 'p1',
         status: 'running',
-        updatedAt: new Date(0),
+        archivedAt: new Date(9_000),
       }),
-    );
-    h.runs.set(
-      'newer',
-      runOf({ id: 'newer', title: 'Newer', updatedAt: new Date(1_000) }),
     );
 
     const listed = await h.service.listThreads(SENDER, { limit: 20 });
 
-    expect(listed.map((row) => row.thread)).toEqual([
-      'same-project',
-      'newer',
+    expect(h.listThreads).toHaveBeenCalledWith(
+      expect.objectContaining({
+        excludeRunId: SENDER,
+        callerProjectId: 'p1',
+        includeArchived: false,
+        projectId: null,
+        window: undefined,
+        after: null,
+        limit: 20,
+      }),
+      expect.anything(),
+    );
+    expect(listed.threads.map((row) => row.thread)).toEqual([
       TARGET,
+      'same-project',
     ]);
-    expect(listed.map((row) => row.status)).toEqual([
-      'working',
-      'idle',
+    expect(listed.threads.map((row) => row.status)).toEqual([
       'failed',
+      'working',
     ]);
-    expect(listed[0]?.project).toBe('One');
+    expect(listed.threads[1]).toMatchObject({
+      project: 'One',
+      archived: true,
+      createdAt: new Date(0).toISOString(),
+      lastActivityAt: null,
+    });
+    expect(listed.threads[0]?.lastActivityAt).toBe(
+      new Date(5_000).toISOString(),
+    );
+    expect(listed.nextPage).toBeNull();
+  });
+
+  it('passes the window, the archive switch and a project named by its name or id', async () => {
+    const h = harness();
+
+    await h.service.listThreads(SENDER, {
+      limit: 20,
+      activeSince: '2026-11-16T00:00:00+03:00',
+      activeUntil: '2026-11-17T00:00:00+03:00',
+      includeArchived: true,
+      project: ' one ',
+    });
+    await h.service.listThreads(SENDER, { limit: 20, project: 'p1' });
+
+    expect(h.listThreads.mock.calls[0]?.[0]).toMatchObject({
+      includeArchived: true,
+      projectId: 'p1',
+      window: {
+        since: new Date('2026-11-15T21:00:00.000Z'),
+        until: new Date('2026-11-16T21:00:00.000Z'),
+      },
+    });
+    expect(h.listThreads.mock.calls[1]?.[0]).toMatchObject({
+      projectId: 'p1',
+    });
+  });
+
+  it('refuses a project no id or name matches, and a page it never handed out', async () => {
+    const h = harness();
+
+    await expect(
+      h.service.listThreads(SENDER, { limit: 20, project: 'Two' }),
+    ).rejects.toThrow('No project has the id or name "Two".');
+    await expect(
+      h.service.listThreads(SENDER, { limit: 20, page: 'not-a-page' }),
+    ).rejects.toThrow('The page is not one list_threads handed out.');
+    expect(h.listThreads).not.toHaveBeenCalled();
+  });
+
+  it('hands back the next page, which reads back as where this one ended', async () => {
+    const h = harness();
+    h.runs.set('other', runOf({ id: 'other' }));
+    h.runs.set(SENDER, runOf({ id: SENDER }));
+
+    const first = await h.service.listThreads(SENDER, { limit: 1 });
+    await h.service.listThreads(SENDER, {
+      limit: 1,
+      page: first.nextPage ?? undefined,
+    });
+
+    expect(first.nextPage).not.toBeNull();
+    expect(h.listThreads.mock.calls[1]?.[0].after).toEqual({
+      rank: 1,
+      sortAt: 7,
+      id: 'x',
+    });
   });
 
   it('lists a thread waiting on the user, chat or team, and a stopped one', async () => {
@@ -1156,19 +1240,10 @@ describe('ThreadDeliveryService: who may reach whom', () => {
       ((runId: string) => runId === 'chat') as unknown as () => boolean,
     );
 
-    const listed = await h.service.listThreads(SENDER, { limit: 20 });
+    const listed = (await h.service.listThreads(SENDER, { limit: 20 })).threads;
 
     expect(
       Object.fromEntries(listed.map((row) => [row.thread, row.status])),
     ).toEqual({ [TARGET]: 'stopped', team: 'needs_user', chat: 'needs_user' });
-  });
-
-  it('caps the listing at the limit asked for', async () => {
-    const h = harness();
-    h.runs.set('other', runOf({ id: 'other' }));
-
-    await expect(
-      h.service.listThreads(SENDER, { limit: 1 }),
-    ).resolves.toHaveLength(1);
   });
 });

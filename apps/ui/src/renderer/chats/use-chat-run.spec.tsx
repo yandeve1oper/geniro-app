@@ -591,6 +591,37 @@ describe('useChatRun', () => {
     ]);
   });
 
+  it('asks both halves for the activity window on the desk, and without it once cleared', async () => {
+    const { client } = makeClient();
+    const harness = await mount(client);
+    const window = {
+      since: '2026-11-16T00:00:00.000Z',
+      until: '2026-11-17T00:00:00.000Z',
+    };
+
+    await act(async () => {
+      harness.state().showActivityWindow(window);
+    });
+
+    expect(chatApi.listChats).toHaveBeenLastCalledWith({
+      activeSince: window.since,
+      activeUntil: window.until,
+    });
+    expect(teamApi.listTeamRuns).toHaveBeenLastCalledWith({
+      activeSince: window.since,
+      activeUntil: window.until,
+    });
+    expect(harness.state().activityWindow).toEqual(window);
+
+    await act(async () => {
+      harness.state().showActivityWindow(null);
+    });
+
+    expect(chatApi.listChats).toHaveBeenLastCalledWith({});
+    expect(teamApi.listTeamRuns).toHaveBeenLastCalledWith({});
+    expect(harness.state().activityWindow).toBeNull();
+  });
+
   it('runs one listing per scope at a time, and one more after it however often it was asked', async () => {
     const { client } = makeClient();
     const harness = await mount(client);

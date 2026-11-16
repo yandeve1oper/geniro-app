@@ -159,6 +159,8 @@ export interface ChatsApiListChatsRequest {
     beforeCreatedAt?: string;
     beforeId?: string;
     runId?: string;
+    activeSince?: string;
+    activeUntil?: string;
 }
 
 export interface ChatsApiListRunGoalsRequest {
@@ -284,6 +286,8 @@ export interface ChatsApiSearchAllChatsRequest {
     runId?: string;
     cwd?: string;
     includeArchived?: SearchAllChatsIncludeArchivedEnum;
+    activeSince?: string;
+    activeUntil?: string;
 }
 
 export interface ChatsApiSearchChatRequest {
@@ -1251,6 +1255,14 @@ export class ChatsApi extends runtime.BaseAPI {
 
         if (requestParameters['runId'] != null) {
             queryParameters['runId'] = requestParameters['runId'];
+        }
+
+        if (requestParameters['activeSince'] != null) {
+            queryParameters['activeSince'] = requestParameters['activeSince'];
+        }
+
+        if (requestParameters['activeUntil'] != null) {
+            queryParameters['activeUntil'] = requestParameters['activeUntil'];
         }
 
         const headerParameters: runtime.HTTPHeaders = {};
@@ -2609,6 +2621,14 @@ export class ChatsApi extends runtime.BaseAPI {
 
         if (requestParameters['includeArchived'] != null) {
             queryParameters['includeArchived'] = requestParameters['includeArchived'];
+        }
+
+        if (requestParameters['activeSince'] != null) {
+            queryParameters['activeSince'] = requestParameters['activeSince'];
+        }
+
+        if (requestParameters['activeUntil'] != null) {
+            queryParameters['activeUntil'] = requestParameters['activeUntil'];
         }
 
         const headerParameters: runtime.HTTPHeaders = {};

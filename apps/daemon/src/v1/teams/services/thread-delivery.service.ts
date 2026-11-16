@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { EntityManager } from '@mikro-orm/sqlite';
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import { ConflictException } from '@packages/common';
+import { BadRequestException, ConflictException } from '@packages/common';
 
 import {
   type DeliveredWaitingMessageWire,
@@ -11,6 +11,7 @@ import {
   type HostWakeOwner,
   type RunAwaiting,
   SINGLE_AGENT_NODE,
+  type ThreadListAnswer,
   type ThreadListQuery,
   type ThreadListRow,
   type ThreadMessageAnswer,
@@ -31,6 +32,11 @@ import { ProcessRegistry } from '../../agents/services/process-registry';
 import { ThreadInboxService } from '../../agents/services/thread-inbox.service';
 import { KeyedChain } from '../../agents/utils/keyed-chain';
 import { persistItemAndEmit } from '../../agents/utils/persist-item';
+import { activityWindowOf } from '../../agents/utils/run-activity';
+import {
+  decodeThreadListCursor,
+  encodeThreadListCursor,
+} from '../../agents/utils/thread-list-cursor';
 import {
   THREAD_JOINS_PER_HOUR,
   THREAD_WAKE_PROMPT,
@@ -51,9 +57,6 @@ import {
   TeamExecutorService,
   type ThreadMessageJoinAnswer,
 } from './team-executor.service';
-
-/** How many runs a listing reads before it hides the caller and ranks its project. */
-const THREAD_LIST_WINDOW = 200;
 
 interface RouteTerms {
   mayJoin: boolean;
@@ -142,46 +145,69 @@ export class ThreadDeliveryService implements OnModuleInit {
     return run.teamId === null ? 'chat' : 'team';
   }
 
-  /** The other threads an agent can reach, its own project's first. */
+  /**
+   * One page of the other threads an agent can reach, its own project's first,
+   * then the last active.
+   */
   async listThreads(
     callerRunId: string,
     query: ThreadListQuery,
-  ): Promise<ThreadListRow[]> {
+  ): Promise<ThreadListAnswer> {
     const em = this.em.fork();
+    const projects = await this.projectDao.listAll(em);
+    const names = new Map(
+      projects.map((project) => [project.id, project.name]),
+    );
+    const projectId =
+      query.project === undefined
+        ? null
+        : projectNamed(projects, query.project);
+    if (projectId === undefined) {
+      throw new BadRequestException(
+        'PROJECT_NOT_FOUND',
+        `No project has the id or name "${query.project}".`,
+      );
+    }
+    const after =
+      query.page === undefined ? null : decodeThreadListCursor(query.page);
+    if (after === null && query.page !== undefined) {
+      throw new BadRequestException(
+        'INVALID_PAGE',
+        'The page is not one list_threads handed out.',
+      );
+    }
     const caller = await this.runDao.getById(callerRunId, em);
-    const runs = await this.runDao.listThreads(
-      query.query ?? null,
-      THREAD_LIST_WINDOW,
+    const page = await this.runDao.listThreads(
+      {
+        excludeRunId: callerRunId,
+        callerProjectId: caller?.projectId ?? null,
+        query: query.query ?? null,
+        includeArchived: query.includeArchived === true,
+        projectId,
+        window: activityWindowOf(query),
+        after,
+        limit: query.limit,
+      },
       em,
     );
-    const projects = new Map(
-      (await this.projectDao.listAll(em)).map((project) => [
-        project.id,
-        project.name,
-      ]),
-    );
-    const callerProject = caller?.projectId ?? null;
-    const inOwnProject = (run: Run): number =>
-      callerProject !== null && run.projectId === callerProject ? 0 : 1;
-    return runs
-      .filter((run) => run.id !== callerRunId)
-      .sort(
-        (a, b) =>
-          inOwnProject(a) - inOwnProject(b) ||
-          b.updatedAt.getTime() - a.updatedAt.getTime(),
-      )
-      .slice(0, query.limit)
-      .map((run) => ({
+    return {
+      threads: page.runs.map(({ run, lastActivityAt, lastUserMessageAt }) => ({
         thread: run.id,
         title: titleOf(run),
         kind: run.teamId === null ? ('chat' as const) : ('team' as const),
         status: this.statusOf(run),
         agent: run.agentKind ?? null,
         project:
-          run.projectId === null ? null : (projects.get(run.projectId) ?? null),
+          run.projectId === null ? null : (names.get(run.projectId) ?? null),
         folder: run.cwd,
+        createdAt: run.createdAt.toISOString(),
         updatedAt: run.updatedAt.toISOString(),
-      }));
+        lastActivityAt: lastActivityAt?.toISOString() ?? null,
+        lastUserMessageAt: lastUserMessageAt?.toISOString() ?? null,
+        archived: run.archivedAt !== null,
+      })),
+      nextPage: page.next === null ? null : encodeThreadListCursor(page.next),
+    };
   }
 
   /** The card a thread is parked on, leaving out one that stands across turns. */
@@ -660,4 +686,15 @@ export class ThreadDeliveryService implements OnModuleInit {
       );
     }
   }
+}
+
+function projectNamed(
+  projects: readonly { id: string; name: string }[],
+  wanted: string,
+): string | undefined {
+  const folded = wanted.trim().toLowerCase();
+  return (
+    projects.find((project) => project.id === wanted) ??
+    projects.find((project) => project.name.trim().toLowerCase() === folded)
+  )?.id;
 }

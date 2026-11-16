@@ -110,6 +110,7 @@ import { useLineSnapshots } from '../stats/use-line-snapshots';
 import { useSharedCapabilities } from '../use-capabilities';
 import { useCliLogin } from '../use-cli-login';
 import { ChatActionChips } from './action-chip';
+import { type ActivityPreset, type ActivityWindow } from './activity-window';
 import {
   type AgentActivity,
   type AgentDisplay,
@@ -1409,6 +1410,8 @@ export function Chats({
     loadOlderRuns,
     chatScope,
     showScope,
+    activityWindow,
+    showActivityWindow,
     addRun,
     placeRun,
     dropRun,
@@ -1432,6 +1435,8 @@ export function Chats({
     onTurnEndRef,
     pinned: hosted === null ? null : { open: hosted.open },
   });
+
+  const [activityPreset, setActivityPreset] = useState<ActivityPreset>('any');
 
   /**
    * Every turn a hosted conversation starts other than a typed send (a
@@ -3487,10 +3492,25 @@ export function Chats({
         ) {
           showScope('all');
         }
+        if (
+          activityWindow !== null &&
+          !runsRef.current.some((run) => run.id === hit.runId)
+        ) {
+          setActivityPreset('any');
+          showActivityWindow(null);
+        }
         void activateRun(hit.runId);
       }
     },
-    [activateRun, activeRunIdRef, chatScope, showScope],
+    [
+      activateRun,
+      activeRunIdRef,
+      chatScope,
+      showScope,
+      activityWindow,
+      showActivityWindow,
+      runsRef,
+    ],
   );
 
   useEffect(() => {
@@ -4401,13 +4421,25 @@ export function Chats({
   const handleShowScope = useLatestCallback(
     (next: ChatListScope): void => {
       const open = runsRef.current.find((run) => run.id === activeRunId);
-      const kept = open !== undefined && inScope(open, next);
+      const kept = open !== undefined && inScope(open, next, activityWindow);
       if (!kept) {
         deactivateRun();
       }
       showScope(next);
     },
-    [activeRunId, runsRef, deactivateRun, showScope],
+    [activeRunId, runsRef, deactivateRun, showScope, activityWindow],
+  );
+
+  const handleActivityWindow = useLatestCallback(
+    (preset: ActivityPreset, next: ActivityWindow | null): void => {
+      const open = runsRef.current.find((run) => run.id === activeRunId);
+      if (open !== undefined && !inScope(open, chatScope, next)) {
+        deactivateRun();
+      }
+      setActivityPreset(preset);
+      showActivityWindow(next);
+    },
+    [activeRunId, runsRef, deactivateRun, showActivityWindow, chatScope],
   );
 
   const confirmDelete = useLatestCallback(async (): Promise<void> => {
@@ -10016,6 +10048,9 @@ export function Chats({
                         <ChatScopeFilter
                           scope={chatScope}
                           onChange={handleShowScope}
+                          window={activityWindow}
+                          preset={activityPreset}
+                          onWindowChange={handleActivityWindow}
                         />
                         <Button
                           type="button"

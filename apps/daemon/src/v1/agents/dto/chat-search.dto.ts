@@ -5,6 +5,10 @@ import {
   GlobalChatSearchQuerySchema,
   GlobalChatSearchResultSchema,
 } from '../chat.types';
+import {
+  isOrderedWindow,
+  UNORDERED_WINDOW_MESSAGE,
+} from '../utils/run-activity';
 
 export class GlobalChatSearchQueryDto extends createZodDto(
   GlobalChatSearchQuerySchema.extend({
@@ -13,7 +17,7 @@ export class GlobalChatSearchQueryDto extends createZodDto(
       .enum(['true', 'false'])
       .transform((value) => value === 'true')
       .default(true),
-  }),
+  }).refine(isOrderedWindow, { message: UNORDERED_WINDOW_MESSAGE }),
 ) {}
 
 export class GlobalChatSearchResultDto extends createZodDto(

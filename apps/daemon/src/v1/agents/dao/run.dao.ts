@@ -5,6 +5,7 @@ import { BaseDao } from '@packages/mikroorm';
 import { Run } from '../../runs/entity/run.entity';
 import { baseTeamSnapshotOf } from '../../teams/utils/team-snapshot';
 import type {
+  ActivityWindow,
   ChatListScope,
   ChatTextDatabase,
   ContextLevel,
@@ -14,10 +15,19 @@ import type {
   RunPullRequest,
   SettleFigures,
   TaskStageLine,
+  ThreadListFilter,
+  ThreadListPage,
 } from '../chat.types';
 import { idBatches } from '../utils/id-batches';
 import { positive } from '../utils/positive-figure';
 import { readRunPullRequests } from '../utils/pull-request-capture';
+import {
+  hasActivityWindow,
+  newestItemAt,
+  newestUserMessageAt,
+  runIdsActiveIn,
+  windowBounds,
+} from '../utils/run-activity';
 import { readRunStageProgress, stageLineOf } from '../utils/stage-progress';
 
 @Injectable()
@@ -83,31 +93,114 @@ export class RunDao extends BaseDao<Run> {
   }
 
   /**
-   * The threads an agent may message, last worked in first: chats and team
-   * runs alike, never an archived, builder, project or analysis one. `query`
-   * narrows by title.
+   * One page of the threads an agent may reach: chats and team runs alike,
+   * never a builder, project or analysis one, and an archived one only when
+   * asked. The caller's own project first, then the last active, each run
+   * dated by its newest transcript row (`utils/run-activity.ts`) — its
+   * creation when it has none, which falls in no activity window.
    */
   async listThreads(
-    query: string | null,
-    limit: number,
+    filter: ThreadListFilter,
     txEm?: EntityManager,
-  ): Promise<Run[]> {
-    return this.getRepo(txEm).find(
-      {
-        archivedAt: null,
-        pendingDeleteAt: null,
-        editsTeamSlug: null,
-        editsProjectId: null,
-        analysisSourceRunId: null,
-        analysisTeamSlug: null,
-        ...(query === null ? {} : { title: { $like: `%${query}%` } }),
-      },
-      {
-        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-        limit,
-        disableIdentityMap: true,
-      },
+  ): Promise<ThreadListPage> {
+    const em = txEm ?? this.em.fork();
+    const db = em.getKysely<ChatTextDatabase>({ convertValues: false });
+    let ranked = db
+      .selectFrom('runs as r')
+      .select((eb) => [
+        'r.id',
+        newestItemAt(eb).as('last_activity_at'),
+        newestUserMessageAt(eb).as('last_user_message_at'),
+        eb.fn.coalesce(newestItemAt(eb), eb.ref('r.created_at')).as('sort_at'),
+        (filter.callerProjectId === null
+          ? eb.lit(1)
+          : eb
+              .case()
+              .when('r.project_id', '=', filter.callerProjectId)
+              .then(0)
+              .else(1)
+              .end()
+        ).as('rank'),
+      ])
+      .where('r.deleted_at', 'is', null)
+      .where('r.pending_delete_at', 'is', null)
+      .where('r.edits_team_slug', 'is', null)
+      .where('r.edits_project_id', 'is', null)
+      .where('r.analysis_source_run_id', 'is', null)
+      .where('r.analysis_team_slug', 'is', null)
+      .where('r.id', '!=', filter.excludeRunId);
+    if (!filter.includeArchived) {
+      ranked = ranked.where('r.archived_at', 'is', null);
+    }
+    if (filter.query !== null) {
+      ranked = ranked.where('r.title', 'like', `%${filter.query}%`);
+    }
+    if (filter.projectId !== null) {
+      ranked = ranked.where('r.project_id', '=', filter.projectId);
+    }
+    let page = db.selectFrom(ranked.as('t')).selectAll();
+    const { window, after } = filter;
+    if (window !== undefined) {
+      page = page.where((eb) =>
+        windowBounds(eb, eb.ref('t.last_activity_at'), window),
+      );
+    }
+    if (after !== null) {
+      page = page.where((eb) =>
+        eb.or([
+          eb('t.rank', '>', after.rank),
+          eb.and([
+            eb('t.rank', '=', after.rank),
+            eb('t.sort_at', '<', after.sortAt),
+          ]),
+          eb.and([
+            eb('t.rank', '=', after.rank),
+            eb('t.sort_at', '=', after.sortAt),
+            eb('t.id', '<', after.id),
+          ]),
+        ]),
+      );
+    }
+    const rows = await page
+      .orderBy('t.rank', 'asc')
+      .orderBy('t.sort_at', 'desc')
+      .orderBy('t.id', 'desc')
+      .limit(filter.limit + 1)
+      .execute();
+    const shown = rows.slice(0, filter.limit);
+    const runs = new Map(
+      shown.length === 0
+        ? []
+        : (
+            await this.getRepo(em).find(
+              { id: { $in: shown.map((row) => row.id) } },
+              { disableIdentityMap: true },
+            )
+          ).map((run) => [run.id, run] as const),
     );
+    const last = shown.at(-1);
+    return {
+      runs: shown.flatMap((row) => {
+        const run = runs.get(row.id);
+        return run === undefined
+          ? []
+          : [
+              {
+                run,
+                lastActivityAt: dateOf(row.last_activity_at),
+                lastUserMessageAt: dateOf(row.last_user_message_at),
+              },
+            ];
+      }),
+      next:
+        rows.length > filter.limit && last !== undefined
+          ? {
+              rank: Number(last.rank),
+              sortAt: Number(last.sort_at),
+              id: last.id,
+            }
+          : null,
+    };
   }
 
   /**
@@ -115,15 +208,22 @@ export class RunDao extends BaseDao<Run> {
    * cursor names one place in the order and no row is skipped or repeated
    * across pages.
    */
-  private listPage(
+  private async listPage(
     where: FilterQuery<Run>,
     page: RunListPage,
     txEm?: EntityManager,
   ): Promise<Run[]> {
-    const { before, runId, limit } = page;
+    const { before, runId, limit, active } = page;
     const narrowed: FilterQuery<Run>[] = [where, { pendingDeleteAt: null }];
     if (runId !== undefined) {
       narrowed.push({ id: runId });
+    }
+    if (hasActivityWindow(active)) {
+      const ids = await this.runIdsActiveIn(active, txEm);
+      if (ids.length === 0) {
+        return [];
+      }
+      narrowed.push({ id: { $in: ids } });
     }
     if (before !== undefined) {
       narrowed.push({
@@ -143,6 +243,19 @@ export class RunDao extends BaseDao<Run> {
         disableIdentityMap: true,
       },
     );
+  }
+
+  async runIdsActiveIn(
+    window: ActivityWindow,
+    txEm?: EntityManager,
+  ): Promise<string[]> {
+    const rows = await runIdsActiveIn(
+      (txEm ?? this.em.fork()).getKysely<ChatTextDatabase>({
+        convertValues: false,
+      }),
+      window,
+    ).execute();
+    return rows.map((row) => row.id);
   }
 
   /**
@@ -1543,6 +1656,10 @@ export class RunDao extends BaseDao<Run> {
 const REVIEW_PURPOSE: FilterQuery<Run> = {
   $or: [{ analysisPurpose: null }, { analysisPurpose: 'review' }],
 };
+
+function dateOf(stored: number | null): Date | null {
+  return stored === null ? null : new Date(stored);
+}
 
 /** The archive half of a listing's filter; `all` states no condition. */
 function scopeFilter(scope: ChatListScope): {

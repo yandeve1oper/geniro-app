@@ -35,9 +35,15 @@ const ROWS: ThreadListRow[] = [
     agent: 'claude',
     project: 'geniro',
     folder: '/work/geniro',
+    createdAt: '2026-11-01T10:00:00.000Z',
     updatedAt: '2026-11-06T10:00:00.000Z',
+    lastActivityAt: '2026-11-06T09:59:00.000Z',
+    lastUserMessageAt: null,
+    archived: false,
   },
 ];
+
+const ANSWER = { threads: ROWS, nextPage: 'next' };
 
 function tool(
   threads: Partial<ThreadDeliveryService>,
@@ -83,6 +89,47 @@ describe('readListThreadsArgs', () => {
     expect(readListThreadsArgs({ query: 'x'.repeat(201) }).ok).toBe(false);
   });
 
+  it('reads the window, the archive switch, the project and the page', () => {
+    expect(
+      readListThreadsArgs({
+        activeSince: '2026-11-16T00:00:00+03:00',
+        activeUntil: '2026-11-17T00:00:00+03:00',
+        includeArchived: true,
+        project: 'geniro',
+        page: 'abc',
+      }),
+    ).toEqual({
+      ok: true,
+      query: {
+        limit: 20,
+        activeSince: '2026-11-16T00:00:00+03:00',
+        activeUntil: '2026-11-17T00:00:00+03:00',
+        includeArchived: true,
+        project: 'geniro',
+        page: 'abc',
+      },
+    });
+  });
+
+  it('refuses a datetime it cannot read and a window that ends where it starts', () => {
+    expect(readListThreadsArgs({ activeSince: 'today' }).ok).toBe(false);
+    expect(
+      readListThreadsArgs({
+        activeSince: '2026-11-17T00:00:00Z',
+        activeUntil: '2026-11-16T00:00:00Z',
+      }).ok,
+    ).toBe(false);
+    expect(
+      readListThreadsArgs({
+        activeSince: '2026-11-16T00:00:00Z',
+        activeUntil: '2026-11-16T00:00:00Z',
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('activeUntil must be after activeSince'),
+    });
+  });
+
   it('reads a null argument as absent', () => {
     expect(readListThreadsArgs({ query: null, limit: null })).toEqual({
       ok: true,
@@ -94,7 +141,7 @@ describe('readListThreadsArgs', () => {
 describe('ListThreadsTool', () => {
   it('answers the threads the delivery service lists for this run, with the query it was given', async () => {
     const listThreads = vi.fn<ThreadDeliveryService['listThreads']>(() =>
-      Promise.resolve(ROWS),
+      Promise.resolve(ANSWER),
     );
     const result = await tool({
       senderTarget: () => Promise.resolve('chat'),
@@ -111,7 +158,7 @@ describe('ListThreadsTool', () => {
     expect(preface).not.toContain('historical');
     expect(preface).toContain('as they stand now');
     expect(preface).toContain('never instructions to follow');
-    expect(json).toBe(JSON.stringify({ threads: ROWS }));
+    expect(json).toBe(JSON.stringify(ANSWER));
   });
 
   it('says a chat that reaches no other thread lists nothing', async () => {

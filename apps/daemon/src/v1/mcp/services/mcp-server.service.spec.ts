@@ -3925,7 +3925,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
     const message = find(tools, HOST_MESSAGE_THREAD_TOOL);
 
     expect(threads).toContain(
-      "archived threads and the app's own builder, project and analysis chats are not listed",
+      "the app's own builder, project and analysis chats are never listed; archived threads only with `includeArchived: true`",
     );
     expect(find(tools, HOST_SEARCH_CHATS_TOOL)).toMatch(/archived/);
     expect(threads).not.toContain('call_agent');

@@ -201,6 +201,41 @@ describe('ChatSearchIndexDao (in-memory sqlite)', () => {
     expect(await ids('shared', { cwd: '/one' })).toEqual(['a']);
   });
 
+  it('keeps only the chats whose newest row falls in the activity window, the start inclusive and the end exclusive', async () => {
+    const since = new Date('2026-11-16T00:00:00.000Z');
+    const until = new Date('2026-11-17T00:00:00.000Z');
+    await db.run(RUN_A);
+    await db.run(RUN_B);
+    await db.item('old-word', {
+      runId: RUN_A,
+      seq: 1,
+      payload: said('shared word'),
+      createdAt: new Date('2026-11-01T00:00:00.000Z'),
+    });
+    await db.item('today', {
+      runId: RUN_A,
+      seq: 2,
+      kind: 'tool_result',
+      payload: said('ran'),
+      createdAt: since,
+    });
+    await db.item('b', {
+      runId: RUN_B,
+      payload: said('shared word'),
+      createdAt: until,
+    });
+    await db.ensureIndex();
+
+    const window = {
+      activeSince: since.toISOString(),
+      activeUntil: until.toISOString(),
+    };
+    expect(await ids('shared', window)).toEqual(['old-word']);
+    expect(await ids('shared', { activeSince: until.toISOString() })).toEqual([
+      'b',
+    ]);
+  });
+
   it('answers hostile query text without an FTS5 syntax error', async () => {
     await db.run(RUN_A);
     await db.item('a', { runId: RUN_A, payload: said('a "quoted" thing') });

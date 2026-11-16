@@ -153,6 +153,8 @@ export interface TeamsApiListTeamRunsRequest {
     beforeCreatedAt?: string;
     beforeId?: string;
     runId?: string;
+    activeSince?: string;
+    activeUntil?: string;
 }
 
 export interface TeamsApiMeasureInstructionSizesRequest {
@@ -1234,6 +1236,14 @@ export class TeamsApi extends runtime.BaseAPI {
 
         if (requestParameters['runId'] != null) {
             queryParameters['runId'] = requestParameters['runId'];
+        }
+
+        if (requestParameters['activeSince'] != null) {
+            queryParameters['activeSince'] = requestParameters['activeSince'];
+        }
+
+        if (requestParameters['activeUntil'] != null) {
+            queryParameters['activeUntil'] = requestParameters['activeUntil'];
         }
 
         const headerParameters: runtime.HTTPHeaders = {};

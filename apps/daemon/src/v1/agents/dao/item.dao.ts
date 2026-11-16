@@ -37,6 +37,7 @@ import {
   PULL_REQUEST_NAMING_KINDS,
   pullRequestNamingNeedles,
 } from '../utils/pull-request-capture';
+import { newestItemAt } from '../utils/run-activity';
 import type { ToolUsageGroup } from '../utils/tool-usage';
 import { USAGE_ITEM_KINDS } from '../utils/usage-figures';
 import {
@@ -723,30 +724,28 @@ export class ItemDao extends BaseDao<Item> {
 
   /**
    * When each run's newest transcript row was written — its last ACTIVITY,
-   * which no write to the run row can move (`RunWire.lastActivityAt`).
-   *
-   * One read per run, each a seek on the `(run_id, seq)` index projected to
-   * one column, rather than one aggregate over every row the runs hold: the
-   * list asks this for every thread it shows, and the busiest of them run to
-   * tens of thousands of rows. A run with no rows is absent from the map.
+   * which no write to the run row can move (`RunWire.lastActivityAt`). The one
+   * reading every activity filter shares (`utils/run-activity.ts`). A run with
+   * no rows is absent from the map.
    */
   async latestItemAtPerRun(
     runIds: string[],
     txEm?: EntityManager,
   ): Promise<Map<string, Date>> {
-    const repo = this.getRepo(txEm);
+    const db = (txEm ?? this.em.fork()).getKysely<ChatTextDatabase>({
+      convertValues: false,
+    });
     const out = new Map<string, Date>();
-    for (const runId of runIds) {
-      const newest = await repo.findOne(
-        { runId },
-        {
-          orderBy: { seq: 'desc' },
-          fields: ['createdAt'],
-          disableIdentityMap: true,
-        },
-      );
-      if (newest) {
-        out.set(runId, newest.createdAt);
+    for (const batch of idBatches(runIds)) {
+      const rows = await db
+        .selectFrom('runs as r')
+        .select((eb) => ['r.id', newestItemAt(eb).as('at')])
+        .where('r.id', 'in', batch)
+        .execute();
+      for (const row of rows) {
+        if (row.at !== null) {
+          out.set(row.id, new Date(row.at));
+        }
       }
     }
     return out;

@@ -15,6 +15,10 @@ import {
 } from '../runs/runs.types';
 import type { AgentOptionsSnapshot } from './utils/agent-options';
 import { hasHiddenText } from './utils/hidden-text';
+import {
+  isOrderedWindow,
+  UNORDERED_WINDOW_MESSAGE,
+} from './utils/run-activity';
 import { RUN_PROCESS_CAP } from './utils/run-process-scan';
 
 /**
@@ -5158,16 +5162,86 @@ export interface ThreadMessageAnswer {
   title: string;
 }
 
-/** `list_threads`'s arguments. */
-export const ThreadListQuerySchema = z.object({
-  query: z
-    .string()
-    .max(200)
+/** A run with no transcript row has no last activity and falls in no window. */
+export interface ActivityWindow {
+  since?: Date;
+  until?: Date;
+}
+
+export const ActivityWindowFields = {
+  activeSince: z.iso
+    .datetime({ offset: true })
     .optional()
-    .describe('Words in the thread title; omit for the newest threads.'),
-  limit: z.number().int().min(1).max(50).default(20),
-});
+    .describe(
+      'Only threads whose last activity (newest transcript row) is at or after this ISO datetime; inclusive.',
+    ),
+  activeUntil: z.iso
+    .datetime({ offset: true })
+    .optional()
+    .describe(
+      'Only threads whose last activity is before this ISO datetime; exclusive.',
+    ),
+};
+
+/** `list_threads`'s arguments. */
+export const ThreadListQuerySchema = z
+  .object({
+    query: z
+      .string()
+      .max(200)
+      .optional()
+      .describe('Words in the thread title; omit for the newest threads.'),
+    limit: z.number().int().min(1).max(50).default(20),
+    ...ActivityWindowFields,
+    includeArchived: z
+      .boolean()
+      .optional()
+      .describe('Also list archived threads; false when omitted.'),
+    project: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe(
+        'Only the threads of this project, named by its id or its name.',
+      ),
+    page: z
+      .string()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe(
+        '`nextPage` from the previous answer, to list the threads after it.',
+      ),
+  })
+  .refine(isOrderedWindow, { message: UNORDERED_WINDOW_MESSAGE });
 export type ThreadListQuery = z.infer<typeof ThreadListQuerySchema>;
+
+export interface ThreadListCursor {
+  rank: number;
+  sortAt: number;
+  id: string;
+}
+
+export interface ThreadListFilter {
+  excludeRunId: string;
+  callerProjectId: string | null;
+  query: string | null;
+  includeArchived: boolean;
+  projectId: string | null;
+  window: ActivityWindow | undefined;
+  after: ThreadListCursor | null;
+  limit: number;
+}
+
+export interface ThreadListPage {
+  runs: {
+    run: Run;
+    lastActivityAt: Date | null;
+    lastUserMessageAt: Date | null;
+  }[];
+  next: ThreadListCursor | null;
+}
 
 /** `message_thread`'s arguments. The text's limit is the inbox's, so it says so. */
 export const ThreadMessageSendSchema = z.object({
@@ -5197,7 +5271,16 @@ export interface ThreadListRow {
   agent: string | null;
   project: string | null;
   folder: string | null;
+  createdAt: string;
   updatedAt: string;
+  lastActivityAt: string | null;
+  lastUserMessageAt: string | null;
+  archived: boolean;
+}
+
+export interface ThreadListAnswer {
+  threads: ThreadListRow[];
+  nextPage: string | null;
 }
 
 /**
@@ -7923,6 +8006,7 @@ export interface RunListPage {
   limit?: number;
   before?: { createdAt: Date; id: string };
   runId?: string;
+  active?: ActivityWindow;
 }
 
 /**
@@ -8244,6 +8328,7 @@ export const GlobalChatSearchQuerySchema = z.object({
     .optional()
     .describe('Search only chats in this exact project folder.'),
   includeArchived: z.boolean().default(true),
+  ...ActivityWindowFields,
 });
 export type GlobalChatSearchQuery = z.infer<typeof GlobalChatSearchQuerySchema>;
 
@@ -8352,6 +8437,10 @@ export interface ChatTextDatabase {
     reconciled_through_seq: Run['reconciledThroughSeq'];
     title: Run['title'];
     cwd: Run['cwd'];
+    team_id: Run['teamId'];
+    project_id: Run['projectId'];
+    edits_project_id: Run['editsProjectId'];
+    created_at: StoredDate;
     archived_at: StoredDate | null;
     edits_team_slug: Run['editsTeamSlug'];
     analysis_source_run_id: Run['analysisSourceRunId'];

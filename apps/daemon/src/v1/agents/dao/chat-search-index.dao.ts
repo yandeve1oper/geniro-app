@@ -17,6 +17,7 @@ import type {
   ChatTextMatch,
   GlobalChatSearchQuery,
 } from '../chat.types';
+import { activityWindowOf, runIdsActiveIn } from '../utils/run-activity';
 
 @Injectable()
 export class ChatSearchIndexDao extends BaseDao<Item> {
@@ -66,6 +67,14 @@ export class ChatSearchIndexDao extends BaseDao<Item> {
     }
     if (options.cwd) {
       query = query.where('r.cwd', '=', options.cwd);
+    }
+    const window = activityWindowOf(options);
+    if (window !== undefined) {
+      query = query.where(
+        'r.id',
+        'in',
+        runIdsActiveIn(this.database(), window),
+      );
     }
     return query
       .orderBy('chat_text.rank')

@@ -31,6 +31,7 @@ import { reportRendererIssue } from '../debug/report-ui-errors';
  */
 export type ChatListScope = ListChatsScopeEnum;
 import type { AgentNotice } from '../notifications/run-notifications';
+import { type ActivityWindow, windowQuery } from './activity-window';
 import type { CallConversationLoader } from './call-conversation';
 import {
   previewMessageOf,
@@ -59,6 +60,8 @@ import {
   reconcileListing,
   RUN_LIST_MAX,
   RUN_LIST_PAGE,
+  sameListing,
+  sameWindow,
 } from './run-list-pages';
 import { activityAfterAnnounce, isSettledRunStatus } from './run-status';
 import { runStatusRowFields } from './run-status-row';
@@ -622,6 +625,8 @@ export interface ChatRunState {
   chatScope: ChatListScope;
   /** Switch what the sidebar covers and refetch. */
   showScope: (next: ChatListScope) => void;
+  activityWindow: ActivityWindow | null;
+  showActivityWindow: (next: ActivityWindow | null) => void;
   /** Prepend a freshly created run, leaving the archive if that is what is up. */
   addRun: (run: ChatRun) => void;
   /**
@@ -690,6 +695,10 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
    */
   const [chatScope, setChatScope] = useState<ChatListScope>('active');
   const chatScopeRef = useRef<ChatListScope>('active');
+  const [activityWindow, setActivityWindow] = useState<ActivityWindow | null>(
+    null,
+  );
+  const activityWindowRef = useRef<ActivityWindow | null>(null);
   /**
    * Which `refreshRuns` call the list on screen belongs to.
    *
@@ -1456,9 +1465,11 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
   );
 
   /** The listing in flight per scope, and whether it was asked for again meanwhile. */
-  const listingRef = useRef<{ scope: ChatListScope; rerun: boolean } | null>(
-    null,
-  );
+  const listingRef = useRef<{
+    scope: ChatListScope;
+    window: ActivityWindow | null;
+    rerun: boolean;
+  } | null>(null);
   /** How far a paged scope's listing has read; null on the desk. */
   const pagesRef = useRef<ListingPages | null>(null);
   const [hasOlderRuns, setHasOlderRuns] = useState(false);
@@ -1520,6 +1531,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
       return;
     }
     const scope = chatScopeRef.current;
+    const window = activityWindowRef.current;
     // ONE listing per scope at a time, and one more after it however many were
     // asked for meanwhile: callers fire in bursts (a reconnect, a refile, a
     // press), each listing is real daemon work on a synchronous database, and
@@ -1527,15 +1539,20 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
     // different scope still supersedes: that is the user changing what the
     // list is for.
     const inFlight = listingRef.current;
-    if (inFlight !== null && inFlight.scope === scope) {
+    if (
+      inFlight !== null &&
+      inFlight.scope === scope &&
+      sameWindow(inFlight.window, window)
+    ) {
       inFlight.rerun = true;
       return;
     }
-    const listing = { scope, rerun: false };
+    const listing = { scope, window, rerun: false };
     listingRef.current = listing;
     const generation = ++refreshGenerationRef.current;
-    const previous =
-      pagesRef.current?.scope === scope ? pagesRef.current : null;
+    const previous = sameListing(pagesRef.current, scope, window)
+      ? pagesRef.current
+      : null;
     // A re-list keeps the depth already read, so a refresh never takes rows
     // the user paged to out from under them.
     const paged = isPagedScope(scope);
@@ -1553,7 +1570,9 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
       // The param is omitted for the default rather than sent as `'active'`,
       // so the common request is the one the daemon reads with no query at all.
       chatApi.listChats(
-        chatWanted === null ? {} : { scope, limit: probeLimit(chatWanted) },
+        chatWanted === null
+          ? { ...windowQuery(window) }
+          : { scope, limit: probeLimit(chatWanted), ...windowQuery(window) },
       ),
       // The SAME scope to both halves, and the same omit-the-default rule.
       // Team runs used to be excluded from `archived` outright, on the
@@ -1561,7 +1580,9 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
       // question about how much of the shelf to show and never about the run
       // kind.
       teamApi.listTeamRuns(
-        runWanted === null ? {} : { scope, limit: probeLimit(runWanted) },
+        runWanted === null
+          ? { ...windowQuery(window) }
+          : { scope, limit: probeLimit(runWanted), ...windowQuery(window) },
       ),
     ])
       .then(([chats, teamRuns]) => {
@@ -1602,13 +1623,15 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
         // past what one request may ask for — and is kept, so the next page
         // continues below what is on screen.
         const horizon = listedDepth === null ? null : horizonOf(listedDepth);
-        const current =
-          pagesRef.current?.scope === scope ? pagesRef.current : null;
+        const current = sameListing(pagesRef.current, scope, window)
+          ? pagesRef.current
+          : null;
         const pages =
           listedDepth === null
             ? null
             : {
                 scope,
+                window,
                 chats: deepest(listedDepth.chats, current?.chats),
                 runs: deepest(listedDepth.runs, current?.runs),
               };
@@ -1618,6 +1641,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
           heldBefore: current?.held ?? [],
           horizon,
           scope,
+          window,
           deleted,
           takenInSince: (runId) =>
             (takenInRef.current.get(runId) ?? -1) >= generation,
@@ -1667,7 +1691,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
     const pages = pagesRef.current;
     if (
       pages === null ||
-      pages.scope !== chatScopeRef.current ||
+      !sameListing(pages, chatScopeRef.current, activityWindowRef.current) ||
       loadingOlderRunsRef.current
     ) {
       return;
@@ -1678,7 +1702,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
       fetch: (query: ListPageQuery) => Promise<ChatRun[]>,
     ): Promise<ChatRun[]> =>
       depth.hasMore && depth.oldest !== null
-        ? fetch(olderPageQuery(pages.scope, depth.oldest))
+        ? fetch(olderPageQuery(pages.scope, pages.window, depth.oldest))
         : Promise.resolve([]);
     loadingOlderRunsRef.current = true;
     setLoadingOlderRuns(true);
@@ -1695,6 +1719,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
         }
         const next = {
           scope: pages.scope,
+          window: pages.window,
           chats: pages.chats.hasMore ? deeper(pages.chats, chats) : pages.chats,
           runs: pages.runs.hasMore ? deeper(pages.runs, teamRuns) : pages.runs,
         };
@@ -1772,7 +1797,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
             ),
             ...rows.filter((run) => run.id !== runId),
           ];
-          if (inScope(row, chatScopeRef.current)) {
+          if (inScope(row, chatScopeRef.current, activityWindowRef.current)) {
             setRuns((prev) => newestFirst(replace(prev)));
             setOffScopeRuns((prev) =>
               prev.some((run) => run.id === runId)
@@ -1810,6 +1835,15 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
       // flicker: the active listing runs the pull-request capture pass, which
       // is seconds on its first sweep, and an empty sidebar under "Loading
       // chats…" for that long is the worse of the two.
+      refreshRuns();
+    },
+    [refreshRuns],
+  );
+
+  const showActivityWindow = useLatestCallback(
+    (next: ActivityWindow | null): void => {
+      activityWindowRef.current = next;
+      setActivityWindow(next);
       refreshRuns();
     },
     [refreshRuns],
@@ -1859,7 +1893,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
    */
   const placeRun = useLatestCallback(
     (run: ChatRun, closeOpen: () => void, keepLiveCounts = false): void => {
-      if (inScope(run, chatScopeRef.current)) {
+      if (inScope(run, chatScopeRef.current, activityWindowRef.current)) {
         // Read off the row being replaced inside the updater, never off
         // `runsRef`: an announce that moved the counts may not have rendered yet.
         setRuns((prev) =>
@@ -1925,7 +1959,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
             if (next === undefined) {
               return [row];
             }
-            if (!inScope(next, pages.scope)) {
+            if (!inScope(next, pages.scope, pages.window)) {
               return [];
             }
             const stages = laterStages(row.stages, next.stages);
@@ -1942,7 +1976,9 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
           placeRun(run, closeOpen, true);
         } else if (heldIds.has(run.id)) {
           continue;
-        } else if (inScope(run, chatScopeRef.current)) {
+        } else if (
+          inScope(run, chatScopeRef.current, activityWindowRef.current)
+        ) {
           // Asked for by itself for the same reason: the listing's own
           // projection carries the counts this broadcast cannot.
           takeInRun(run.id);
@@ -3331,6 +3367,8 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
     loadOlderRuns,
     chatScope,
     showScope,
+    activityWindow,
+    showActivityWindow,
     addRun,
     placeRun,
     dropRun,

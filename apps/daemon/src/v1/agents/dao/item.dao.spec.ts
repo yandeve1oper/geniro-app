@@ -946,10 +946,21 @@ describe('ItemDao (in-memory sqlite)', () => {
   });
 
   describe('runPreviews', () => {
+    async function runs(...ids: string[]): Promise<void> {
+      for (const id of ids) {
+        await new RunDao(orm.em.fork()).create({
+          id,
+          status: 'completed',
+          teamId: null,
+        });
+      }
+    }
+
     it('dates each run by its NEWEST row, of any kind, beside its preview line', async () => {
       // The sidebar's last activity. A tool row after the last message is
       // still the conversation doing something, so it is not the message that
       // dates it — and a run with no rows at all has no activity to report.
+      await runs('run-a', 'run-empty');
       await dao.create({
         runId: 'run-a',
         seq: 0,
@@ -975,6 +986,44 @@ describe('ItemDao (in-memory sqlite)', () => {
         lastMessage: null,
         lastActivityAt: null,
       });
+    });
+
+    it('dates a run by its highest seq and skips a soft-deleted newest row', async () => {
+      await runs('run-a', 'run-b');
+      await dao.create({
+        runId: 'run-a',
+        seq: 2,
+        kind: 'message',
+        payload: JSON.stringify({ text: 'late seq, early clock' }),
+        createdAt: new Date(2_000),
+      });
+      await dao.create({
+        runId: 'run-a',
+        seq: 1,
+        kind: 'message',
+        payload: JSON.stringify({ text: 'early seq, late clock' }),
+        createdAt: new Date(9_000),
+      });
+      await dao.create({
+        runId: 'run-b',
+        seq: 1,
+        kind: 'message',
+        payload: JSON.stringify({ text: 'kept' }),
+        createdAt: new Date(3_000),
+      });
+      await dao.create({
+        runId: 'run-b',
+        seq: 2,
+        kind: 'message',
+        payload: JSON.stringify({ text: 'deleted' }),
+        createdAt: new Date(8_000),
+        deletedAt: new Date(8_500),
+      });
+
+      const latest = await dao.latestItemAtPerRun(['run-a', 'run-b']);
+
+      expect(latest.get('run-a')).toEqual(new Date(2_000));
+      expect(latest.get('run-b')).toEqual(new Date(3_000));
     });
   });
 

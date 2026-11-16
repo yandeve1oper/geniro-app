@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { AgentKindSchema } from '../../runs/runs.types';
 import {
   ActionPressWireSchema,
+  ActivityWindowFields,
   AgentOptionsSchema,
   AppProcessesWireSchema,
   AttachmentMediaTypeSchema,
@@ -51,6 +52,10 @@ import {
   ThreadOverviewWireSchema,
   WaitingMessageSchema,
 } from '../chat.types';
+import {
+  isOrderedWindow,
+  UNORDERED_WINDOW_MESSAGE,
+} from '../utils/run-activity';
 
 /**
  * HTTP DTOs for the chat routes.
@@ -490,12 +495,14 @@ export const listChatsQuerySchema = z
      * client takes in a row it was never handed.
      */
     runId: z.string().min(1).max(200).optional(),
+    ...ActivityWindowFields,
   })
   .refine(
     (query) =>
       (query.beforeCreatedAt === undefined) === (query.beforeId === undefined),
     { message: 'beforeCreatedAt and beforeId name one cursor together' },
-  );
+  )
+  .refine(isOrderedWindow, { message: UNORDERED_WINDOW_MESSAGE });
 export class ListChatsQueryDto extends createZodDto(listChatsQuerySchema) {}
 
 export const deleteRunQuerySchema = z.object({

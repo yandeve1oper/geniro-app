@@ -58,7 +58,7 @@ export class ListThreadsTool extends BaseMcpTool {
       }
       return this.text(
         historyResultText(
-          { threads: await this.threads.listThreads(runId, read.query) },
+          await this.threads.listThreads(runId, read.query),
           THREAD_LIST_PREFACE,
         ),
       );

@@ -31,6 +31,34 @@ describe('runListPageOf', () => {
     });
   });
 
+  it('reads the activity window, keeping the offset the caller wrote', () => {
+    const page = runListPageOf(
+      listChatsQuerySchema.parse({
+        activeSince: '2026-11-16T00:00:00+03:00',
+        activeUntil: '2026-11-17T00:00:00.000Z',
+      }),
+    );
+
+    expect(page).toEqual({
+      active: {
+        since: new Date('2026-11-15T21:00:00.000Z'),
+        until: new Date('2026-11-17T00:00:00.000Z'),
+      },
+    });
+  });
+
+  it.each([
+    ['at', '2026-11-16T00:00:00.000Z'],
+    ['before', '2026-11-15T00:00:00.000Z'],
+  ])('refuses a window that ends %s its start', (_label, until) => {
+    expect(
+      listChatsQuerySchema.safeParse({
+        activeSince: '2026-11-16T00:00:00.000Z',
+        activeUntil: until,
+      }).success,
+    ).toBe(false);
+  });
+
   it('refuses half a cursor', () => {
     expect(
       listChatsQuerySchema.safeParse({

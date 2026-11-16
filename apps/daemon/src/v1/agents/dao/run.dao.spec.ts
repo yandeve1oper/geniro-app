@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Item } from '../../runs/entity/item.entity';
 import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
+import type { ThreadListCursor, ThreadListFilter } from '../chat.types';
 import { ItemDao } from './item.dao';
 import { RunDao } from './run.dao';
 
@@ -371,16 +372,167 @@ describe('RunDao (in-memory sqlite)', () => {
     });
   });
 
+  describe('activity window', () => {
+    const SINCE = new Date('2026-11-16T00:00:00.000Z');
+    const UNTIL = new Date('2026-11-17T00:00:00.000Z');
+
+    async function touched(run: { id: string }, ...at: Date[]): Promise<void> {
+      const items = new ItemDao(orm.em.fork());
+      for (const [seq, createdAt] of at.entries()) {
+        await items.create({
+          runId: run.id,
+          seq,
+          kind: 'message',
+          payload: JSON.stringify({ text: `m${seq}` }),
+          createdAt,
+        });
+      }
+    }
+
+    it('lists a run whose newest row is at the start, never one at the end, before it, or with no rows', async () => {
+      const atStart = await dao.create({ createdAt: new Date(4_000) });
+      const atEnd = await dao.create({ createdAt: new Date(3_000) });
+      const before = await dao.create({ createdAt: new Date(2_000) });
+      await dao.create({ createdAt: new Date(1_000) });
+      await touched(atStart, SINCE);
+      await touched(atEnd, UNTIL);
+      await touched(before, new Date(SINCE.getTime() - 1));
+
+      const listed = await dao.listChats('all', undefined, {
+        active: { since: SINCE, until: UNTIL },
+      });
+
+      expect(listed.map((run) => run.id)).toEqual([atStart.id]);
+    });
+
+    it('dates a run by its newest row, so one created long ago and touched inside the window is listed', async () => {
+      const old = await dao.create({
+        createdAt: new Date('2026-11-01T00:00:00.000Z'),
+      });
+      const leftBehind = await dao.create({
+        createdAt: new Date('2026-11-02T00:00:00.000Z'),
+      });
+      await touched(
+        old,
+        new Date('2026-11-01T00:01:00.000Z'),
+        new Date('2026-11-16T09:00:00.000Z'),
+      );
+      await touched(leftBehind, new Date('2026-11-15T23:59:59.999Z'));
+
+      const listed = await dao.listChats('all', undefined, {
+        active: { since: SINCE },
+      });
+
+      expect(listed.map((run) => run.id)).toEqual([old.id]);
+    });
+
+    it('pages the chat listing below a cursor inside the window, archived chats on the archived shelf only', async () => {
+      const today = new Date('2026-11-16T09:00:00.000Z');
+      const newest = await dao.create({
+        createdAt: new Date(3_000),
+        archivedAt: new Date('2026-11-16T10:00:00.000Z'),
+      });
+      const middle = await dao.create({
+        createdAt: new Date(2_000),
+        archivedAt: new Date('2026-11-16T10:00:00.000Z'),
+      });
+      const oldest = await dao.create({ createdAt: new Date(1_000) });
+      await touched(newest, today);
+      await touched(middle, today);
+      await touched(oldest, today);
+      const active = { since: SINCE };
+
+      expect(
+        (
+          await dao.listChats('archived', undefined, {
+            active,
+            before: { createdAt: newest.createdAt, id: newest.id },
+          })
+        ).map((run) => run.id),
+      ).toEqual([middle.id]);
+      expect(
+        (
+          await dao.listChats('all', undefined, {
+            active,
+            before: { createdAt: newest.createdAt, id: newest.id },
+          })
+        ).map((run) => run.id),
+      ).toEqual([middle.id, oldest.id]);
+    });
+
+    it('keeps the scope beside the window, for team runs as for chats', async () => {
+      const live = await dao.create({
+        teamId: 'wf-1',
+        createdAt: new Date(2_000),
+      });
+      const archived = await dao.create({
+        teamId: 'wf-1',
+        createdAt: new Date(1_000),
+        archivedAt: new Date('2026-11-16T10:00:00.000Z'),
+      });
+      await touched(live, new Date('2026-11-16T08:00:00.000Z'));
+      await touched(archived, new Date('2026-11-16T09:00:00.000Z'));
+      const window = { active: { since: SINCE } };
+
+      expect(
+        (await dao.listTeamRuns('active', undefined, window)).map((r) => r.id),
+      ).toEqual([live.id]);
+      expect(
+        (await dao.listTeamRuns('all', undefined, window)).map((r) => r.id),
+      ).toEqual([live.id, archived.id]);
+      expect(
+        (await dao.listTeamRuns('archived', undefined, window)).map(
+          (r) => r.id,
+        ),
+      ).toEqual([archived.id]);
+    });
+  });
+
   describe('listThreads', () => {
-    it('leaves out archived threads, builder chats, project chats and both kinds of analysis, and keeps team runs', async () => {
+    async function threads(
+      filter: Partial<ThreadListFilter> = {},
+    ): Promise<string[]> {
+      const page = await dao.listThreads({
+        excludeRunId: 'caller',
+        callerProjectId: null,
+        query: null,
+        includeArchived: false,
+        projectId: null,
+        window: undefined,
+        after: null,
+        limit: 50,
+        ...filter,
+      });
+      return page.runs.map(({ run }) => run.id);
+    }
+
+    async function touched(
+      run: { id: string },
+      ...rows: { at: Date; role?: string; inCall?: string }[]
+    ): Promise<void> {
+      const items = new ItemDao(orm.em.fork());
+      for (const [seq, row] of rows.entries()) {
+        await items.create({
+          runId: run.id,
+          seq,
+          kind: 'message',
+          role: row.role ?? 'assistant',
+          inCall: row.inCall ?? null,
+          payload: JSON.stringify({ text: `m${seq}` }),
+          createdAt: row.at,
+        });
+      }
+    }
+
+    it('leaves out archived threads, builder chats, project chats, both kinds of analysis and the caller, and keeps team runs', async () => {
       const chat = await dao.create({
         title: 'Pelican',
-        updatedAt: new Date(2_000),
+        createdAt: new Date(2_000),
       });
       const teamRun = await dao.create({
         title: 'Pelican team',
         teamId: 'wf-1',
-        updatedAt: new Date(3_000),
+        createdAt: new Date(3_000),
       });
       await dao.create({
         title: 'Pelican archived',
@@ -399,59 +551,221 @@ describe('RunDao (in-memory sqlite)', () => {
         title: 'Pelican team analysis',
         analysisTeamSlug: 'dev-team',
       });
+      await dao.create({ id: 'caller', createdAt: new Date(8_000) });
 
-      const threads = await dao.listThreads(null, 50);
-
-      expect(threads.map((run) => run.id)).toEqual([teamRun.id, chat.id]);
+      expect(await threads()).toEqual([teamRun.id, chat.id]);
     });
 
-    it('lists the threads last worked in first', async () => {
-      const older = await dao.create({
-        title: 'older',
-        updatedAt: new Date(1_000),
+    it('lists the last active first, a thread with no rows dated by its creation', async () => {
+      const older = await dao.create({ createdAt: new Date(1_000) });
+      const quiet = await dao.create({ createdAt: new Date(2_500) });
+      const newest = await dao.create({ createdAt: new Date(500) });
+      await touched(older, { at: new Date(2_000) });
+      await touched(newest, { at: new Date(3_000) });
+
+      expect(await threads()).toEqual([newest.id, quiet.id, older.id]);
+    });
+
+    it('lists the caller’s own project first', async () => {
+      const elsewhere = await dao.create({
+        projectId: 'p2',
+        createdAt: new Date(3_000),
       });
-      const newest = await dao.create({
-        title: 'newest',
-        updatedAt: new Date(3_000),
-      });
-      const middle = await dao.create({
-        title: 'middle',
-        updatedAt: new Date(2_000),
+      const own = await dao.create({
+        projectId: 'p1',
+        createdAt: new Date(1_000),
       });
 
-      const threads = await dao.listThreads(null, 50);
-
-      expect(threads.map((run) => run.id)).toEqual([
-        newest.id,
-        middle.id,
-        older.id,
+      expect(await threads({ callerProjectId: 'p1' })).toEqual([
+        own.id,
+        elsewhere.id,
       ]);
     });
 
-    it('narrows the listing to the titles that hold the query', async () => {
+    it('narrows the listing to the titles that hold the query, and to one project', async () => {
       const build = await dao.create({
         title: 'Pelican build',
-        updatedAt: new Date(3_000),
+        projectId: 'p1',
+        createdAt: new Date(3_000),
       });
-      await dao.create({ title: 'Otter build', updatedAt: new Date(2_000) });
+      await dao.create({ title: 'Otter build', createdAt: new Date(2_000) });
       const review = await dao.create({
         title: 'Review: Pelican',
-        updatedAt: new Date(1_000),
+        projectId: 'p2',
+        createdAt: new Date(1_000),
       });
 
-      const threads = await dao.listThreads('pelican', 50);
-
-      expect(threads.map((run) => run.id)).toEqual([build.id, review.id]);
+      expect(await threads({ query: 'pelican' })).toEqual([
+        build.id,
+        review.id,
+      ]);
+      expect(await threads({ projectId: 'p2' })).toEqual([review.id]);
     });
 
-    it('holds the limit to the newest threads', async () => {
-      await dao.create({ title: 'a', updatedAt: new Date(1_000) });
-      const b = await dao.create({ title: 'b', updatedAt: new Date(2_000) });
-      const c = await dao.create({ title: 'c', updatedAt: new Date(3_000) });
+    it('takes the window on the newest row: the start inclusive, the end exclusive, archived threads only when asked', async () => {
+      const since = new Date('2026-11-16T00:00:00.000Z');
+      const until = new Date('2026-11-17T00:00:00.000Z');
+      const lastWeek = await dao.create({
+        createdAt: new Date('2026-11-09T10:00:00.000Z'),
+      });
+      const archivedToday = await dao.create({
+        createdAt: new Date('2026-11-16T08:00:00.000Z'),
+        archivedAt: new Date('2026-11-16T08:30:00.000Z'),
+      });
+      const atEnd = await dao.create({ createdAt: new Date(1_000) });
+      const yesterday = await dao.create({ createdAt: new Date(1_000) });
+      await dao.create({ createdAt: new Date('2026-11-16T09:00:00.000Z') });
+      await touched(
+        lastWeek,
+        { at: new Date('2026-11-09T10:00:00.000Z') },
+        { at: since },
+      );
+      await touched(archivedToday, {
+        at: new Date('2026-11-16T08:05:00.000Z'),
+      });
+      await touched(atEnd, { at: until });
+      await touched(yesterday, { at: new Date(since.getTime() - 1) });
+      const window = { since, until };
 
-      const threads = await dao.listThreads(null, 2);
+      expect(await threads({ window })).toEqual([lastWeek.id]);
+      expect(await threads({ window, includeArchived: true })).toEqual([
+        archivedToday.id,
+        lastWeek.id,
+      ]);
+    });
 
-      expect(threads.map((run) => run.id)).toEqual([c.id, b.id]);
+    it('dates each thread’s last user message from its own conversation only', async () => {
+      const run = await dao.create({ teamId: 'wf-1' });
+      await touched(
+        run,
+        { at: new Date(1_000), role: 'user' },
+        { at: new Date(2_000), role: 'user', inCall: 'call-1' },
+        { at: new Date(3_000) },
+      );
+      const items = new ItemDao(orm.em.fork());
+      await items.create({
+        runId: run.id,
+        seq: 3,
+        kind: 'message',
+        role: 'user',
+        payload: JSON.stringify({
+          text: 'a delegate brief',
+          parentToolUseId: 'toolu_1',
+        }),
+        createdAt: new Date(2_100),
+      });
+      await items.create({
+        runId: run.id,
+        seq: 4,
+        kind: 'message',
+        role: 'user',
+        payload: JSON.stringify({ text: 'withdrawn' }),
+        createdAt: new Date(2_200),
+        deletedAt: new Date(2_300),
+      });
+      await items.create({
+        runId: run.id,
+        seq: 5,
+        kind: 'tool_result',
+        role: 'user',
+        payload: JSON.stringify({ id: 't1' }),
+        createdAt: new Date(2_400),
+      });
+
+      const page = await dao.listThreads({
+        excludeRunId: 'caller',
+        callerProjectId: null,
+        query: null,
+        includeArchived: false,
+        projectId: null,
+        window: undefined,
+        after: null,
+        limit: 50,
+      });
+
+      expect(page.runs[0]).toMatchObject({
+        lastActivityAt: new Date(2_400),
+        lastUserMessageAt: new Date(1_000),
+      });
+    });
+
+    it('pages across the caller’s own project and the rest, with the window and the archive applied', async () => {
+      const since = new Date('2026-11-16T00:00:00.000Z');
+      const make = async (
+        id: string,
+        projectId: string,
+        at: string,
+        archived = false,
+      ): Promise<void> => {
+        const run = await dao.create({
+          id,
+          projectId,
+          createdAt: new Date(1_000),
+          archivedAt: archived ? new Date('2026-11-16T20:00:00.000Z') : null,
+        });
+        await touched(run, { at: new Date(at) });
+      };
+      await make('own-old', 'p1', '2026-11-16T08:00:00.000Z');
+      await make('own-new', 'p1', '2026-11-16T09:00:00.000Z', true);
+      await make('other-new', 'p2', '2026-11-16T10:00:00.000Z');
+      await make('other-old', 'p2', '2026-11-16T07:00:00.000Z', true);
+      await make('other-before', 'p2', '2026-11-15T23:00:00.000Z');
+
+      const seen: string[] = [];
+      let after: ThreadListCursor | null = null;
+      for (let page = 0; page < 5; page += 1) {
+        const listed = await dao.listThreads({
+          excludeRunId: 'caller',
+          callerProjectId: 'p1',
+          query: null,
+          includeArchived: true,
+          projectId: null,
+          window: { since },
+          after,
+          limit: 1,
+        });
+        seen.push(...listed.runs.map(({ run }) => run.id));
+        after = listed.next;
+        if (after === null) {
+          break;
+        }
+      }
+
+      expect(seen).toEqual(['own-new', 'own-old', 'other-new', 'other-old']);
+    });
+
+    it('pages through every thread once, ties on the same instant included', async () => {
+      const ids: string[] = [];
+      for (let at = 0; at < 5; at += 1) {
+        const run = await dao.create({
+          id: `run-${at}`,
+          createdAt: new Date(at < 3 ? 1_000 : at * 1_000),
+        });
+        ids.push(run.id);
+      }
+
+      const seen: string[] = [];
+      let after: ThreadListCursor | null = null;
+      for (let page = 0; page < 5; page += 1) {
+        const listed = await dao.listThreads({
+          excludeRunId: 'caller',
+          callerProjectId: null,
+          query: null,
+          includeArchived: false,
+          projectId: null,
+          window: undefined,
+          after,
+          limit: 2,
+        });
+        seen.push(...listed.runs.map(({ run }) => run.id));
+        after = listed.next;
+        if (after === null) {
+          break;
+        }
+      }
+
+      expect(seen).toEqual(['run-4', 'run-3', 'run-2', 'run-1', 'run-0']);
+      expect(new Set(seen)).toEqual(new Set(ids));
     });
   });
 
@@ -1233,9 +1547,20 @@ describe('RunDao (in-memory sqlite)', () => {
       expect((await dao.listChats('active')).map((r) => r.id)).toEqual([
         kept.id,
       ]);
-      expect((await dao.listThreads(null, 50)).map((r) => r.id)).toEqual([
-        kept.id,
-      ]);
+      expect(
+        (
+          await dao.listThreads({
+            excludeRunId: 'caller',
+            callerProjectId: null,
+            query: null,
+            includeArchived: false,
+            projectId: null,
+            window: undefined,
+            after: null,
+            limit: 50,
+          })
+        ).runs.map(({ run }) => run.id),
+      ).toEqual([kept.id]);
       expect(await dao.countByShelf()).toEqual({ active: 1, archived: 0 });
     });
 

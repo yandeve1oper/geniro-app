@@ -21,6 +21,22 @@ describe('readSearchChatsArgs', () => {
     expect(read.ok).toBe(false);
   });
 
+  it.each([
+    ['equal', '2026-11-16T00:00:00Z', '2026-11-16T00:00:00Z'],
+    ['reversed', '2026-11-17T00:00:00Z', '2026-11-16T00:00:00Z'],
+  ])('refuses a window whose bounds are %s', (_label, since, until) => {
+    expect(
+      readSearchChatsArgs({
+        query: 'retry',
+        activeSince: since,
+        activeUntil: until,
+      }).ok,
+    ).toBe(false);
+    expect(readSearchChatsArgs({ query: 'retry', activeSince: until }).ok).toBe(
+      true,
+    );
+  });
+
   it('refuses a query too short to search', () => {
     expect(readSearchChatsArgs({ query: 'x' }).ok).toBe(false);
   });
