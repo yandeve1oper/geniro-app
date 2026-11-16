@@ -16,7 +16,11 @@ import {
   isPlainSessionId,
   SESSION_ID_INVALID_MESSAGE,
 } from '../../utils/session-id';
-import type { AcpTurnOptions, AutoDecision } from '../acp/acp-driver';
+import type {
+  AcpConversationReading,
+  AcpTurnOptions,
+  AutoDecision,
+} from '../acp/acp-driver';
 import {
   ACP_MODEL_CONFIG_CATEGORY,
   acpModelProbeFrames,
@@ -162,6 +166,7 @@ import {
 } from './utils/cursor-account.utils';
 import { readCursorAgentFailure } from './utils/cursor-agent-failure.utils';
 import { readCursorContextUsage } from './utils/cursor-context-store.utils';
+import { readCursorConversation } from './utils/cursor-conversation-store.utils';
 import { seedCursorDataDir } from './utils/cursor-data-dir.utils';
 import {
   locateCursorDelegateTranscript,
@@ -2734,19 +2739,7 @@ export class CursorAcpAdapter extends AgentAdapter {
    * second copy of the path join is a second thing to get wrong.
    */
   private readSessionContext(sessionId: string): AgentContextUsage | null {
-    // The same guard its twin below applies, and for the same reason: the id
-    // reaches a path as a DIRECTORY component. It is the AGENT's own string —
-    // `node_state.agentSessionId` is written from the CLI's `session/new` reply
-    // — so a separator in it points this read-only SQLite open outside the
-    // store. Both readers of `sessionStoreDir()` now pass through here.
-    if (!isPlainSessionId(sessionId)) {
-      return null;
-    }
-    const path = join(
-      this.sessionStoreDir(),
-      sessionId,
-      CURSOR_SESSION_STORE_DB_NAME,
-    );
+    const path = this.sessionStorePath(sessionId);
     // A store that does not exist yet is the NORMAL state of a conversation's
     // first turn — the CLI writes it when it first accounts for the window — so
     // it is answered here rather than handed to the reader, which would say so
@@ -2754,7 +2747,38 @@ export class CursorAcpAdapter extends AgentAdapter {
     // failed to read, and worthless once it fires for every new chat: the turn
     // driver now takes a reading per turn, and a channel that warns when
     // nothing is wrong is one people learn to skip.
-    return existsSync(path) ? readCursorContextUsage(path, this.warn) : null;
+    return path !== null && existsSync(path)
+      ? readCursorContextUsage(path, this.warn)
+      : null;
+  }
+
+  /** The conversation the CLI saved for a session; a store not written yet holds none. */
+  private readSessionConversation(
+    sessionId: string,
+    fromMessage: number,
+  ): AcpConversationReading | null {
+    const path = this.sessionStorePath(sessionId);
+    if (path === null) {
+      return null;
+    }
+    return existsSync(path)
+      ? readCursorConversation(path, fromMessage, this.warn)
+      : { messages: 0, userTexts: [] };
+  }
+
+  private sessionStorePath(sessionId: string): string | null {
+    // The id reaches a path as a DIRECTORY component. It is the AGENT's own
+    // string — `node_state.agentSessionId` is written from the CLI's
+    // `session/new` reply — so a separator in it points a read-only SQLite open
+    // outside the store.
+    if (!isPlainSessionId(sessionId)) {
+      return null;
+    }
+    return join(
+      this.sessionStoreDir(),
+      sessionId,
+      CURSOR_SESSION_STORE_DB_NAME,
+    );
   }
 
   /**
@@ -3459,6 +3483,8 @@ export class CursorAcpAdapter extends AgentAdapter {
             prompt: cursorTransientResumePrompt,
             delaysMs: CURSOR_TRANSIENT_RESUME_DELAYS_MS,
             maxPerTurn: CURSOR_TRANSIENT_RESUME_MAX_PER_TURN,
+            readConversation: (sessionId, fromMessage) =>
+              this.readSessionConversation(sessionId, fromMessage),
           },
         },
         // The SAME store the readout reads, put on the turn's event stream — and,

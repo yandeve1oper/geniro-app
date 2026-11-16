@@ -512,7 +512,22 @@ export interface AcpAgentFailureProtocol {
     delaysMs: readonly number[];
     /** The most resumes one turn gets in all, whatever progress came between them. */
     maxPerTurn: number;
+    /**
+     * The conversation the CLI has SAVED for a session, read from outside the
+     * protocol, so a resume can tell whether the request it continues survived
+     * the failure. Null when it cannot be read; absent when the CLI keeps none.
+     */
+    readConversation?: (
+      sessionId: string,
+      fromMessage: number,
+    ) => AcpConversationReading | null;
   };
+}
+
+/** A session's saved conversation: its length, and its user messages from an index on. */
+export interface AcpConversationReading {
+  messages: number;
+  userTexts: readonly string[];
 }
 
 /** What one agent told us about its task list, normalized. */
@@ -1186,6 +1201,17 @@ function sameContextReading(
   );
 }
 
+const PROMPT_PROBE_CHARS = 400;
+
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function promptProbe(prompt: string): string | null {
+  const probe = collapseWhitespace(prompt).slice(0, PROMPT_PROBE_CHARS);
+  return probe.length > 0 ? probe : null;
+}
+
 /** A resume pause as the transcript says it: `15s`, `1 min`, `3 min`. */
 export function formatPause(ms: number): string {
   const seconds = Math.round(ms / 1000);
@@ -1408,15 +1434,14 @@ export class AcpTurnDriver {
   private progressedSinceResume = false;
   /**
    * Whether this turn has produced anything of the agent's own — a message, a
-   * thought or a tool call — which is what tells a resume whether the prompt
-   * it continues was ever saved. A request that died before its first step
-   * may not have been: on run 1b0f91aa (session fd93ef04) cursor's store held
-   * no copy of a callee's brief, the bare continuation became the
-   * conversation's FIRST message, and the agent went looking through other
-   * sessions' transcripts for something to continue — and finished their work.
-   * See {@link sendResume}.
+   * thought or a tool call. The fallback a resume decides by when the CLI's
+   * saved conversation cannot be read: a request that died before its first
+   * step may never have been saved. See {@link sendResume}.
    */
   private requestProgressed = false;
+  /** How many messages the saved conversation held when this turn's prompt went out. */
+  private conversationAtPrompt: number | null = null;
+  private readonly sentResumes = new Set<string>();
   /**
    * The turn's prompt has ended and the turn is HELD for its background
    * delegates — see {@link AcpDelegateProtocol.wakePrompt}. Like a transient
@@ -2137,6 +2162,8 @@ export class AcpTurnDriver {
     if (this.session.sessionId === null) {
       return;
     }
+    this.conversationAtPrompt =
+      this.readSavedConversation(Number.MAX_SAFE_INTEGER)?.messages ?? null;
     const id = this.session.sendRequest(
       ACP_AGENT_METHODS.sessionPrompt,
       {
@@ -3759,20 +3786,26 @@ export class AcpTurnDriver {
   /**
    * Send the continuation prompt, answering whether it went out.
    *
-   * A turn that has produced nothing of the agent's own is sent its PROMPT
-   * again instead ({@link requestProgressed}): the continuation assumes the
-   * conversation holds the request it continues, and a request that died
-   * before its first step may never have been saved — nor the instructions it
-   * carried, which {@link AcpSession.deliveredInstructions} records on the
-   * write. A brief the conversation did keep arrives twice, which costs a
-   * repeat; a continuation of nothing sent the agent looking for work in other
-   * conversations.
+   * A turn whose request the conversation no longer holds is sent its PROMPT
+   * again ahead of the continuation ({@link requestSaved}), which still says
+   * what became of the request's sub-agents: the continuation assumes the
+   * conversation holds the request it continues, and cursor drops a failed
+   * request from it — its prompt and its steps, even after the agent acted —
+   * along with the instructions it carried, which
+   * {@link AcpSession.deliveredInstructions} records on the write. A brief the
+   * conversation did keep arrives twice, which costs a repeat; a continuation
+   * of nothing sent the agent looking for work in other conversations.
    */
   private sendResume(prompt: string, events: AgentEvent[]): boolean {
     if (this.session.sessionId === null) {
       return false;
     }
-    const resendBrief = !this.requestProgressed;
+    const resendBrief = !this.requestSaved();
+    this.session.options.logger?.debug?.(
+      resendBrief
+        ? 'acp: the resume sends the prompt again, ahead of the continuation'
+        : 'acp: the resume sends the continuation alone',
+    );
     if (
       resendBrief &&
       this.session.deliveredInstructions === this.promptInstructions
@@ -3784,7 +3817,10 @@ export class AcpTurnDriver {
       {
         sessionId: this.session.sessionId,
         prompt: resendBrief
-          ? this.composePromptBlocks(events)
+          ? [
+              ...this.composePromptBlocks(events),
+              { type: 'text', text: prompt },
+            ]
           : [{ type: 'text', text: prompt }],
       },
       'prompt',
@@ -3796,9 +3832,54 @@ export class AcpTurnDriver {
     if (resendBrief && this.promptInstructions !== null) {
       this.session.deliveredInstructions = this.promptInstructions;
     }
+    this.sentResumes.add(collapseWhitespace(prompt));
     this.latestPromptId = id;
     this.promptOutstanding = true;
     return true;
+  }
+
+  /**
+   * Whether the saved conversation holds this turn's prompt in a message added
+   * since it went out — never an earlier turn's identical one, nor the text of
+   * a continuation this turn sent, which a short prompt can be part of.
+   * Without a reading, whether the agent produced anything stands in for it.
+   */
+  private requestSaved(): boolean {
+    const probe = promptProbe(this.options.input.prompt);
+    if (this.conversationAtPrompt === null || probe === null) {
+      return this.requestProgressed;
+    }
+    const reading = this.readSavedConversation(this.conversationAtPrompt);
+    if (reading === null) {
+      return this.requestProgressed;
+    }
+    return reading.userTexts.some((text) => {
+      let rest = collapseWhitespace(text);
+      for (const resume of this.sentResumes) {
+        rest = rest.split(resume).join(' ');
+      }
+      return rest.includes(probe);
+    });
+  }
+
+  private readSavedConversation(
+    fromMessage: number,
+  ): AcpConversationReading | null {
+    const read = this.session.options.agentFailure?.resume?.readConversation;
+    const sessionId = this.session.sessionId;
+    if (read === undefined || sessionId === null) {
+      return null;
+    }
+    try {
+      return read(sessionId, fromMessage);
+    } catch (err) {
+      this.session.options.logger?.warn(
+        `acp: could not read the saved conversation (the resume falls back): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    }
   }
 
   /** Count the attempt, log the raw sentence, and tell the transcript. */

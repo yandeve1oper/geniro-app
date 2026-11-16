@@ -53,6 +53,14 @@ describe('parseStoreHeader', () => {
     expect(parseStoreHeader('{"latestRootBlobId":"root-2"}')).toBe('root-2');
   });
 
+  it('reads the empty id of a session with no checkpoint yet as empty, not unreadable', () => {
+    const hex = Buffer.from(
+      JSON.stringify({ agentId: 'a', latestRootBlobId: '' }),
+    ).toString('hex');
+
+    expect(parseStoreHeader(hex)).toBe('');
+  });
+
   it('answers null for anything it cannot read', () => {
     expect(parseStoreHeader('not json')).toBeNull();
     expect(parseStoreHeader('{"agentId":"a"}')).toBeNull();

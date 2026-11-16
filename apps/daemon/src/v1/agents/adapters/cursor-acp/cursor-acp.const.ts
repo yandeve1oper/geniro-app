@@ -1467,9 +1467,10 @@ export const CURSOR_TRANSIENT_FAILURE_PATTERN =
  * finished before the drop and whose results the server never checkpointed.
  *
  * The last sentence is for a conversation that does not hold the request at
- * all. The driver re-sends the prompt when the turn had produced nothing
- * (`AcpSession.sendResume`), but a checkpoint can still lag the agent's steps;
- * on run `1b0f91aa` an agent with nothing to continue searched other sessions'
+ * all. The driver re-sends the prompt ahead of this one whenever cursor's
+ * saved conversation lacks it (`AcpSession.sendResume`), but an unreadable
+ * store falls back to whether the turn produced anything, and a checkpoint can
+ * lag the agent's steps; on run `1b0f91aa` an agent with nothing to continue searched other sessions'
  * transcripts, found another conversation's unfinished work and carried it out.
  */
 export const CURSOR_TRANSIENT_RESUME_PROMPT =

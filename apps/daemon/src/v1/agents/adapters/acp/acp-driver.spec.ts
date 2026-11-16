@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../__tests__/temp-dir';
 import type { AgentEvent, AgentTurnInput } from '../adapter.types';
 import type {
+  AcpConversationReading,
   AcpDelegateProtocol,
   AcpSessionOptions,
   AcpTurnOptions,
@@ -2765,6 +2766,168 @@ describe('AcpSession turn completion', () => {
         .join('\n');
       expect(text).toContain('do the thing');
       expect(text).toContain(hostBlock('ROLE'));
+    });
+
+    describe('when the CLI can say what its saved conversation holds', () => {
+      const promptText = (h: Harness): string =>
+        (
+          h.sentAll('session/prompt').at(-1)!.params as {
+            prompt: { type: string; text?: string }[];
+          }
+        ).prompt
+          .map((block) => block.text ?? '')
+          .join('\n');
+
+      const reading = (
+        atResume:
+          AcpConversationReading | null | (() => AcpConversationReading | null),
+        atPrompt: AcpConversationReading | null = {
+          messages: 2,
+          userTexts: [],
+        },
+      ): {
+        overrides: Partial<AcpDriverOptions>;
+        froms: number[];
+      } => {
+        const froms: number[] = [];
+        const base = resumable();
+        const overrides: Partial<AcpDriverOptions> = {
+          composeSystemPrompt: () => 'ROLE',
+          agentFailure: {
+            ...base.agentFailure!,
+            resume: {
+              ...base.agentFailure!.resume!,
+              readConversation: (sessionId, fromMessage) => {
+                expect(sessionId).toBe('s');
+                froms.push(fromMessage);
+                if (fromMessage === Number.MAX_SAFE_INTEGER) {
+                  return atPrompt;
+                }
+                return typeof atResume === 'function' ? atResume() : atResume;
+              },
+            },
+          },
+        };
+        return { overrides, froms };
+      };
+      const SAVED_BRIEF = {
+        messages: 3,
+        userTexts: ['<user_query>\ndo the thing\n</user_query>'],
+      };
+
+      it('re-sends the brief when the conversation dropped the request the agent had already acted on', () => {
+        const { overrides, froms } = reading({
+          messages: 3,
+          userTexts: [
+            '<user_query>\ncontinue where you left off\n</user_query>',
+          ],
+        });
+        const h = primed(overrides);
+        h.feed(chunk('agent_message_chunk', 'Running the command.'));
+        h.feed(chunk('agent_message_chunk', DROP));
+
+        h.feed({ id: 3, result: { stopReason: 'end_turn' } });
+
+        expect(froms).toEqual([Number.MAX_SAFE_INTEGER, 2]);
+        expect(promptText(h)).toContain('do the thing');
+        expect(promptText(h)).toContain(hostBlock('ROLE'));
+        expect(promptText(h).endsWith('continue where you left off')).toBe(
+          true,
+        );
+      });
+
+      it('sends the bare continuation when a message added since the prompt holds it', () => {
+        const { overrides, froms } = reading({
+          messages: 4,
+          userTexts: [
+            '<timestamp>Friday</timestamp>\n<user_query>\ndo  the\nthing\n</user_query>',
+          ],
+        });
+        const h = primed(overrides);
+        h.feed(chunk('agent_message_chunk', DROP));
+
+        h.feed({ id: 3, result: { stopReason: 'end_turn' } });
+
+        expect(froms).toEqual([Number.MAX_SAFE_INTEGER, 2]);
+        expect(h.sentAll('session/prompt').at(-1)!.params).toEqual({
+          sessionId: 's',
+          prompt: [{ type: 'text', text: 'continue where you left off' }],
+        });
+      });
+
+      it('decides by progress when the conversation cannot be read at the resume', () => {
+        const h = primed(reading(null).overrides);
+        h.feed(chunk('agent_message_chunk', 'Running the command.'));
+        h.feed(chunk('agent_message_chunk', DROP));
+
+        h.feed({ id: 3, result: { stopReason: 'end_turn' } });
+
+        expect(promptText(h)).toBe('continue where you left off');
+      });
+
+      it('decides by progress when the conversation could not be read as the prompt went out', () => {
+        const { overrides, froms } = reading(SAVED_BRIEF, null);
+        const h = primed(overrides);
+        h.feed(chunk('agent_message_chunk', DROP));
+
+        h.feed({ id: 3, result: { stopReason: 'end_turn' } });
+
+        expect(froms).toEqual([Number.MAX_SAFE_INTEGER]);
+        expect(promptText(h)).toContain('do the thing');
+      });
+
+      it('decides by progress for a prompt with no words to look for', () => {
+        const h = primed({
+          ...reading({ messages: 3, userTexts: [] }).overrides,
+          input: { ...BASE_INPUT, prompt: '  \n ' },
+        });
+        h.feed(chunk('agent_message_chunk', 'Running the command.'));
+        h.feed(chunk('agent_message_chunk', DROP));
+
+        h.feed({ id: 3, result: { stopReason: 'end_turn' } });
+
+        expect(promptText(h)).toBe('continue where you left off');
+      });
+
+      it('does not take a saved continuation for a short prompt it contains', () => {
+        const readings = [
+          { messages: 3, userTexts: ['<user_query>\nfiller\n</user_query>'] },
+          {
+            messages: 4,
+            userTexts: [
+              '<user_query>\nfiller\n</user_query>',
+              '<user_query>\ncontinue where you left off\n</user_query>',
+            ],
+          },
+        ];
+        const h = primed({
+          ...reading(() => readings.shift() ?? null).overrides,
+          input: { ...BASE_INPUT, prompt: 'continue' },
+        });
+        h.feed(chunk('agent_message_chunk', 'Step one.'));
+        h.feed(chunk('agent_message_chunk', DROP));
+        h.feed({ id: 3, result: { stopReason: 'end_turn' } });
+        h.feed(chunk('agent_message_chunk', 'Step two.'));
+        h.feed(chunk('agent_message_chunk', DROP));
+
+        h.feed({ id: lastPromptId(h), result: { stopReason: 'end_turn' } });
+
+        expect(promptText(h)).not.toBe('continue where you left off');
+        expect(promptText(h)).toContain(hostBlock('ROLE'));
+      });
+
+      it('decides by progress when the reader throws', () => {
+        const h = primed(
+          reading(() => {
+            throw new Error('store moved');
+          }).overrides,
+        );
+        h.feed(chunk('agent_message_chunk', DROP));
+
+        h.feed({ id: 3, result: { stopReason: 'end_turn' } });
+
+        expect(promptText(h)).toContain('do the thing');
+      });
     });
 
     it('reports the drop as the turn’s failure once the attempts are spent', () => {

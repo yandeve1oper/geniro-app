@@ -1,4 +1,5 @@
 import type { ChildProcess, execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -17,6 +18,7 @@ import {
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import {
   afterEach,
@@ -2898,7 +2900,7 @@ ${RESUMED}
         );
       }
 
-      function startWaiting(): {
+      function startWaiting(sessionStoreDir?: string): {
         child: FakeChild;
         events: AgentEvent[];
       } {
@@ -2907,10 +2909,14 @@ ${RESUMED}
         const { spawn, child } = fakeSpawn();
         current = child;
         const events: AgentEvent[] = [];
+        const store =
+          sessionStoreDir ?? mkdtempSync(join(tmpdir(), 'cursor-sessions-'));
+        dirs.push(store);
         new CursorAcpAdapter({
           vocabularyStore: freshVocabularyStore(),
           spawn,
           homeDir: home,
+          sessionStoreDir: store,
         })
           .startSession({ ...BASE }, { runScoped: true })
           .startTurn({ ...BASE }, (event) => events.push(event));
@@ -3049,8 +3055,56 @@ ${RESUMED}
         expect(text).not.toContain('STILL RUNNING');
       });
 
-      it('does not hand over a result the agent already went on from', async () => {
+      /** Cursor's store for session `s`, holding the turn's prompt as saved. */
+      function saveConversation(sessionStoreDir: string): void {
+        const rootId = 'root-of-session-s';
+        const messageId = createHash('sha256').update('ship it').digest('hex');
+        mkdirSync(join(sessionStoreDir, 's'), { recursive: true });
+        const db = new DatabaseSync(join(sessionStoreDir, 's', 'store.db'));
+        db.exec('CREATE TABLE meta (value TEXT)');
+        db.exec('CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)');
+        db.prepare('INSERT INTO meta (value) VALUES (?)').run(
+          Buffer.from(JSON.stringify({ latestRootBlobId: rootId })).toString(
+            'hex',
+          ),
+        );
+        const insert = db.prepare('INSERT INTO blobs (id, data) VALUES (?, ?)');
+        insert.run(
+          rootId,
+          new Uint8Array([0x0a, 0x20, ...Buffer.from(messageId, 'hex')]),
+        );
+        insert.run(
+          messageId,
+          Buffer.from(
+            JSON.stringify({
+              role: 'user',
+              content: [
+                { type: 'text', text: '<user_query>\nship it\n</user_query>' },
+              ],
+            }),
+          ),
+        );
+        db.close();
+      }
+
+      it('sends the brief again, ahead of the continuation, when cursor saved none of the request', async () => {
         const { child } = startWaiting();
+        launchWaitedOn(child, 'toolu_crumb', 'Verify parent crumb');
+        dropStream(child);
+
+        const text = await resumePrompt(child);
+        expect(text).toContain('ship it');
+        expect(text).toContain(HOST_BLOCK);
+        expect(text).toContain('STILL RUNNING');
+        expect(text.indexOf('ship it')).toBeLessThan(
+          text.indexOf(CURSOR_TRANSIENT_RESUME_PROMPT.slice(0, 40)),
+        );
+      });
+
+      it('does not hand over a result the agent already went on from', async () => {
+        const store = mkdtempSync(join(tmpdir(), 'cursor-sessions-'));
+        const { child } = startWaiting(store);
+        saveConversation(store);
         launchWaitedOn(child, 'toolu_crumb', 'Verify parent crumb');
         writeTranscript('agent-crumb', [
           OPENING,
