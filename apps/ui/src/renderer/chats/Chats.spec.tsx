@@ -12373,6 +12373,75 @@ describe('Chats queued messages — a team run', () => {
     });
     expect(notify).not.toHaveBeenCalled();
   });
+
+  it('posts no banner when its leads go idle after a turn only a running monitor woke, and one again after a turn that is news', async () => {
+    teamApi.listTeamRuns.mockResolvedValue([
+      {
+        id: 'w1',
+        status: 'running',
+        rootsWorking: 0,
+        awaitingCalls: 0,
+        awaiting: null,
+        attentionAt: null,
+        seenAt: null,
+        title: null,
+        agentKind: null,
+        teamId: 'review-team',
+        cwd: '/proj',
+        model: null,
+        createdAt: 'later',
+        updatedAt: 'later',
+        lastMessage: null,
+      },
+    ]);
+    teamApi.getTeam.mockResolvedValue({
+      slug: 'review-team',
+      team: {
+        name: 'Review team',
+        mode: 'lead',
+        members: [
+          { id: 'manager', name: 'manager', agent: 'claude', approval: 'auto' },
+        ],
+        triggers: [{ kind: 'first-message', member: 'manager' }],
+        instructionBlocks: [],
+      },
+    });
+    teamApi.listTeams.mockResolvedValue([
+      {
+        slug: 'review-team',
+        name: 'Review team',
+        description: null,
+        memberCount: 2,
+        updatedAt: 'now',
+      },
+    ]);
+    const { client, emitRunStatus } = makeClient();
+    await mount(client);
+
+    await act(async () => {
+      emitRunStatus({ runId: 'w1', status: null, rootsWorking: 1 });
+    });
+    notify.mockClear();
+    await act(async () => {
+      emitRunStatus({
+        runId: 'w1',
+        status: null,
+        rootsWorking: 0,
+        hostTurn: true,
+      });
+    });
+    expect(notify).not.toHaveBeenCalled();
+
+    await act(async () => {
+      emitRunStatus({ runId: 'w1', status: null, rootsWorking: 1 });
+    });
+    await act(async () => {
+      emitRunStatus({ runId: 'w1', status: null, rootsWorking: 0 });
+    });
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'turn-end', runId: 'w1' }),
+    );
+  });
 });
 
 describe('Chats sidebar list', () => {

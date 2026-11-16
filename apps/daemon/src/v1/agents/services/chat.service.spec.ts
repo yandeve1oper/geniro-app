@@ -17663,17 +17663,12 @@ describe('ChatService — turns geniro starts for a monitor', () => {
     expect((await harness.runDao.getById(run.id))?.status).toBe('completed');
   });
 
-  it('announces the settle of a host turn as one, so no banner is posted for it', async () => {
+  const settleOfHostTurn = async (row: HostRowWire) => {
     const { service, cursor, statuses } = setup();
     const run = await chat(service);
-    await service.sendMessage(run.id, 'CI output', [], {
+    await service.sendMessage(run.id, 'woken', [], {
       ownTurn: true,
-      hostRow: {
-        severity: 'info',
-        message: 'CI · monitor m1: 1 line.',
-        monitors: [],
-        woke: true,
-      },
+      hostRow: row,
     });
     cursor.emit({
       type: 'turn_complete',
@@ -17684,10 +17679,58 @@ describe('ChatService — turns geniro starts for a monitor', () => {
     cursor.finish();
     await drain();
     await drain();
-    const settle = statuses
+    return statuses
       .filter((event) => event.runId === run.id && event.status === 'completed')
       .at(-1);
+  };
+
+  it('announces the settle of a turn a running monitor opened as a host turn, so no banner is posted for it', async () => {
+    const settle = await settleOfHostTurn({
+      severity: 'info',
+      message: 'CI · monitor m1: 1 line.',
+      monitors: [
+        {
+          id: 'm1',
+          description: 'CI',
+          event: 'batch',
+          lines: ['ok'],
+          omitted: 0,
+        },
+      ],
+      woke: true,
+    });
     expect(settle?.hostTurn).toBe(true);
+  });
+
+  it('announces the settle of a turn a monitor that ended opened as an ordinary settle, banner and all', async () => {
+    const settle = await settleOfHostTurn({
+      severity: 'info',
+      message: 'CI · monitor m1 ended.',
+      monitors: [
+        {
+          id: 'm1',
+          description: 'CI',
+          event: 'end',
+          end: { kind: 'exit', code: 0 },
+          lines: ['done'],
+          omitted: 0,
+        },
+      ],
+      woke: true,
+    });
+    expect(settle).toBeDefined();
+    expect(settle?.hostTurn).toBeUndefined();
+  });
+
+  it('announces the settle of a turn a host wake opened as an ordinary settle, banner and all', async () => {
+    const settle = await settleOfHostTurn({
+      severity: 'info',
+      message: 'Shared "Report" once you signed in',
+      shares: [{ shareId: 's1', title: 'Report', outcome: 'shared' }],
+      woke: true,
+    });
+    expect(settle).toBeDefined();
+    expect(settle?.hostTurn).toBeUndefined();
   });
 
   it('says a host turn must wait while a turn runs', async () => {

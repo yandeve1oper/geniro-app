@@ -194,6 +194,7 @@ import {
   writeModelParameters,
 } from '../utils/model-parameters';
 import { offersMonitorTools } from '../utils/monitor-offer';
+import { wakesOnMonitorProgress } from '../utils/monitor-text';
 import {
   delegateCloseEvent,
   openDelegateIds,
@@ -8077,7 +8078,9 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
               await this.setRunStatus(em, runId, status, {
                 summary: event.type === 'error' ? event.message : lastAgentText,
                 housekeeping: compactionRows > 0 && workRows === 0,
-                hostTurn: options.hostRow !== undefined,
+                hostTurn:
+                  options.hostRow !== undefined &&
+                  wakesOnMonitorProgress(options.hostRow),
               });
               // Spent — the tally describes ONE turn, so anything arriving
               // after this ending is counted from zero rather than inheriting

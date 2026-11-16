@@ -119,6 +119,14 @@ export function monitorMessageText(message: MonitorMessage): string {
 /** A host row about monitors, which always names them. */
 export type MonitorRow = HostRowWire & { monitors: MonitorRowPayload[] };
 
+/** The one self-opened turn whose ending is no news (`hostTurn`): monitors still running reporting progress. */
+export function wakesOnMonitorProgress(row: HostRowWire): boolean {
+  const monitors = row.monitors ?? [];
+  return (
+    monitors.length > 0 && monitors.every((entry) => entry.event === 'batch')
+  );
+}
+
 /** One monitor message as a row's `monitors` entry. */
 export function monitorRowEntry(
   message: MonitorMessage,

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { monitorMessageText, promptNamingRunning } from './monitor-text';
+import type { HostRowWire, MonitorRowPayload } from '../chat.types';
+import {
+  monitorMessageText,
+  promptNamingRunning,
+  wakesOnMonitorProgress,
+} from './monitor-text';
 
 const message = (kind: 'stopped' | 'timeout') => ({
   id: 'm2',
@@ -36,5 +41,41 @@ describe('promptNamingRunning', () => {
     expect(text.startsWith('output\n\n[geniro] Still running:')).toBe(true);
     expect(text).toContain('m1 (seed run), m2 (CI)');
     expect(text).toContain('stop_monitor');
+  });
+});
+
+describe('wakesOnMonitorProgress', () => {
+  const entry = (event: MonitorRowPayload['event']): MonitorRowPayload => ({
+    id: 'm1',
+    description: 'CI',
+    event,
+    lines: [],
+    omitted: 0,
+  });
+  const row = (fields: Partial<HostRowWire>): HostRowWire => ({
+    severity: 'info',
+    message: '',
+    woke: true,
+    ...fields,
+  });
+
+  it('is true only while every monitor the row names is still running', () => {
+    expect(
+      wakesOnMonitorProgress(
+        row({ monitors: [entry('batch'), entry('batch')] }),
+      ),
+    ).toBe(true);
+    expect(
+      wakesOnMonitorProgress(row({ monitors: [entry('batch'), entry('end')] })),
+    ).toBe(false);
+  });
+
+  it('is false for a row that names no monitor batch', () => {
+    expect(wakesOnMonitorProgress(row({ monitors: [] }))).toBe(false);
+    expect(
+      wakesOnMonitorProgress(
+        row({ threadWake: { fromRunId: 'r2', fromTitle: 'Other' } }),
+      ),
+    ).toBe(false);
   });
 });

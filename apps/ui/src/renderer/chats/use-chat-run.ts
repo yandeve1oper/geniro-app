@@ -2268,11 +2268,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
       // anything about this, and every settle says it — so an absent field is
       // an activity announce and must leave the reading alone, while a settle
       // that did real work clears the flag its predecessor may have set.
-      if (event.status !== null && isSettledRunStatus(event.status)) {
-        const quiet =
-          event.housekeeping === true ||
-          event.restored === true ||
-          event.hostTurn === true;
+      const rememberQuiet = (quiet: boolean): void =>
         setQuietSettles((prev) => {
           if (prev.has(event.runId) === quiet) {
             return prev;
@@ -2285,6 +2281,17 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
           }
           return next;
         });
+      // A team's leads all going idle is read as its ending (`teamLeadsDone`),
+      // so that announce says whether it was news, as a settle does.
+      if (event.status === null && event.rootsWorking === 0) {
+        rememberQuiet(event.hostTurn === true);
+      }
+      if (event.status !== null && isSettledRunStatus(event.status)) {
+        rememberQuiet(
+          event.housekeeping === true ||
+            event.restored === true ||
+            event.hostTurn === true,
+        );
         setSettleOwed((prev) => {
           if (!prev.has(event.runId)) {
             return prev;

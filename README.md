@@ -306,7 +306,7 @@ Geniro gives every agent a set of MCP tools for showing results instead of descr
 | 🗺 **Plan** | A plan you approve before any work starts |
 | ❓ **Question** | Multiple-choice questions you answer with a click |
 | 🔘 **Buttons** | "Press when the PR is merged" or "Stop the preview server" |
-| 👀 **Monitor** | A background command (a CI run, a long build, a log) that wakes the agent with what it prints |
+| 👀 **Monitor** | A background command (a CI run, a long build, a log) that wakes the agent with what it prints; you are notified when the agent finishes after the command ends, not after each batch of output while it still runs |
 | 🔔 **Notify** | A macOS notification when something needs you |
 
 Agents can also search your past chats and read the conversation around any hit.

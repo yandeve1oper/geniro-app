@@ -155,6 +155,7 @@ import { threadCardFields } from '../../agents/utils/host-thread-message';
 import { asRecord, parseJsonColumn } from '../../agents/utils/json-util';
 import { sanitizeModelParameters } from '../../agents/utils/model-parameters';
 import { offersMonitorTools } from '../../agents/utils/monitor-offer';
+import { wakesOnMonitorProgress } from '../../agents/utils/monitor-text';
 import {
   readNodePoolMembers,
   readNodePoolPins,
@@ -1097,6 +1098,7 @@ export class TeamExecutorService
     memberId: string,
     on: boolean,
     announce = true,
+    monitorProgress = false,
   ): void {
     const roots = this.workingRoots.get(runId) ?? new Set<string>();
     if (roots.has(memberId) === on) {
@@ -1116,6 +1118,7 @@ export class TeamExecutorService
         runId,
         status: null,
         rootsWorking: roots.size,
+        ...(monitorProgress && roots.size === 0 ? { hostTurn: true } : {}),
       });
     }
   }
@@ -3808,8 +3811,18 @@ export class TeamExecutorService
     // Going idle during a cancel is recorded silently: an idle announce is
     // what drains the queue, and Stop must never be answered by sending the
     // next message.
-    const markRootWorking = (memberId: string, on: boolean): void => {
-      this.setRootWorking(runId, memberId, on, on || !cancelRequested);
+    const markRootWorking = (
+      memberId: string,
+      on: boolean,
+      monitorProgress = false,
+    ): void => {
+      this.setRootWorking(
+        runId,
+        memberId,
+        on,
+        on || !cancelRequested,
+        !on && monitorProgress,
+      );
     };
     /**
      * Follow-up turns on agents whose own turn has ended, keyed by member — see
@@ -4044,10 +4057,11 @@ export class TeamExecutorService
       status !== 'completed' && this.shuttingDown && !stoppedByUser;
     let runFinished = false;
     /**
-     * Whether the run's current reopened stretch was started by a monitor's
-     * output alone — its settle is then a host turn's (`hostTurn`), which
-     * posts no banner. Set only by the wake that reopens the run; any other
-     * turn or user message in the stretch clears it for the rest of it.
+     * Whether the run's current reopened stretch was started by output of
+     * monitors still running alone — its settle is then a host turn's
+     * (`hostTurn`), which posts no banner. Set only by the wake that reopens
+     * the run; any other turn, wake or user message in the stretch clears it
+     * for the rest of it.
      */
     let wokenOnlyByMonitors = false;
     let persistenceFailed = false;
@@ -4352,9 +4366,9 @@ export class TeamExecutorService
      * as the registration, since the claim lands during the awaits above it.
      */
     const reopenRun = async (
-      opener: HostWakeOpener | 'other' = 'other',
+      monitorProgress = false,
     ): Promise<'awake' | 'stopped' | 'superseded'> => {
-      if (opener === 'other') {
+      if (!monitorProgress) {
         wokenOnlyByMonitors = false;
       }
       // The roll-up writes this run's terminal status; waking ahead of it puts
@@ -4397,7 +4411,7 @@ export class TeamExecutorService
         return 'superseded';
       }
       reopened = true;
-      wokenOnlyByMonitors = opener !== 'other';
+      wokenOnlyByMonitors = monitorProgress;
       registerAggregate();
       // A user's message reaches an AWAKE run through the same control a live
       // pass offers — the wake holds the run's claim, so the walk a settled run
@@ -4474,7 +4488,9 @@ export class TeamExecutorService
       }
     };
 
-    const finishRunIfSettled = async (): Promise<void> => {
+    const finishRunIfSettled = async (
+      monitorProgress = false,
+    ): Promise<void> => {
       // Sub-turns stay OUT of the denominator, but a live one (a
       // fire-and-forget still streaming) holds the run open until it settles.
       if (runFinished) {
@@ -4561,7 +4577,12 @@ export class TeamExecutorService
             `team run ${runId}: pass ended by the daemon shutting down — left running for the next boot to close as interrupted`,
           );
         } else {
-          await this.setRunStatus(em, runId, status);
+          await this.setRunStatus(
+            em,
+            runId,
+            status,
+            monitorProgress && status === 'completed' ? { hostTurn: true } : {},
+          );
           await persistItem(null, 'turn_complete', null, {
             usage: null,
             stopReason: `team_${status}`,
@@ -4602,7 +4623,7 @@ export class TeamExecutorService
         // After the status: leads going idle under a run still `running` is
         // the Manager replying with calls out, which marks the thread unread.
         for (const memberId of leadIds) {
-          markRootWorking(memberId, false);
+          markRootWorking(memberId, false, monitorProgress);
         }
         // The aggregate handle MUST settle even if the final writes fail, or
         // the ProcessRegistry entry leaks and the run can never be re-driven.
@@ -7891,9 +7912,9 @@ export class TeamExecutorService
       node: TeamMember,
       prompt: string,
       images: TurnImage[],
-      opener: HostWakeOpener | 'other' = 'other',
+      monitorProgress = false,
     ): Promise<void> => {
-      if (opener === 'other') {
+      if (!monitorProgress) {
         wokenOnlyByMonitors = false;
       }
       const starting = reserveContinuation(node.id);
@@ -7916,7 +7937,7 @@ export class TeamExecutorService
       } catch (err) {
         startingContinuations.delete(node.id);
         starting.release();
-        markRootWorking(node.id, false);
+        markRootWorking(node.id, false, monitorProgress);
         const lastTurn = releaseNodeTurn(node.id);
         const recordSwept = lastTurn ? sweepApprovals(node.id) : null;
         endConversationTurn(node.id);
@@ -8001,9 +8022,9 @@ export class TeamExecutorService
             compactingNodes.delete(node.id);
             liveSubTurns -= 1;
             try {
-              await finishRunIfSettled();
+              await finishRunIfSettled(monitorProgress);
             } finally {
-              markRootWorking(node.id, false);
+              markRootWorking(node.id, false, monitorProgress);
             }
           }
         });
@@ -8528,7 +8549,7 @@ export class TeamExecutorService
     const scheduleOwnTurn = (
       memberId: string,
       caller: string,
-      opener: HostWakeOpener | 'other',
+      monitorProgress: boolean,
       steps: {
         onStopped: (why: 'stopped' | 'superseded') => void;
         onBusy: (rewake: () => void) => void;
@@ -8547,7 +8568,7 @@ export class TeamExecutorService
         const woke = cancelRequested
           ? 'stopped'
           : runFinished
-            ? await reopenRun(opener)
+            ? await reopenRun(monitorProgress)
             : 'awake';
         if (woke !== 'awake') {
           steps.onStopped(woke);
@@ -8594,7 +8615,9 @@ export class TeamExecutorService
       if (node === undefined) {
         return 'refused';
       }
-      scheduleOwnTurn(memberId, caller, opener, {
+      const monitorProgress =
+        opener === 'monitor' && wakesOnMonitorProgress(row);
+      scheduleOwnTurn(memberId, caller, monitorProgress, {
         // Its delivery already let the output go: handed back, it holds it
         // for the next pass's turn of this conversation, or records what
         // ended when the run is stopped.
@@ -8603,7 +8626,7 @@ export class TeamExecutorService
         onBusy: (rewake) => redeliverWhenEnded(caller, rewake),
         start: async () => {
           await persistItem(memberId, 'system', null, row);
-          void continueNode(node, prompt, [], opener);
+          void continueNode(node, prompt, [], monitorProgress);
         },
       });
       return 'woken';
@@ -8761,7 +8784,7 @@ export class TeamExecutorService
             // Cancelled meanwhile — every callee dies with the run, so there
             // is nothing left for this turn to answer or collect — or a run
             // that refuses to wake: nothing to do.
-            scheduleOwnTurn(memberId, caller, 'other', {
+            scheduleOwnTurn(memberId, caller, false, {
               onStopped: () => undefined,
               // A follow-up raced the wake and the conversation is working
               // again: hand it the message inside that turn rather than
