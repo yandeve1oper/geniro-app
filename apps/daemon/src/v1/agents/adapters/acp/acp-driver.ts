@@ -1,5 +1,6 @@
 import { awakeTimeout, type AwakeTimer } from '../../../../utils/sleep-watch';
 import { asArray, asNumber, asRecord, asString } from '../../utils/json-util';
+import { mcpToolName } from '../../utils/mcp-tool-name';
 import { delegateDeclarationEvent } from '../../utils/open-delegates';
 import type {
   AgentEvent,
@@ -31,6 +32,7 @@ import {
   type AcpContentBlock,
   type AcpImageBlock,
   type AcpMcpServerHttp,
+  type AcpMcpToolCall,
   type AcpPermissionOption,
   type AcpPermissionOptionKind,
   type AcpStopReason,
@@ -575,6 +577,13 @@ export interface AcpSessionOptions {
   delegate?: AcpDelegateProtocol;
   /** How this agent reports its own task list, or absent when it does not. */
   todos?: AcpTodoProtocol;
+  /**
+   * The MCP server, tool and arguments a call names when this agent spells an
+   * MCP call its own way, else null. The call is then written as
+   * `mcp__<server>__<tool>` over those arguments, the name every other CLI's
+   * rows carry. Absent: every call keeps the name and arguments it was sent with.
+   */
+  mcpToolCall?: (call: AcpToolCall) => AcpMcpToolCall | null;
   /**
    * How long this agent keeps an `*_always` permission answer, as geniro runs
    * it — which is what decides whether such an option reaches the card, and
@@ -4433,7 +4442,7 @@ export class AcpTurnDriver {
     // `tool_call` update for this id, so fall back to those rather than asking
     // the user about a call the card cannot describe.
     const toolCall = this.withCachedToolFacts(
-      readToolCall(toolCallRecord ?? {}),
+      this.toolCallOf(toolCallRecord ?? {}),
     );
     const options = readPermissionOptions(root?.options);
 
@@ -4496,6 +4505,19 @@ export class AcpTurnDriver {
           : toolCall.name,
       rawInput: toolCall.rawInput ?? this.session.toolInputs.get(id) ?? null,
     };
+  }
+
+  /** One tool call as this client reads it, an MCP call under its `mcp__<server>__<tool>` name. */
+  private toolCallOf(source: Record<string, unknown>): AcpToolCall {
+    const call = readToolCall(source);
+    const mcp = this.session.options.mcpToolCall?.(call) ?? null;
+    return mcp === null
+      ? call
+      : {
+          ...call,
+          name: mcpToolName(mcp.server, mcp.tool),
+          rawInput: disclosedInput(mcp.args),
+        };
   }
 
   onNotification(method: string, params: unknown): AgentEvent[] {
@@ -4669,7 +4691,7 @@ export class AcpTurnDriver {
         );
       }
       case 'tool_call': {
-        const call = readToolCall(update);
+        const call = this.toolCallOf(update);
         this.session.toolNames.set(call.toolCallId, call.name);
         if (call.rawInput !== null) {
           this.session.toolInputs.set(call.toolCallId, call.rawInput);
@@ -4691,7 +4713,7 @@ export class AcpTurnDriver {
         ];
       }
       case 'tool_call_update': {
-        const call = readToolCall(update);
+        const call = this.toolCallOf(update);
         this.refineToolCall(call);
         const held = this.session.childHeldCalls.get(call.toolCallId);
         if (held !== undefined) {
@@ -4926,7 +4948,7 @@ export class AcpTurnDriver {
         }
         this.requestProgressed = true;
         this.progressedSinceResume = true;
-        const toolCall = readToolCall(update);
+        const toolCall = this.toolCallOf(update);
         this.session.toolNames.set(toolCall.toolCallId, toolCall.name);
         if (toolCall.rawInput !== null) {
           this.session.toolInputs.set(toolCall.toolCallId, toolCall.rawInput);
@@ -4948,7 +4970,7 @@ export class AcpTurnDriver {
         if (this.replaying) {
           return [];
         }
-        const toolCall = readToolCall(update);
+        const toolCall = this.toolCallOf(update);
         // What an update adds to a call it already announced: its real name and
         // its arguments. Recorded for EVERY status, so a result and a permission
         // card name the call by what it turned out to be.
@@ -4978,7 +5000,8 @@ export class AcpTurnDriver {
           this.unconsumedDelegates.add(toolCall.toolCallId);
         }
         return [
-          ...this.flushPending(),
+          ...this.releaseHeldToolCalls(toolCall.toolCallId),
+          ...this.flushTextBlock(),
           {
             type: 'tool_result',
             id: toolCall.toolCallId,

@@ -168,6 +168,7 @@ import {
   readCursorDelegateEnding,
 } from './utils/cursor-delegate-transcript.utils';
 import { cursorDelegateWakePrompt } from './utils/cursor-delegate-wake.utils';
+import { readCursorMcpToolCall } from './utils/cursor-mcp-call.utils';
 import { parseCursorMcpList } from './utils/cursor-mcp-list.utils';
 import {
   cursorProjectRoot,
@@ -3394,6 +3395,7 @@ export class CursorAcpAdapter extends AgentAdapter {
         // cursor's "Allow always" lands in the config directory geniro seeds
         // per conversation process — see CURSOR_ALWAYS_ANSWER_SCOPE.
         alwaysAnswerScope: CURSOR_ALWAYS_ANSWER_SCOPE,
+        mcpToolCall: readCursorMcpToolCall,
         question: {
           method: CURSOR_ASK_QUESTION_METHOD,
           toolName: this.getConfig().questionToolName ?? '',

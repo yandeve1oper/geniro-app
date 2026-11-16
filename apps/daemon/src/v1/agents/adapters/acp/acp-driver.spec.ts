@@ -2375,6 +2375,69 @@ describe('AcpSession session updates', () => {
       ).toEqual([expect.objectContaining({ type: 'tool_call', id: 'mcp-2' })]);
     });
 
+    it('keeps holding a call still being written when a sibling call settles', () => {
+      const h = harness();
+      h.feed(update({ ...placeholder, toolCallId: '1_tool' }));
+      h.feed(
+        update({
+          ...refresh,
+          toolCallId: '1_tool',
+          title: 'geniro-83139c58: await_agent',
+          rawInput: {
+            providerIdentifier: 'geniro-83139c58',
+            toolName: 'await_agent',
+            args: { call_id: 'call-20' },
+          },
+        }),
+      );
+      h.feed(
+        update({
+          sessionUpdate: 'tool_call_update',
+          toolCallId: '1_tool',
+          status: 'in_progress',
+        }),
+      );
+      h.feed(update({ ...placeholder, toolCallId: '2_tool' }));
+      const settled = h.feed(
+        update({
+          sessionUpdate: 'tool_call_update',
+          toolCallId: '1_tool',
+          status: 'completed',
+          rawOutput: { success: true },
+        }),
+      );
+      expect(settled).toEqual([
+        expect.objectContaining({ type: 'tool_result', id: '1_tool' }),
+      ]);
+      h.feed(
+        update({
+          ...refresh,
+          toolCallId: '2_tool',
+          title: 'geniro-83139c58: list_agent_threads',
+          rawInput: {
+            providerIdentifier: 'geniro-83139c58',
+            toolName: 'list_agent_threads',
+            args: {},
+          },
+        }),
+      );
+      expect(
+        h.feed(
+          update({
+            sessionUpdate: 'tool_call_update',
+            toolCallId: '2_tool',
+            status: 'in_progress',
+          }),
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          type: 'tool_call',
+          id: '2_tool',
+          name: 'geniro-83139c58: list_agent_threads',
+        }),
+      ]);
+    });
+
     it('writes a pending call that opens WITH its arguments at once', () => {
       const h = harness();
       expect(

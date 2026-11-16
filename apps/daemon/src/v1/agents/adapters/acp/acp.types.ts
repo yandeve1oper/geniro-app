@@ -309,6 +309,13 @@ export interface AcpToolCall {
   locations: AcpToolLocation[] | null;
 }
 
+/** The MCP server, tool and arguments one tool call names, read off its agent's own spelling of it. */
+export interface AcpMcpToolCall {
+  server: string;
+  tool: string;
+  args: unknown;
+}
+
 /**
  * One file an ACP tool call names, and the line inside it when there is one.
  *

@@ -1,4 +1,5 @@
 import { asRecord } from './json-util';
+import { mcpToolName } from './mcp-tool-name';
 
 /**
  * Whether a permission request names one of geniro's OWN tools on geniro's own
@@ -19,7 +20,9 @@ import { asRecord } from './json-util';
  *   whose name is `<server>-<tool>` — measured on cursor-agent
  *   2026.08.11-e8db854 (`geniro-75a31aea-ask_user_question: ask_user_question`)
  *   and read out of 2026.09.10-fd3934a's own `formatOperation`, whose MCP arm
- *   is `${name}: ${toolName}`.
+ *   is `${name}: ${toolName}`. A call carrying cursor's MCP wrapper reaches
+ *   this already renamed `mcp__<server>__<tool>` (`readCursorMcpToolCall`);
+ *   the title form stays for a call without it and for stored rows.
  *
  * The match is exact rather than CONTAINMENT ("the name holds both halves")
  * for a reason the same `formatOperation` explains: every other title it
@@ -47,22 +50,25 @@ export function hostToolCallNames(
   hostToolName: string,
 ): string[] {
   return [
-    `mcp__${serverName}__${hostToolName}`,
+    mcpToolName(serverName, hostToolName),
     `${serverName}-${hostToolName}: ${hostToolName}`,
   ];
 }
 
 /**
- * The arguments of a call {@link isHostToolCall} matched. cursor's permission
- * request wraps them as `{providerIdentifier, toolName, args}`, measured on
- * cursor-agent 2026.11.05-86047df; claude and codex send them bare.
+ * The arguments of a call {@link isHostToolCall} matched. cursor's own wrapper,
+ * `{providerIdentifier, toolName, args}`, is unwrapped for rows stored before
+ * the cursor adapter renamed its MCP calls; every newer row carries the
+ * arguments bare, so an agent's own `toolName` and `args` are never taken for it.
  */
 export function hostToolArguments(
   input: unknown,
   hostToolName: string,
 ): unknown {
   const envelope = asRecord(input);
-  return envelope?.toolName === hostToolName && asRecord(envelope.args) !== null
+  return typeof envelope?.providerIdentifier === 'string' &&
+    envelope.toolName === hostToolName &&
+    asRecord(envelope.args) !== null
     ? envelope.args
     : input;
 }

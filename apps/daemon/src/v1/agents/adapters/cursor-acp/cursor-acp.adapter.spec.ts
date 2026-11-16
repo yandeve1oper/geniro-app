@@ -33,6 +33,7 @@ import { FakeChild, fakeSpawn } from '../../__tests__/fake-child';
 import { AgentAdapterRegistry } from '../../services/agent-adapter.registry';
 import { AgentVersionService } from '../../services/agent-version.service';
 import { GENIRO_UI_PREAMBLE } from '../../utils/agent-instructions';
+import { isHostToolCall } from '../../utils/host-tool';
 import type { SpawnedProcess, SpawnFn } from '../../utils/spawn-cli';
 import { fakeGroupChild } from '../__tests__/fake-group-child';
 import { freshVocabularyStore } from '../__tests__/fresh-vocabulary-store';
@@ -6383,5 +6384,217 @@ describe('CursorAcpAdapter — reading a server sign-in’s verdict', () => {
         vocabularyStore: freshVocabularyStore(),
       }).mcpLoginFailed('MCP Login\nPreparing login...\nChecking status...'),
     ).toBe(false);
+  });
+});
+
+describe('CursorAcpAdapter — MCP tool calls', () => {
+  /**
+   * Transcribed from stored rows of a cursor-agent run (gemini-4-carbon,
+   * 2026-11-14) and from 2026.11.13-eacade1's own `summarizeToolCall`
+   * (`${providerIdentifier}: ${toolName}`) and `extractToolCallInput`
+   * (`{providerIdentifier, toolName, args}`).
+   */
+  function driveTurn(input: Partial<AgentTurnInput> = {}): {
+    child: FakeChild;
+    events: AgentEvent[];
+  } {
+    const { spawn, child } = fakeSpawn();
+    const events: AgentEvent[] = [];
+    new CursorAcpAdapter({
+      vocabularyStore: freshVocabularyStore(),
+      spawn,
+    }).start({ ...BASE, ...input }, (event) => events.push(event));
+    handshake(child);
+    return { child, events };
+  }
+
+  const wrapped = (id: string, tool: string, args: Record<string, unknown>) =>
+    sessionUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: id,
+      title: `geniro-83139c58: ${tool}`,
+      rawInput: { providerIdentifier: 'geniro-83139c58', toolName: tool, args },
+    });
+
+  it('writes an MCP call under its server and tool, with the arguments it was given', () => {
+    const { child, events } = driveTurn();
+    child.stdout.emitData(
+      sessionUpdate({
+        sessionUpdate: 'tool_call',
+        toolCallId: '1_tool_1ea1',
+        title: 'MCP: tool',
+        kind: 'other',
+        status: 'pending',
+        rawInput: {},
+      }),
+    );
+    child.stdout.emitData(
+      wrapped('1_tool_1ea1', 'memory_search', {
+        limit: 5,
+        query: 'mosaic OR select',
+      }),
+    );
+    child.stdout.emitData(
+      sessionUpdate({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: '1_tool_1ea1',
+        status: 'in_progress',
+      }),
+    );
+    child.stdout.emitData(
+      sessionUpdate({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: '1_tool_1ea1',
+        status: 'completed',
+        rawOutput: { success: true },
+      }),
+    );
+
+    expect(events.filter((event) => event.type === 'tool_call')).toEqual([
+      {
+        type: 'tool_call',
+        id: '1_tool_1ea1',
+        name: 'mcp__geniro-83139c58__memory_search',
+        input: { limit: 5, query: 'mosaic OR select' },
+        kind: 'other',
+      },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_result')).toEqual([
+      expect.objectContaining({
+        id: '1_tool_1ea1',
+        name: 'mcp__geniro-83139c58__memory_search',
+      }),
+    ]);
+  });
+
+  it('writes an MCP call made with no arguments with no input', () => {
+    const { child, events } = driveTurn();
+    child.stdout.emitData(
+      sessionUpdate({
+        sessionUpdate: 'tool_call',
+        toolCallId: '0_tool_ab93',
+        title: 'geniro-83139c58: team_notes',
+        kind: 'other',
+        status: 'pending',
+        rawInput: {
+          providerIdentifier: 'geniro-83139c58',
+          toolName: 'team_notes',
+          args: {},
+        },
+      }),
+    );
+    child.stdout.emitData(
+      sessionUpdate({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: '0_tool_ab93',
+        status: 'in_progress',
+      }),
+    );
+
+    expect(events.filter((event) => event.type === 'tool_call')).toEqual([
+      {
+        type: 'tool_call',
+        id: '0_tool_ab93',
+        name: 'mcp__geniro-83139c58__team_notes',
+        input: null,
+        kind: 'other',
+      },
+    ]);
+  });
+
+  it('asks about an MCP call under its server and tool, with its bare arguments', () => {
+    const { child, events } = driveTurn({ approvalMode: 'ask' });
+    child.stdout.emitData(
+      stdoutLine({
+        jsonrpc: '2.0',
+        id: 9,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 's',
+          toolCall: {
+            toolCallId: '2_tool_c5ec',
+            title: 'linear-get_issue: get_issue',
+            kind: 'other',
+            rawInput: {
+              providerIdentifier: 'linear',
+              toolName: 'get_issue',
+              args: { id: 'CI-992' },
+            },
+          },
+          options: ONCE_OPTIONS,
+        },
+      }),
+    );
+
+    expect(events.filter((event) => event.type === 'approval_request')).toEqual(
+      [
+        expect.objectContaining({
+          toolName: 'mcp__linear__get_issue',
+          input: { id: 'CI-992' },
+        }),
+      ],
+    );
+  });
+
+  it('asks about one of geniro’s own tools under a name its host-tool checks recognise', () => {
+    const { child, events } = driveTurn({ approvalMode: 'ask' });
+    child.stdout.emitData(
+      stdoutLine({
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 's',
+          toolCall: {
+            toolCallId: '3_tool_9a1f',
+            title: 'geniro-83139c58-notify_user: notify_user',
+            kind: 'other',
+            rawInput: {
+              providerIdentifier: 'geniro-83139c58',
+              toolName: 'notify_user',
+              args: { title: 'Stand is up' },
+            },
+          },
+          options: ONCE_OPTIONS,
+        },
+      }),
+    );
+
+    const [card] = events.filter(
+      (event) => event.type === 'approval_request',
+    ) as { toolName: string; input: unknown }[];
+    expect(card?.input).toEqual({ title: 'Stand is up' });
+    expect(
+      isHostToolCall('geniro-83139c58', card?.toolName ?? '', 'notify_user'),
+    ).toBe(true);
+  });
+
+  it('leaves a call whose title is not the MCP template as the agent named it', () => {
+    const { child, events } = driveTurn();
+    child.stdout.emitData(
+      sessionUpdate({
+        sessionUpdate: 'tool_call',
+        toolCallId: 'sh-1',
+        title: '`echo geniro-83139c58: team_notes`',
+        kind: 'execute',
+        status: 'pending',
+        rawInput: {
+          providerIdentifier: 'geniro-83139c58',
+          toolName: 'team_notes',
+          args: {},
+        },
+      }),
+    );
+
+    expect(events.filter((event) => event.type === 'tool_call')).toEqual([
+      expect.objectContaining({
+        name: '`echo geniro-83139c58: team_notes`',
+        input: {
+          providerIdentifier: 'geniro-83139c58',
+          toolName: 'team_notes',
+          args: {},
+        },
+      }),
+    ]);
   });
 });

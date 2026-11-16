@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isHostToolCall } from './host-tool';
+import { hostToolArguments, isHostToolCall } from './host-tool';
 
 const SERVER = 'geniro-75a31aea';
 const TOOL = 'notify_user';
@@ -77,5 +77,25 @@ describe('isHostToolCall — a title the AGENT wrote can never match', () => {
     expect(
       isHostToolCall(SERVER, `${SERVER}-show_chart: show_chart`, TOOL),
     ).toBe(false);
+  });
+});
+
+describe('hostToolArguments', () => {
+  it('unwraps cursor’s stored `{providerIdentifier, toolName, args}` wrapper', () => {
+    expect(
+      hostToolArguments(
+        { providerIdentifier: SERVER, toolName: TOOL, args: { title: 'done' } },
+        TOOL,
+      ),
+    ).toEqual({ title: 'done' });
+  });
+
+  it('reads bare arguments that nest a `toolName` and `args` of their own as they are', () => {
+    const bare = {
+      toolName: TOOL,
+      args: { title: 'shown' },
+      title: 'sent',
+    };
+    expect(hostToolArguments(bare, TOOL)).toBe(bare);
   });
 });

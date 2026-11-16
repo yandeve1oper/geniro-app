@@ -5,6 +5,7 @@ import {
   cardQuestions,
 } from '../../../utils/card-questions';
 import { asArray, asRecord, asString } from '../../../utils/json-util';
+import { mcpToolName } from '../../../utils/mcp-tool-name';
 import {
   hasOtherHardLinks,
   writeContainment,
@@ -255,7 +256,7 @@ function mcpToolApprovalCard(
   const options = mcpPersistsForSession(record) ? sessionOption() : [];
   return {
     ...(tool
-      ? { toolName: `mcp__${server}__${tool}`, input: args }
+      ? { toolName: mcpToolName(server, tool), input: args }
       : {
           toolName: `mcp__${server}`,
           input: message ? { message, arguments: args } : args,

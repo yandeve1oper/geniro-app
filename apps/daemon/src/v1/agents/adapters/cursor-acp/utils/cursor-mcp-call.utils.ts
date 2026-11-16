@@ -1,0 +1,26 @@
+import { asRecord, asString } from '../../../utils/json-util';
+import type { AcpMcpToolCall, AcpToolCall } from '../../acp/acp.types';
+
+/**
+ * The server, tool and arguments of a cursor MCP call: arguments wrapped as
+ * `{providerIdentifier, toolName, args}` under the exact title `<server>: <tool>`
+ * (session update) or `<server>-<tool>: <tool>` (permission request). Any other
+ * title is agent-authored text, so a call quoting a server and tool is never one.
+ */
+export function readCursorMcpToolCall(
+  call: AcpToolCall,
+): AcpMcpToolCall | null {
+  const wrapper = asRecord(call.rawInput);
+  const server = wrapper ? asString(wrapper.providerIdentifier) : null;
+  const tool = wrapper ? asString(wrapper.toolName) : null;
+  if (wrapper === null || server === null || tool === null) {
+    return null;
+  }
+  if (
+    call.name !== `${server}: ${tool}` &&
+    call.name !== `${server}-${tool}: ${tool}`
+  ) {
+    return null;
+  }
+  return { server, tool, args: wrapper.args ?? null };
+}

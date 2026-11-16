@@ -3,6 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { cursorToolCallMetric } from './cursor-tool-metric.utils';
 
 describe('cursorToolCallMetric', () => {
+  it('reads the MCP server and tool off the `mcp__<server>__<tool>` name the driver writes', () => {
+    expect(
+      cursorToolCallMetric('mcp__geniro-83139c58__memory_search', 'other'),
+    ).toEqual({ tool: 'memory_search', server: 'geniro-83139c58' });
+    expect(cursorToolCallMetric('mcp__linear__get_issue', 'other')).toEqual({
+      tool: 'get_issue',
+      server: 'linear',
+    });
+  });
+
   it('reads the MCP server off cursor’s `<server>-<tool>: <tool>` title', () => {
     expect(
       cursorToolCallMetric(
