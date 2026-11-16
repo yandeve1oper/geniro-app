@@ -48,6 +48,26 @@ describe('POST /v1/teams/runs/:runId/actions/:seq/press|dismiss', () => {
   });
 });
 
+describe('PUT /v1/teams/runs/:runId/members/:memberId/pool-member', () => {
+  it('hands the run, the member and the picked pool member to the executor and answers what it did', async () => {
+    const executor = {
+      setOwnPoolMember: vi.fn(async () => ({
+        member: 2,
+        applied: 'next_turn' as const,
+      })),
+    };
+    const controller = Object.create(
+      TeamsController.prototype,
+    ) as TeamsController;
+    Object.assign(controller, { executor });
+
+    await expect(
+      controller.setPoolMember('run-w', 'lead', { member: 2 }),
+    ).resolves.toEqual({ member: 2, applied: 'next_turn' });
+    expect(executor.setOwnPoolMember).toHaveBeenCalledWith('run-w', 'lead', 2);
+  });
+});
+
 describe('POST /v1/teams/runs/:runId/stages', () => {
   it('records a move through the gateway as remote, and one without the stamp as desktop', async () => {
     const stageWakes = {

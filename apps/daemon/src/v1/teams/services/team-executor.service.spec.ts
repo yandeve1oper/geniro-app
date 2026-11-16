@@ -10033,6 +10033,309 @@ describe('TeamExecutorService — agent calls', () => {
       return run.id;
     }
 
+    describe("the user's pool member for a member's own conversation", () => {
+      async function rootAnswered(
+        harness: ReturnType<typeof setup>,
+      ): Promise<string> {
+        const run = await harness.service.startRun({
+          slug: 'root-pool',
+          team: ROOT_POOL_WF,
+          cwd: dir,
+          prompt: 'first',
+        });
+        await drain();
+        const turn = harness.claude.starts.at(-1)!;
+        turn.emit({ type: 'session', sessionId: 'claude-session' });
+        completeTurn(turn, 'first done');
+        await drain();
+        return run.id;
+      }
+
+      async function orchState(
+        service: ReturnType<typeof setup>['service'],
+        runId: string,
+      ) {
+        return (await service.getNodeStates(runId)).find(
+          (node) => node.memberId === 'orch',
+        );
+      }
+
+      it('moves an idle conversation at once and keeps it there, pinned, on later passes', async () => {
+        const harness = setup();
+        const { service, claude, cursor, itemDao, nodeDao } = harness;
+        const runId = await rootAnswered(harness);
+
+        await expect(
+          service.setOwnPoolMember(runId, 'orch', 2),
+        ).resolves.toEqual({ member: 2, applied: 'now' });
+        expect(moves(itemDao, runId).at(-1)).toMatchObject({
+          member: 2,
+          fromMember: 1,
+          previousSessionId: 'claude-session',
+          pinnedByUser: true,
+        });
+        expect(nodeDao.rows.get(`${runId}:orch`)?.agentSessionId).toBeNull();
+        expect(await orchState(service, runId)).toMatchObject({
+          poolMember: 2,
+          poolMemberPinned: true,
+          poolMemberNext: null,
+        });
+
+        await service.sendMessage(runId, 'second');
+        await drain();
+        expect(claude.starts).toHaveLength(1);
+        expect(cursor.starts).toHaveLength(1);
+        expect(cursor.starts[0]!.input.resumeSessionId ?? null).toBeNull();
+        expect(cursor.starts[0]!.input.prompt).toContain('first done');
+        cursor.starts[0]!.emit({
+          type: 'session',
+          sessionId: 'cursor-session',
+        });
+        completeTurn(cursor.starts[0]!, 'second done');
+        await drain();
+
+        await service.sendMessage(runId, 'third');
+        await drain();
+        expect(claude.starts).toHaveLength(1);
+        expect(cursor.starts[1]!.input.resumeSessionId).toBe('cursor-session');
+        expect(cursor.starts[1]!.input.prompt).not.toContain('first done');
+        completeTurn(cursor.starts[1]!, 'third done');
+        await drain();
+      });
+
+      it('lets a running turn finish and moves the conversation when its next turn starts', async () => {
+        const harness = setup();
+        const { service, claude, cursor, itemDao } = harness;
+        const run = await service.startRun({
+          slug: 'root-pool',
+          team: ROOT_POOL_WF,
+          cwd: dir,
+          prompt: 'first',
+        });
+        await drain();
+        claude.starts[0]!.emit({
+          type: 'session',
+          sessionId: 'claude-session',
+        });
+
+        await expect(
+          service.setOwnPoolMember(run.id, 'orch', 2),
+        ).resolves.toEqual({ member: 2, applied: 'next_turn' });
+        expect(moves(itemDao, run.id)).toEqual([]);
+        expect(await orchState(service, run.id)).toMatchObject({
+          poolMember: 1,
+          poolMemberPinned: false,
+          poolMemberNext: 2,
+        });
+
+        completeTurn(claude.starts[0]!, 'first done');
+        await drain();
+        expect(cursor.starts).toHaveLength(0);
+        await service.sendMessage(run.id, 'second');
+        await drain();
+        expect(claude.starts).toHaveLength(1);
+        expect(cursor.starts).toHaveLength(1);
+        expect(cursor.starts[0]!.input.resumeSessionId ?? null).toBeNull();
+        expect(cursor.starts[0]!.input.prompt).toContain('first done');
+        expect(moves(itemDao, run.id).at(-1)).toMatchObject({
+          member: 2,
+          fromMember: 1,
+          previousSessionId: 'claude-session',
+          pinnedByUser: true,
+        });
+        expect(await orchState(service, run.id)).toMatchObject({
+          poolMember: 2,
+          poolMemberPinned: true,
+          poolMemberNext: null,
+        });
+        completeTurn(cursor.starts[0]!, 'second done');
+        await drain();
+      });
+
+      it('moves an idle conversation at once while a call keeps the pass alive, and its next turn starts there', async () => {
+        const harness = setup();
+        const { service, claude, cursor, callBroker, itemDao, nodeDao } =
+          harness;
+        const run = await service.startRun({
+          slug: 'root-pool',
+          team: ROOT_POOL_WF,
+          cwd: dir,
+          prompt: 'build it',
+        });
+        await drain();
+        claude.starts[0]!.emit({
+          type: 'session',
+          sessionId: 'claude-session',
+        });
+        await callBroker.callAgent(run.id, 'orch', {
+          title: 'review',
+          agent: 'helper',
+          message: 'review app.ts',
+          mode: 'async',
+        });
+        await drain();
+        completeTurn(claude.starts[0]!, 'waiting for the review');
+        await drain();
+
+        await expect(
+          service.setOwnPoolMember(run.id, 'orch', 2),
+        ).resolves.toEqual({ member: 2, applied: 'now' });
+        expect(moves(itemDao, run.id).at(-1)).toMatchObject({
+          member: 2,
+          fromMember: 1,
+          previousSessionId: 'claude-session',
+          pinnedByUser: true,
+        });
+        expect(nodeDao.rows.get(`${run.id}:orch`)?.agentSessionId).toBeNull();
+        expect(cursor.starts).toHaveLength(0);
+
+        completeTurn(claude.starts[1]!, 'review passed');
+        await drain();
+        expect(claude.starts).toHaveLength(2);
+        expect(cursor.starts).toHaveLength(1);
+        expect(cursor.starts[0]!.input.resumeSessionId ?? null).toBeNull();
+        expect(cursor.starts[0]!.input.prompt).toContain(
+          'waiting for the review',
+        );
+        completeTurn(cursor.starts[0]!, 'done');
+        await drain();
+      });
+
+      it('pins the slot it is on when picked mid-turn, keeping its session, and re-picking it changes nothing', async () => {
+        const harness = setup();
+        const { service, claude, cursor, itemDao } = harness;
+        const run = await service.startRun({
+          slug: 'root-pool',
+          team: ROOT_POOL_WF,
+          cwd: dir,
+          prompt: 'first',
+        });
+        await drain();
+        claude.starts[0]!.emit({
+          type: 'session',
+          sessionId: 'claude-session',
+        });
+
+        await expect(
+          service.setOwnPoolMember(run.id, 'orch', 1),
+        ).resolves.toEqual({ member: 1, applied: 'next_turn' });
+        completeTurn(claude.starts[0]!, 'first done');
+        await drain();
+        expect(moves(itemDao, run.id)).toEqual([]);
+
+        await service.sendMessage(run.id, 'second');
+        await drain();
+        expect(cursor.starts).toHaveLength(0);
+        expect(claude.starts[1]!.input.resumeSessionId).toBe('claude-session');
+        expect(moves(itemDao, run.id)).toEqual([
+          expect.objectContaining({
+            member: 1,
+            fromMember: 1,
+            previousSessionId: null,
+            pinnedByUser: true,
+          }),
+        ]);
+        expect(await orchState(service, run.id)).toMatchObject({
+          poolMember: 1,
+          poolMemberPinned: true,
+          poolMemberNext: null,
+        });
+
+        await expect(
+          service.setOwnPoolMember(run.id, 'orch', 1),
+        ).resolves.toEqual({ member: 1, applied: 'next_turn' });
+        completeTurn(claude.starts[1]!, 'second done');
+        await drain();
+        await service.sendMessage(run.id, 'third');
+        await drain();
+        expect(moves(itemDao, run.id)).toHaveLength(1);
+        expect(claude.starts[2]!.input.resumeSessionId).toBe('claude-session');
+        completeTurn(claude.starts[2]!, 'third done');
+        await drain();
+      });
+
+      it('releases the pin when the pinned member fails through the pool', async () => {
+        const harness = setup();
+        const { service, claude, cursor, itemDao } = harness;
+        const runId = await rootAnswered(harness);
+        await service.setOwnPoolMember(runId, 'orch', 2);
+        await service.sendMessage(runId, 'second');
+        await drain();
+        cursor.starts[0]!.emit({
+          type: 'error',
+          message: 'Error: RetriableError: [resource_exhausted] Error',
+        });
+        cursor.starts[0]!.finish();
+        await drain();
+
+        expect(claude.starts).toHaveLength(2);
+        const handOff = moves(itemDao, runId).at(-1);
+        expect(handOff).toMatchObject({ member: 1, fromMember: 2 });
+        expect(handOff?.pinnedByUser).toBeUndefined();
+        expect(await orchState(service, runId)).toMatchObject({
+          poolMember: 1,
+          poolMemberPinned: false,
+        });
+        completeTurn(claude.starts[1]!, 'second done');
+        await drain();
+      });
+
+      it('pins the member a conversation is already on without leaving its session', async () => {
+        const harness = setup();
+        const { service, claude, itemDao, nodeDao } = harness;
+        const runId = await rootAnswered(harness);
+
+        await expect(
+          service.setOwnPoolMember(runId, 'orch', 1),
+        ).resolves.toEqual({ member: 1, applied: 'now' });
+        expect(moves(itemDao, runId).at(-1)).toMatchObject({
+          member: 1,
+          fromMember: 1,
+          previousSessionId: null,
+          pinnedByUser: true,
+        });
+        expect(nodeDao.rows.get(`${runId}:orch`)?.agentSessionId).toBe(
+          'claude-session',
+        );
+        await expect(
+          service.setOwnPoolMember(runId, 'orch', 1),
+        ).resolves.toEqual({ member: 1, applied: 'unchanged' });
+        expect(moves(itemDao, runId)).toHaveLength(1);
+
+        await service.sendMessage(runId, 'second');
+        await drain();
+        expect(claude.starts[1]!.input.resumeSessionId).toBe('claude-session');
+        completeTurn(claude.starts[1]!, 'second done');
+        await drain();
+      });
+
+      it('refuses a member with no pool, a pool member it lacks, an unknown member and an archived run', async () => {
+        const harness = setup();
+        const { service, itemDao, runDao } = harness;
+        const runId = await rootAnswered(harness);
+
+        await expect(
+          service.setOwnPoolMember(runId, 'helper', 1),
+        ).rejects.toThrow(/no agent pool/);
+        await expect(
+          service.setOwnPoolMember(runId, 'orch', 3),
+        ).rejects.toThrow(/pool members 1–2, not 3/);
+        await expect(
+          service.setOwnPoolMember(runId, 'ghost', 1),
+        ).rejects.toThrow(/has no member: ghost/);
+        runDao.runs.get(runId)!.archivedAt = new Date();
+        await expect(
+          service.setOwnPoolMember(runId, 'orch', 2),
+        ).rejects.toThrow(/archived/);
+        expect(moves(itemDao, runId)).toEqual([]);
+        expect(
+          (await service.getNodeStates(runId)).find(
+            (node) => node.memberId === 'helper',
+          )?.poolMember ?? null,
+        ).toBeNull();
+      });
+    });
+
     it('goes back to the member it left, on that member’s own session, when member 1 refuses again', async () => {
       const harness = setup();
       const { service, claude, cursor, runDao } = harness;

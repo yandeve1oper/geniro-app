@@ -38,6 +38,8 @@ import type {
   SaveTeamDto,
   SaveTeamOverlayDto,
   SendMessageDto,
+  SetPoolMemberResultDto,
+  SetTeamRunPoolMemberDto,
   StageMoveResultDto,
   StartTeamChatDto,
   TeamAvatarDataDto,
@@ -206,6 +208,12 @@ export interface TeamsApiSendTeamCallMessageRequest {
 export interface TeamsApiSendTeamRunMessageRequest {
     runId: string;
     sendMessageDto: SendMessageDto;
+}
+
+export interface TeamsApiSetTeamRunPoolMemberRequest {
+    runId: string;
+    memberId: string;
+    setTeamRunPoolMemberDto: SetTeamRunPoolMemberDto;
 }
 
 export interface TeamsApiStartTeamRunRequest {
@@ -1866,6 +1874,69 @@ export class TeamsApi extends runtime.BaseAPI {
      */
     async sendTeamRunMessage(requestParameters: TeamsApiSendTeamRunMessageRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ItemDto> {
         const response = await this.sendTeamRunMessageRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
+    async setTeamRunPoolMemberRaw(requestParameters: TeamsApiSetTeamRunPoolMemberRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SetPoolMemberResultDto>> {
+        if (requestParameters['runId'] == null) {
+            throw new runtime.RequiredError(
+                'runId',
+                'Required parameter "runId" was null or undefined when calling setTeamRunPoolMember().'
+            );
+        }
+
+        if (requestParameters['memberId'] == null) {
+            throw new runtime.RequiredError(
+                'memberId',
+                'Required parameter "memberId" was null or undefined when calling setTeamRunPoolMember().'
+            );
+        }
+
+        if (requestParameters['setTeamRunPoolMemberDto'] == null) {
+            throw new runtime.RequiredError(
+                'setTeamRunPoolMemberDto',
+                'Required parameter "setTeamRunPoolMemberDto" was null or undefined when calling setTeamRunPoolMember().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/teams/runs/{runId}/members/{memberId}/pool-member`;
+        urlPath = urlPath.replace(`{${"runId"}}`, encodeURIComponent(String(requestParameters['runId'])));
+        urlPath = urlPath.replace(`{${"memberId"}}`, encodeURIComponent(String(requestParameters['memberId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'PUT',
+            headers: headerParameters,
+            query: queryParameters,
+            body: requestParameters['setTeamRunPoolMemberDto'],
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async setTeamRunPoolMember(requestParameters: TeamsApiSetTeamRunPoolMemberRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SetPoolMemberResultDto> {
+        const response = await this.setTeamRunPoolMemberRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

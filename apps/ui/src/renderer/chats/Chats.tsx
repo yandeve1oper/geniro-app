@@ -50,6 +50,7 @@ import type {
   RunGroupColor,
   RunGroupDto,
   SendMessageDtoImagesInner,
+  SetPoolMemberResultDto,
   Team,
   TeamMember,
   TeamStage,
@@ -426,7 +427,7 @@ import {
 } from './use-file-attach';
 import { type GitNotice, useGitInfo } from './use-git-info';
 import { type QueueSendTerms, useMessageQueue } from './use-message-queue';
-import { useNodeDurableReadings } from './use-node-context';
+import { ownPoolOf, useNodeDurableReadings } from './use-node-context';
 import { useRunArtifacts } from './use-run-artifacts';
 import { useRunOutcomes } from './use-run-outcomes';
 import { useRunProcesses } from './use-run-processes';
@@ -5181,6 +5182,7 @@ export function Chats({
       ),
     [transcriptRows],
   );
+  const [nodeReadingsNonce, setNodeReadingsNonce] = useState(0);
   const nodeReadings = useNodeDurableReadings(
     activeRunId,
     activeRun?.teamId != null,
@@ -5188,6 +5190,25 @@ export function Chats({
     reconnectNonce,
     settledTurnCount,
     client,
+    nodeReadingsNonce,
+  );
+  const setOwnPoolMember = useLatestCallback(
+    async (
+      memberId: string,
+      member: number,
+    ): Promise<SetPoolMemberResultDto> => {
+      if (activeRunId === null) {
+        throw new Error('no run is open');
+      }
+      const answer = await teamApi.setTeamRunPoolMember({
+        runId: activeRunId,
+        memberId,
+        setTeamRunPoolMemberDto: { member },
+      });
+      setNodeReadingsNonce((nonce) => nonce + 1);
+      return answer;
+    },
+    [activeRunId, teamApi],
   );
   /**
    * The same two ranks, handed to every call block in the transcript.
@@ -7847,8 +7868,10 @@ export function Chats({
                 model: member.model ?? null,
                 configDir: member.configDir ?? null,
               })),
+              configuredModel: node.model ?? null,
             }
           : {}),
+        ...ownPoolOf(nodeReadings.get(node.id)),
         // The card is per NODE (`awaitingAnswer` keys by the item's own node),
         // so the agent that is waiting is the one that says so — a run-level
         // reading would park every node in the graph at once.
@@ -11563,6 +11586,9 @@ export function Chats({
                       // launch (a remote host, an open tmux pane), and it was
                       // unreachable.
                       onResolveHandoff={resolveHandoff}
+                      onSetPoolMember={
+                        activeRun?.teamId ? setOwnPoolMember : undefined
+                      }
                       // The HOVER half of the same resolution the button acts on.
                       // Never passed until now, so the hint it feeds — the invocation,
                       // selectable, with a copy control — could not open on this

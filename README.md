@@ -252,6 +252,7 @@ Rate limits are the worst part of a long run. In a member's settings, add an **a
 - When one hits a usage limit or its sign-in expires, Geniro hands the work to the next one. It remembers until when that account is spent, across every team run, for calls, team steps and direct messages alike.
 - Once the limit resets, the next turn or call goes back to the first configuration and carries the recent conversation over.
 - Continuing a call keeps it on the configuration that handled it.
+- **Switch the slot yourself.** In a team run, the card of a pooled member in the agents panel shows which slot its own conversation runs on (`Slot 2 of 3 · Codex · gpt-5.5`). Pick another slot there, for the lead or any other pooled member, and the conversation moves to it and stays pinned there: it no longer moves back on its own. An idle member moves at once; one in the middle of a turn finishes it and moves when its next turn starts. The new slot starts a fresh session that carries the recent conversation over. If the pinned slot hits a usage limit or is signed out, the turn still goes on to the next configuration and the pin is released.
 
 ## 📋 Task board
 

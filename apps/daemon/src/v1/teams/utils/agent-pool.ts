@@ -227,6 +227,44 @@ export function poolMoveNotice(
     : `${nodeName}: pool member ${from} is unavailable — starting the turn on ${namedMember(to)}.`;
 }
 
+/**
+ * The transcript sentence for the user picking the pool member a member's own
+ * conversation runs on: `moved` when the conversation leaves another member,
+ * otherwise the member it is on is only pinned.
+ */
+export function poolSwitchNotice(
+  nodeName: string,
+  to: CalleePoolAttempt,
+  moved: boolean,
+): string {
+  return moved
+    ? `${nodeName}: switched to pool ${namedMember(to)} by the user — the conversation continues there in a new session.`
+    : `${nodeName}: pinned to pool ${namedMember(to)} by the user.`;
+}
+
+/**
+ * The `system` row recording which pool member a member's own conversation
+ * now runs on. `pinnedByUser` is written only when true: a hand-off without it
+ * is what releases a pin (`readNodePoolPins`).
+ */
+export function nodePoolHandOffRow(input: {
+  member: number;
+  fromMember: number;
+  previousSessionId: string | null;
+  message: string;
+  pinnedByUser: boolean;
+}): Record<string, unknown> {
+  return {
+    severity: 'info',
+    member: input.member,
+    nodePoolHandOff: true,
+    fromMember: input.fromMember,
+    previousSessionId: input.previousSessionId,
+    ...(input.pinnedByUser ? { pinnedByUser: true } : {}),
+    message: input.message,
+  };
+}
+
 /** `member 2 (codex · gpt-5.5)`: the member a reader is told now answers. */
 function namedMember({ member, node }: CalleePoolAttempt): string {
   return `member ${member} (${poolMemberLabel(node)})`;

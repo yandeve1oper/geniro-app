@@ -58,6 +58,8 @@ import {
   RunTeamSnapshotDto,
   SaveTeamDto,
   SaveTeamOverlayDto,
+  SetPoolMemberResultDto,
+  SetTeamRunPoolMemberDto,
   StageMoveResultDto,
   StartTeamChatDto,
   TeamAvatarDataDto,
@@ -93,6 +95,7 @@ import type {
   ProjectTeamOverlay,
   ResetWakesCancelled,
   RunTeamSnapshotWire,
+  SetPoolMemberResult,
   StageMoveResultWire,
   TeamHealth,
   TeamOverlayScope,
@@ -150,6 +153,22 @@ export class TeamsController {
   @ZodResponse({ status: 200, type: [NodeStateDto] })
   getRunNodes(@Param('runId') runId: string): Promise<NodeStateWire[]> {
     return this.executor.getNodeStates(runId);
+  }
+
+  /**
+   * Run a member's own conversation on one pool member of its agent pool and
+   * pin it there — at once while it is idle, from its next turn while a turn
+   * of it runs.
+   */
+  @Put('runs/:runId/members/:memberId/pool-member')
+  @ApiOperation({ operationId: 'setTeamRunPoolMember' })
+  @ZodResponse({ status: 200, type: SetPoolMemberResultDto })
+  setPoolMember(
+    @Param('runId') runId: string,
+    @Param('memberId') memberId: string,
+    @Body() dto: SetTeamRunPoolMemberDto,
+  ): Promise<SetPoolMemberResult> {
+    return this.executor.setOwnPoolMember(runId, memberId, dto.member);
   }
 
   /**

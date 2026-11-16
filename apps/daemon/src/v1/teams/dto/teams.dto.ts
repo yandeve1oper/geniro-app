@@ -23,6 +23,8 @@ import {
   ResetWakesCancelledSchema,
   RunTeamSnapshotWireSchema,
   SaveTeamOverlaySchema,
+  SetPoolMemberRequestSchema,
+  SetPoolMemberResultSchema,
   StageMoveRequestSchema,
   StageMoveResultSchema,
   StartTeamChatSchema,
@@ -218,6 +220,12 @@ export class ExportedDto extends createZodDto(
 
 export class MoveTeamRunStageDto extends createZodDto(StageMoveRequestSchema) {}
 export class StageMoveResultDto extends createZodDto(StageMoveResultSchema) {}
+export class SetTeamRunPoolMemberDto extends createZodDto(
+  SetPoolMemberRequestSchema,
+) {}
+export class SetPoolMemberResultDto extends createZodDto(
+  SetPoolMemberResultSchema,
+) {}
 
 export const teamHealthQuerySchema = z.object({
   projectId: z

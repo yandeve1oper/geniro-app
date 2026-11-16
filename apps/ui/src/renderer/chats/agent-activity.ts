@@ -227,6 +227,22 @@ export interface AgentDisplay {
     model: string | null;
     configDir: string | null;
   }[];
+  /**
+   * The model pool member 1 — the node's own settings — is configured with;
+   * null for its CLI's default. Absent for an agent with no pool, whose
+   * {@link model} is the whole answer.
+   */
+  configuredModel?: string | null;
+  /**
+   * Which pool member its OWN conversation runs on (1-based), whether the
+   * user pinned it there, and the member it moves to at its next turn —
+   * absent for an agent with no pool, or before the daemon has answered.
+   */
+  ownPool?: {
+    member: number;
+    pinned: boolean;
+    next: number | null;
+  };
   status: RunStatusKind;
   activeTurns: number;
   contextTokens: number | null;

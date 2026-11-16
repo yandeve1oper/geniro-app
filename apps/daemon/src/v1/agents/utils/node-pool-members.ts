@@ -26,6 +26,34 @@ export function readNodePoolMembers(
   return members;
 }
 
+/**
+ * The members whose last explicit hand-off was the user pinning a pool member,
+ * each with whether that pin moved its conversation off another member.
+ */
+export function readNodePoolPins(
+  rows: readonly { memberId: string | null; payload: string }[],
+): Map<string, boolean> {
+  const pinned = new Map<string, boolean>();
+  for (const row of rows) {
+    const payload = asRecord(parseJsonColumn(row.payload));
+    const member = memberOf(payload?.member);
+    if (
+      row.memberId === null ||
+      payload?.nodePoolHandOff !== true ||
+      payload.callId !== undefined ||
+      member === null
+    ) {
+      continue;
+    }
+    if (payload.pinnedByUser === true) {
+      pinned.set(row.memberId, memberOf(payload.fromMember) !== member);
+    } else {
+      pinned.delete(row.memberId);
+    }
+  }
+  return pinned;
+}
+
 /** A historical own session can belong to a pool member the member no longer uses. */
 export function nodePoolSessionMember(
   rows: readonly { memberId: string | null; payload: string }[],

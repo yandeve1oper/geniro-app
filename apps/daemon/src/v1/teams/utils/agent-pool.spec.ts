@@ -17,6 +17,7 @@ import {
   poolMemberNode,
   poolMoveNotice,
   poolSize,
+  poolSwitchNotice,
 } from './agent-pool';
 
 function pooled(): TeamMember {
@@ -272,6 +273,18 @@ describe('poolMoveNotice', () => {
     );
     expect(poolMoveNotice('Engineer', 1, third!)).toBe(
       'Engineer: pool member 1 is unavailable — starting the turn on member 3 (codex · gpt-5.5).',
+    );
+  });
+});
+
+describe('poolSwitchNotice', () => {
+  it('says the user moved the conversation, or only pinned the member it is on', () => {
+    const [, , third] = poolAttempts(pooled(), [1, 2, 3]);
+    expect(poolSwitchNotice('Engineer', third!, true)).toBe(
+      'Engineer: switched to pool member 3 (codex · gpt-5.5) by the user — the conversation continues there in a new session.',
+    );
+    expect(poolSwitchNotice('Engineer', third!, false)).toBe(
+      'Engineer: pinned to pool member 3 (codex · gpt-5.5) by the user.',
     );
   });
 });

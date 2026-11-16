@@ -35,7 +35,17 @@ export type NodeDurableReading = Pick<
   // When the node's own conversation's prompt cache lapses.
   | 'promptCacheExpiresAt'
 > &
-  Partial<Pick<NodeStateDto, 'contextEstimated'>>;
+  Partial<
+    Pick<
+      NodeStateDto,
+      | 'contextEstimated'
+      // The pool member its own conversation runs on, the user's pin on it,
+      // and the one it moves to at its next turn.
+      | 'poolMember'
+      | 'poolMemberPinned'
+      | 'poolMemberNext'
+    >
+  >;
 
 const EMPTY: ReadonlyMap<string, NodeDurableReading> = new Map();
 
@@ -76,6 +86,7 @@ export function useNodeDurableReadings(
   reconnectNonce: number,
   settledTurns = 0,
   client: Pick<DaemonClient, 'onRunStatus'> | null = null,
+  refreshNonce = 0,
 ): ReadonlyMap<string, NodeDurableReading> {
   const [state, setState] = useState<NodeContextState>(() => ({
     runId,
@@ -151,6 +162,9 @@ export function useNodeDurableReadings(
                 mainTotals: node.mainTotals,
                 model: node.model,
                 promptCacheExpiresAt: node.promptCacheExpiresAt,
+                poolMember: node.poolMember,
+                poolMemberPinned: node.poolMemberPinned,
+                poolMemberNext: node.poolMemberNext,
               },
             ]),
           ),
@@ -169,7 +183,15 @@ export function useNodeDurableReadings(
     return () => {
       cancelled = true;
     };
-  }, [runId, isTeamRun, teamApi, reconnectNonce, settledTurns, spendAt]);
+  }, [
+    runId,
+    isTeamRun,
+    teamApi,
+    reconnectNonce,
+    settledTurns,
+    spendAt,
+    refreshNonce,
+  ]);
 
   // The readings belong to the run they were fetched for. The effect clears on
   // entry, but it runs AFTER the render that changed `runId` — and since two
@@ -177,4 +199,20 @@ export function useNodeDurableReadings(
   // against the previous run's row instead of drawing none. Same guard, and the
   // same reason, as the one on `use-chat-totals.ts`.
   return state.runId === runId ? state.readings : EMPTY;
+}
+
+/** The pool facts of a member's own conversation, as `AgentDisplay` carries them. */
+export function ownPoolOf(reading: NodeDurableReading | undefined): {
+  ownPool?: { member: number; pinned: boolean; next: number | null };
+} {
+  const member = reading?.poolMember ?? null;
+  return member === null
+    ? {}
+    : {
+        ownPool: {
+          member,
+          pinned: reading?.poolMemberPinned === true,
+          next: reading?.poolMemberNext ?? null,
+        },
+      };
 }

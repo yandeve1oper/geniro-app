@@ -9,7 +9,11 @@ import {
   type OnModuleInit,
   Optional,
 } from '@nestjs/common';
-import { BadRequestException, ConflictException } from '@packages/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@packages/common';
 
 import { CallTokenRegistry } from '../../../auth/call-token.registry';
 import { RUNTIME_TOKEN, type RuntimeInfo } from '../../../auth/runtime';
@@ -151,7 +155,10 @@ import { threadCardFields } from '../../agents/utils/host-thread-message';
 import { asRecord, parseJsonColumn } from '../../agents/utils/json-util';
 import { sanitizeModelParameters } from '../../agents/utils/model-parameters';
 import { offersMonitorTools } from '../../agents/utils/monitor-offer';
-import { readNodePoolMembers } from '../../agents/utils/node-pool-members';
+import {
+  readNodePoolMembers,
+  readNodePoolPins,
+} from '../../agents/utils/node-pool-members';
 import {
   delegateCloseEvent,
   ownerFields,
@@ -193,7 +200,10 @@ import {
 } from '../../agents/utils/session-keys';
 import { isSlashCommand } from '../../agents/utils/session-replacement-notes';
 import { createSessionIdSaver } from '../../agents/utils/session-saver';
-import { snapshotPoolKinds } from '../../agents/utils/snapshot-config-dirs';
+import {
+  snapshotNodePoolProfiles,
+  snapshotPoolKinds,
+} from '../../agents/utils/snapshot-config-dirs';
 import { teamProjectCardId } from '../../agents/utils/team-project-card';
 import {
   threadMessagesPrompt,
@@ -233,6 +243,7 @@ import type {
   NodeStateWire,
   PoolSkip,
   ResetWakesCancelled,
+  SetPoolMemberResult,
   ShellStillOut,
   Team,
   TeamAgentPoolMember,
@@ -244,6 +255,7 @@ import {
   conversationStartMember,
   fallsThroughPool,
   nodePoolHandOffPrompt,
+  nodePoolHandOffRow,
   poolAttempts,
   poolHandOffNotice,
   poolHandOffPrompt,
@@ -251,6 +263,7 @@ import {
   poolMembersOf,
   poolMoveNotice,
   poolSize,
+  poolSwitchNotice,
 } from '../utils/agent-pool';
 import { geniroSideFailure, readCalleeFailure } from '../utils/callee-failure';
 import {
@@ -539,6 +552,11 @@ interface RunContext {
   /** The pool member holding each member's own conversation after a hand-off. */
   nodePoolMembers: ReadonlyMap<string, number>;
   /**
+   * Members whose own conversation the user pinned to its pool member, each
+   * with whether the pin moved it off another member.
+   */
+  nodePoolPins: ReadonlyMap<string, boolean>;
+  /**
    * Each member's context window as an earlier pass recorded it. Every user
    * message starts a pass and nearly every trigger-member turn is a pass's FIRST, so
    * without this those turns never carried the member's `--autocompact` threshold.
@@ -581,6 +599,22 @@ interface LiveRunControl {
   ): Promise<ItemWire>;
   /** Hand a message from another thread to the lead's running turn. */
   joinThreadMessage(join: ThreadMessageJoin): Promise<ThreadMessageJoinAnswer>;
+  /**
+   * Pin the member's own conversation to pool member `member` on the pass's
+   * write chain, so no turn of it starts halfway through: `busy` while a turn
+   * of it runs, `unchanged` when it is already pinned there, else `now` with
+   * `row(from, previousSessionId, moved)` written. A move leaves the session,
+   * so the next turn starts on `member` from a transcript excerpt.
+   */
+  pinPoolMember(
+    memberId: string,
+    member: number,
+    row: (
+      from: number,
+      previousSessionId: string | null,
+      moved: boolean,
+    ) => Record<string, unknown>,
+  ): Promise<'now' | 'unchanged' | 'busy'>;
 }
 
 /**
@@ -812,6 +846,11 @@ export class TeamExecutorService
    * reach its agents while they are live — see {@link sendMessage}.
    */
   private readonly liveRuns = new Map<string, LiveRunControl>();
+  /**
+   * The pool member the user picked for a member's own conversation while a
+   * turn of it ran, by run then member — applied when its next turn starts.
+   */
+  private readonly poolChoices = new Map<string, Map<string, number>>();
   private readonly runSettledListeners = new Set<(runId: string) => void>();
 
   constructor(
@@ -1572,6 +1611,7 @@ export class TeamExecutorService
         agentOptions: readAgentOptions(run.agentOptions),
         resumeSessions: new Map(),
         nodePoolMembers: new Map(),
+        nodePoolPins: new Map(),
         nodeWindows: new Map(),
         callSeed: null,
         seedPersisted: false,
@@ -2014,13 +2054,18 @@ export class TeamExecutorService
     const cwd = resolveValidCwd(run.cwd);
     const resumeSessions = new Map<string, string>();
     const nodePoolMembers = new Map<string, number>();
+    const nodePoolPins = new Map<string, boolean>();
     if (team.members.some((node) => node.pool?.length)) {
-      for (const [memberId, member] of readNodePoolMembers(
-        await this.itemDao.poolHandOffRows(run.id, em),
-      )) {
+      const handOffs = await this.itemDao.poolHandOffRows(run.id, em);
+      const pins = readNodePoolPins(handOffs);
+      for (const [memberId, member] of readNodePoolMembers(handOffs)) {
         const node = team.members.find((node) => node.id === memberId);
         if (node !== undefined && poolMemberNode(node, member) !== null) {
           nodePoolMembers.set(node.id, member);
+          const moved = pins.get(node.id);
+          if (moved !== undefined) {
+            nodePoolPins.set(node.id, moved);
+          }
         }
       }
     }
@@ -2093,6 +2138,7 @@ export class TeamExecutorService
         agentOptions: readAgentOptions(run.agentOptions),
         resumeSessions,
         nodePoolMembers,
+        nodePoolPins,
         nodeWindows,
         callSeed,
         seedPersisted: true,
@@ -2169,6 +2215,7 @@ export class TeamExecutorService
    */
   private disposeHostPublishers(runId: string): void {
     this.commandEndWakes?.forgetRun(runId);
+    this.poolChoices.delete(runId);
     for (const disposers of [
       this.artifactDisposers,
       this.actionDisposers,
@@ -2869,10 +2916,26 @@ export class TeamExecutorService
     const wallByNode = await this.wallTurns.nodeSums(runId, em);
     const adapters = this.adapters.all();
     const poolKinds = snapshotPoolKinds(run.teamSnapshot);
-    const ownPoolMembers =
-      poolKinds.size === 0
-        ? new Map<string, number>()
-        : readNodePoolMembers(await this.itemDao.poolHandOffRows(runId, em));
+    const handOffs =
+      poolKinds.size === 0 ? [] : await this.itemDao.poolHandOffRows(runId, em);
+    const ownPoolMembers = readNodePoolMembers(handOffs);
+    const ownPoolPins = readNodePoolPins(handOffs);
+    const poolSizes = new Map(
+      [...snapshotNodePoolProfiles(run.teamSnapshot)].map(([id, profiles]) => [
+        id,
+        profiles.length,
+      ]),
+    );
+    /** The recorded pool member, unless the pool no longer has it. */
+    const ownPoolMemberOf = (memberId: string): number | null => {
+      const size = poolSizes.get(memberId);
+      if (size === undefined) {
+        return null;
+      }
+      const recorded = ownPoolMembers.get(memberId);
+      return recorded !== undefined && recorded <= size ? recorded : null;
+    };
+    const poolChoices = this.poolChoices.get(runId);
     // Spend over EVERY turn the run wrote, per member, per call and per member's
     // own conversation — the figures a client's loaded window cannot sum.
     const nodeTotals = new Map<string, ChatTotalsWire>();
@@ -3170,7 +3233,136 @@ export class TeamExecutorService
       startedAt: row.startedAt,
       endedAt: row.endedAt,
       error: row.error,
+      poolMember: poolSizes.has(row.memberId)
+        ? (ownPoolMemberOf(row.memberId) ?? 1)
+        : null,
+      poolMemberPinned:
+        ownPoolMemberOf(row.memberId) !== null && ownPoolPins.has(row.memberId),
+      poolMemberNext: poolChoices?.get(row.memberId) ?? null,
     }));
+  }
+
+  /**
+   * Run a member's OWN conversation on pool member `member` from now on, and
+   * pin it there: it never moves back on its own, until a turn of it fails
+   * through the pool (a usage limit, a sign-out), which hands it on and
+   * releases the pin. An idle conversation moves at once; one whose turn is
+   * running moves when its next turn starts. A move leaves the CLI session,
+   * which belongs to the account it was opened on, and the next turn starts
+   * on the new member from a transcript excerpt.
+   */
+  async setOwnPoolMember(
+    runId: string,
+    memberId: string,
+    member: number,
+  ): Promise<SetPoolMemberResult> {
+    const em = this.em.fork();
+    const run = assertTeamRun(await this.runDao.getById(runId, em), runId);
+    if (run.archivedAt !== null) {
+      throw new ConflictException(
+        'RUN_ARCHIVED',
+        "this run is archived — unarchive it to change an agent's pool member",
+      );
+    }
+    const team = await this.runTeams.teamOf(run, em);
+    const node = team.members.find((entry) => entry.id === memberId);
+    if (node === undefined) {
+      throw new NotFoundException(
+        'NODE_NOT_FOUND',
+        `team ${run.teamId} has no member: ${memberId}`,
+      );
+    }
+    const size = poolSize(node);
+    if (size === 1) {
+      throw new BadRequestException(
+        'NO_AGENT_POOL',
+        `'${memberId}' has no agent pool`,
+      );
+    }
+    const target = poolMemberNode(node, member);
+    if (target === null) {
+      throw new BadRequestException(
+        'UNKNOWN_POOL_MEMBER',
+        `'${memberId}' has pool members 1–${size}, not ${member}`,
+      );
+    }
+    const rowFor = (
+      from: number,
+      previousSessionId: string | null,
+      moved: boolean,
+    ): Record<string, unknown> =>
+      nodePoolHandOffRow({
+        member,
+        fromMember: from,
+        previousSessionId,
+        message: poolSwitchNotice(
+          node.name ?? node.id,
+          { member, node: target },
+          moved,
+        ),
+        pinnedByUser: true,
+      });
+    const live = this.liveRuns.get(runId);
+    if (live !== undefined) {
+      const applied = await live.pinPoolMember(memberId, member, rowFor);
+      if (applied !== 'busy') {
+        this.dropPoolChoice(runId, memberId);
+        return { member, applied };
+      }
+      const choices = this.poolChoices.get(runId) ?? new Map<string, number>();
+      choices.set(memberId, member);
+      this.poolChoices.set(runId, choices);
+      return { member, applied: 'next_turn' };
+    }
+    this.dropPoolChoice(runId, memberId);
+    const handOffs = await this.itemDao.poolHandOffRows(runId, em);
+    const recorded = readNodePoolMembers(handOffs).get(memberId) ?? 1;
+    const from = poolMemberNode(node, recorded) === null ? 1 : recorded;
+    const moved = member !== from;
+    if (!moved && readNodePoolPins(handOffs).has(memberId)) {
+      return { member, applied: 'unchanged' };
+    }
+    let previousSessionId: string | null = null;
+    if (moved) {
+      previousSessionId =
+        (await this.nodeStateDao.getByRunNode(runId, memberId, em))
+          ?.agentSessionId ?? null;
+      const sessionKey = nodeSessionKey(runId, memberId);
+      this.sessions.retire(
+        sessionKey,
+        'the user moved its conversation to another pool member',
+      );
+      this.compactionBaselines.delete(sessionKey);
+      await this.nodeStateDao.clearConversation(runId, memberId, em);
+    }
+    await this.persist(
+      em,
+      runId,
+      memberId,
+      await this.seqs.reserve(runId),
+      'system',
+      null,
+      rowFor(from, previousSessionId, moved),
+    );
+    return { member, applied: 'now' };
+  }
+
+  /** The pool member the user picked while a turn ran, taken by its next turn. */
+  private takePoolChoice(runId: string, node: TeamMember): number | null {
+    const member = this.poolChoices.get(runId)?.get(node.id);
+    if (member === undefined) {
+      return null;
+    }
+    this.dropPoolChoice(runId, node.id);
+    return poolMemberNode(node, member) === null ? null : member;
+  }
+
+  private dropPoolChoice(runId: string, memberId: string): void {
+    const choices = this.poolChoices.get(runId);
+    choices?.delete(memberId);
+    if (choices?.size === 0) {
+      this.poolChoices.delete(runId);
+    }
   }
 
   /**
@@ -3690,6 +3882,22 @@ export class TeamExecutorService
      */
     const nodeSessionIds = new Map<string, string>();
     const nodePoolMembers = new Map(run.nodePoolMembers);
+    const nodePoolPins = new Set(run.nodePoolPins.keys());
+    /**
+     * Each member's session from an earlier pass, until its conversation moves
+     * to another pool member — that session belongs to the account it left.
+     */
+    const resumeSessions = new Map(run.resumeSessions);
+    /**
+     * Pinned members whose conversation the user moved before any turn ran on
+     * the new pool member: no session to resume there, so the next turn opens
+     * with a transcript excerpt instead.
+     */
+    const nodePoolExcerpts = new Set(
+      [...run.nodePoolPins]
+        .filter(([id, moved]) => moved && !resumeSessions.has(id))
+        .map(([id]) => id),
+    );
     /**
      * Members whose own turn in this pass, or a follow-up of it, ended other
      * than completed, until a later follow-up of their own completes. A woken
@@ -6421,19 +6629,28 @@ export class TeamExecutorService
       }
       const cooldowns = this.callBroker.poolCooldowns;
       const held = nodePoolMembers.get(node.id) ?? 1;
-      const heldSessionId = extras.resumeSessionId ?? null;
+      const choice = this.takePoolChoice(runId, node);
+      const wasPinned = nodePoolPins.has(node.id);
+      const excerptOwed = nodePoolExcerpts.delete(node.id);
+      const heldSessionId = excerptOwed
+        ? null
+        : (extras.resumeSessionId ?? null);
       const heldWindow = nodeWindows.get(node.id);
       const heldBaseline = this.compactionBaselines.get(sessionKey);
       const site = { cwd, runId, memberId: node.id };
       const { standings, proven, order } = cooldowns.order(node, site);
-      const start = conversationStartMember({
-        standings,
-        proven,
-        order,
-        held,
-        hasSession: heldSessionId !== null,
-        holdsWork: this.sessions.holdsWorkFor(sessionKey),
-      });
+      const start =
+        choice ??
+        (wasPinned
+          ? held
+          : conversationStartMember({
+              standings,
+              proven,
+              order,
+              held,
+              hasSession: heldSessionId !== null,
+              holdsWork: this.sessions.holdsWorkFor(sessionKey),
+            }));
       const attempts = poolAttempts(node, [
         start,
         ...order.filter((member) => member !== start),
@@ -6458,6 +6675,22 @@ export class TeamExecutorService
        * the account it was opened on, so the next attempt starts a fresh one,
        * and the row records which member now holds the member for later passes.
        */
+      /** Write `row` on the pass's chain, after `before`, and wait for it. */
+      const recordOnChain = (
+        row: Record<string, unknown>,
+        before?: () => Promise<void>,
+      ): Promise<void> =>
+        new Promise<void>((resolve, reject) => {
+          enqueue(async () => {
+            try {
+              await before?.();
+              await persistItem(node.id, 'system', null, row);
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          });
+        });
       const moveConversation = async (
         from: number,
         to: number,
@@ -6465,31 +6698,32 @@ export class TeamExecutorService
         message: string,
         retireReason: string,
         recordRetired?: () => Promise<void>,
+        pinnedByUser = false,
       ): Promise<void> => {
         this.sessions.retire(sessionKey, retireReason);
         nodeSessionIds.delete(node.id);
+        resumeSessions.delete(node.id);
         nodeWindows.delete(node.id);
         this.compactionBaselines.delete(sessionKey);
-        await new Promise<void>((resolve, reject) => {
-          enqueue(async () => {
-            try {
-              await recordRetired?.();
-              await this.nodeStateDao.clearConversation(runId, node.id, em);
-              await persistItem(node.id, 'system', null, {
-                severity: 'info',
-                member: to,
-                nodePoolHandOff: true,
-                fromMember: from,
-                previousSessionId,
-                message,
-              });
-              resolve();
-            } catch (err) {
-              reject(err);
-            }
-          });
-        });
+        await recordOnChain(
+          nodePoolHandOffRow({
+            member: to,
+            fromMember: from,
+            previousSessionId,
+            message,
+            pinnedByUser,
+          }),
+          async () => {
+            await recordRetired?.();
+            await this.nodeStateDao.clearConversation(runId, node.id, em);
+          },
+        );
         nodePoolMembers.set(node.id, to);
+        if (pinnedByUser) {
+          nodePoolPins.add(node.id);
+        } else {
+          nodePoolPins.delete(node.id);
+        }
       };
       const handOn = async (
         outcome: CalleeTurnOutcome,
@@ -6581,22 +6815,40 @@ export class TeamExecutorService
           }
         }
       };
+      const nodeName = node.name ?? node.id;
       if (start !== held) {
         await moveConversation(
           held,
           start,
           heldSessionId,
-          poolMoveNotice(node.name ?? node.id, held, attempts[0]!),
-          'its conversation moved to another pool member',
+          choice !== null
+            ? poolSwitchNotice(nodeName, attempts[0]!, true)
+            : poolMoveNotice(nodeName, held, attempts[0]!),
+          choice !== null
+            ? 'the user moved its conversation to another pool member'
+            : 'its conversation moved to another pool member',
+          undefined,
+          choice !== null,
         );
-        if (heldSessionId !== null) {
-          currentPrompt = nodePoolHandOffPrompt(
-            prompt,
-            node.id,
-            await this.itemDao.nodePoolContextRows(runId, node.id, em),
-          );
-          resumeSessionId = null;
-        }
+      } else if (choice !== null && !wasPinned) {
+        await recordOnChain(
+          nodePoolHandOffRow({
+            member: held,
+            fromMember: held,
+            previousSessionId: null,
+            message: poolSwitchNotice(nodeName, attempts[0]!, false),
+            pinnedByUser: true,
+          }),
+        );
+        nodePoolPins.add(node.id);
+      }
+      if (excerptOwed || (start !== held && heldSessionId !== null)) {
+        currentPrompt = nodePoolHandOffPrompt(
+          prompt,
+          node.id,
+          await this.itemDao.nodePoolContextRows(runId, node.id, em),
+        );
+        resumeSessionId = null;
       }
       let current = await startAttempt();
       const done = (async (): Promise<void> => {
@@ -6668,7 +6920,7 @@ export class TeamExecutorService
         ({ handle, finish, retireCards } = await beginNodeTurn(node, prompt, {
           // An earlier pass of this run left this member a conversation; a
           // follow-up's pass carries it on rather than starting it over.
-          resumeSessionId: run.resumeSessions.get(node.id) ?? null,
+          resumeSessionId: resumeSessions.get(node.id) ?? null,
           images: node.id === run.lead ? run.seedImages : [],
         }));
       } catch (err) {
@@ -7656,9 +7908,7 @@ export class TeamExecutorService
         ({ handle, finish, retireCards } = await beginNodeTurn(node, prompt, {
           images,
           resumeSessionId:
-            nodeSessionIds.get(node.id) ??
-            run.resumeSessions.get(node.id) ??
-            null,
+            nodeSessionIds.get(node.id) ?? resumeSessions.get(node.id) ?? null,
         }));
       } catch (err) {
         startingContinuations.delete(node.id);
@@ -8595,6 +8845,52 @@ export class TeamExecutorService
       deliver: deliverFollowUp,
       deliverToCall,
       joinThreadMessage,
+      pinPoolMember: (memberId, member, row) =>
+        new Promise((resolve, reject) => {
+          enqueue(async () => {
+            try {
+              if (liveConversations.has(memberId)) {
+                resolve('busy');
+                return;
+              }
+              const from = nodePoolMembers.get(memberId) ?? 1;
+              const moved = member !== from;
+              if (!moved && nodePoolPins.has(memberId)) {
+                resolve('unchanged');
+                return;
+              }
+              const previousSessionId = moved
+                ? (nodeSessionIds.get(memberId) ??
+                  resumeSessions.get(memberId) ??
+                  null)
+                : null;
+              if (moved) {
+                const sessionKey = nodeSessionKey(runId, memberId);
+                this.sessions.retire(
+                  sessionKey,
+                  'the user moved its conversation to another pool member',
+                );
+                this.compactionBaselines.delete(sessionKey);
+                nodeSessionIds.delete(memberId);
+                resumeSessions.delete(memberId);
+                nodeWindows.delete(memberId);
+                nodePoolMembers.set(memberId, member);
+                nodePoolExcerpts.add(memberId);
+                await this.nodeStateDao.clearConversation(runId, memberId, em);
+              }
+              nodePoolPins.add(memberId);
+              await persistItem(
+                memberId,
+                'system',
+                null,
+                row(from, previousSessionId, moved),
+              );
+              resolve('now');
+            } catch (err) {
+              reject(err);
+            }
+          });
+        }),
     };
     this.liveRuns.set(runId, liveControl);
     schedule();

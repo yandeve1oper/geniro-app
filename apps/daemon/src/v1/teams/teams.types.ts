@@ -1317,8 +1317,54 @@ export const NodeStateWireSchema = z.object({
   startedAt: z.number().nullable(),
   endedAt: z.number().nullable(),
   error: z.string().nullable(),
+  poolMember: z
+    .number()
+    .int()
+    .nullable()
+    .describe(
+      "The pool member (1-based) the member's own conversation runs on; null for a member with no agent pool",
+    ),
+  poolMemberPinned: z
+    .boolean()
+    .describe(
+      'The user pinned that pool member, so the conversation never moves back on its own',
+    ),
+  poolMemberNext: z
+    .number()
+    .int()
+    .nullable()
+    .describe(
+      'The pool member the user picked while a turn of that conversation ran — it moves there when its next turn starts',
+    ),
 });
 export type NodeStateWire = z.infer<typeof NodeStateWireSchema>;
+
+export const SetPoolMemberRequestSchema = z.object({
+  member: z
+    .number()
+    .int()
+    .min(1)
+    .describe(
+      "The pool member (1-based) to run the member's own conversation on",
+    ),
+});
+export type SetPoolMemberRequest = z.infer<typeof SetPoolMemberRequestSchema>;
+
+export const SET_POOL_MEMBER_APPLIED = [
+  'now',
+  'next_turn',
+  'unchanged',
+] as const;
+
+export const SetPoolMemberResultSchema = z.object({
+  member: z.number().int(),
+  applied: z
+    .enum(SET_POOL_MEMBER_APPLIED)
+    .describe(
+      '`now`: moved (or pinned) at once; `next_turn`: a turn is running, so it moves when the next one starts; `unchanged`: already pinned there',
+    ),
+});
+export type SetPoolMemberResult = z.infer<typeof SetPoolMemberResultSchema>;
 
 // ── Agent-to-agent call runtime ─────────────────────────────────────────────
 // The shared contract between the CallBroker (call semantics), the team

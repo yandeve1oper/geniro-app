@@ -402,6 +402,93 @@ describe('AgentsPanel', () => {
     expect(names).toEqual(['claude', 'codex']);
   });
 
+  it("shows the pool slot an agent's own conversation runs on and moves it from the picker", async () => {
+    const onSetPoolMember = vi
+      .fn()
+      .mockResolvedValue({ member: 1, applied: 'now' });
+    const el = render(
+      <AgentsPanel
+        terminalReasons={TERMINALS}
+        agents={[
+          {
+            ...agents[1]!,
+            model: 'gpt-6.1-sol',
+            configuredModel: 'haiku',
+            pool: [{ agent: 'codex', model: 'gpt-6.1-sol', configDir: null }],
+            ownPool: { member: 2, pinned: true, next: null },
+          },
+          { ...agents[0]!, ownPool: undefined },
+        ]}
+        onOpenThread={vi.fn()}
+        onSetPoolMember={onSetPoolMember}
+      />,
+    );
+    const slots = el.querySelectorAll('[data-slot="pool-slot"]');
+    expect(slots).toHaveLength(1);
+    expect(
+      slots[0]!.querySelector('[data-slot="pool-slot-label"]')?.textContent,
+    ).toMatch(/^Slot 2 of 2 · .+ · gpt-6\.1-sol$/);
+    expect(
+      slots[0]!.querySelector('[data-slot="pool-slot-pinned"]'),
+    ).not.toBeNull();
+
+    act(() => {
+      slots[0]!
+        .querySelector<HTMLButtonElement>('[data-menu-trigger]')!
+        .click();
+    });
+    const options = [
+      ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+    ];
+    // Slot 1 names its own configured model, not the one the last turn ran on.
+    expect(options.map((option) => option.textContent)).toEqual([
+      expect.stringMatching(/^Slot 1 of 2 · .+ · haiku$/),
+      expect.stringMatching(/^Slot 2 of 2 · .+ · gpt-6\.1-sol$/),
+    ]);
+    await act(async () => {
+      options[0]!.click();
+    });
+    expect(onSetPoolMember).toHaveBeenCalledWith(agents[1]!.id, 1);
+  });
+
+  it("says when a picked slot waits for the agent's next turn, and shows a refusal", async () => {
+    const onSetPoolMember = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          'daemon PUT /v1/teams/runs/r/members/m/pool-member failed (409): this run is archived',
+        ),
+      );
+    const el = render(
+      <AgentsPanel
+        terminalReasons={TERMINALS}
+        agents={[
+          {
+            ...agents[1]!,
+            pool: [{ agent: 'codex', model: 'gpt-6.1-sol', configDir: null }],
+            ownPool: { member: 1, pinned: false, next: 2 },
+          },
+        ]}
+        onOpenThread={vi.fn()}
+        onSetPoolMember={onSetPoolMember}
+      />,
+    );
+    const slot = el.querySelector('[data-slot="pool-slot"]')!;
+    expect(slot.querySelector('[data-slot="pool-slot-pinned"]')).toBeNull();
+    expect(
+      slot.querySelector('[data-slot="pool-slot-next"]')?.textContent,
+    ).toBe('Moves to slot 2 when its next turn starts');
+    act(() => {
+      slot.querySelector<HTMLButtonElement>('[data-menu-trigger]')!.click();
+    });
+    await act(async () => {
+      document.querySelectorAll<HTMLElement>('[role="option"]')[1]!.click();
+    });
+    expect(
+      slot.querySelector('[data-slot="pool-slot-error"]')?.textContent,
+    ).toContain('this run is archived');
+  });
+
   it('names no member on an instance of an agent with no pool', () => {
     const el = render(
       <AgentsPanel

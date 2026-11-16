@@ -5306,6 +5306,9 @@ describe('Chats team runs', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'helper',
         status: 'running',
@@ -5772,6 +5775,9 @@ describe('Chats team runs', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'helper',
         status: 'running',
@@ -5829,6 +5835,9 @@ describe('Chats team runs', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'helper',
         status: 'running',
@@ -5896,6 +5905,9 @@ describe('Chats team runs', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'helper',
         status: 'running',
@@ -5944,6 +5956,9 @@ describe('Chats team runs', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'helper',
         status: 'running',
@@ -6009,6 +6024,9 @@ describe('Chats team runs', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'helper',
         status: 'running',
@@ -6096,6 +6114,9 @@ describe('Chats team runs', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'helper',
         status: 'running',
@@ -6171,6 +6192,9 @@ describe('Chats team runs', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'helper',
         status: 'completed',
@@ -6270,6 +6294,9 @@ describe('Chats team runs', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'helper',
         status: 'running',
@@ -13910,6 +13937,9 @@ describe('Chats sidebar list', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'w-a',
         status: 'running',
@@ -14007,6 +14037,9 @@ describe('Chats sidebar list', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'w-a',
         status: 'running',
@@ -14077,6 +14110,9 @@ describe('Chats sidebar list', () => {
     teamApi.listTeamRunNodes.mockResolvedValue([
       {
         promptCacheExpiresAt: null,
+        poolMember: null,
+        poolMemberPinned: false,
+        poolMemberNext: null,
         runId: 'w1',
         memberId: 'w-a',
         status: 'running',

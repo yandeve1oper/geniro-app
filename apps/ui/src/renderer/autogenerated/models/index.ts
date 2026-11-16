@@ -8871,6 +8871,24 @@ export interface NodeStateDto {
      * @memberof NodeStateDto
      */
     error: string | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof NodeStateDto
+     */
+    poolMember: number | null;
+    /**
+     * The user pinned that pool member, so the conversation never moves back on its own
+     * @type {boolean}
+     * @memberof NodeStateDto
+     */
+    poolMemberPinned: boolean;
+    /**
+     * 
+     * @type {number}
+     * @memberof NodeStateDto
+     */
+    poolMemberNext: number | null;
 }
 
 
@@ -12563,6 +12581,37 @@ export interface SetMcpServerEnabledDto {
 /**
  * 
  * @export
+ * @interface SetPoolMemberResultDto
+ */
+export interface SetPoolMemberResultDto {
+    /**
+     * 
+     * @type {number}
+     * @memberof SetPoolMemberResultDto
+     */
+    member: number;
+    /**
+     * `now`: moved (or pinned) at once; `next_turn`: a turn is running, so it moves when the next one starts; `unchanged`: already pinned there
+     * @type {string}
+     * @memberof SetPoolMemberResultDto
+     */
+    applied: SetPoolMemberResultDtoAppliedEnum;
+}
+
+
+/**
+ * @export
+ */
+export const SetPoolMemberResultDtoAppliedEnum = {
+    Now: 'now',
+    NextTurn: 'next_turn',
+    Unchanged: 'unchanged'
+} as const;
+export type SetPoolMemberResultDtoAppliedEnum = typeof SetPoolMemberResultDtoAppliedEnum[keyof typeof SetPoolMemberResultDtoAppliedEnum];
+
+/**
+ * 
+ * @export
  * @interface SetRunColorDto
  */
 export interface SetRunColorDto {
@@ -12613,6 +12662,19 @@ export interface SetRunPinnedDto {
      * @memberof SetRunPinnedDto
      */
     pinned: boolean;
+}
+/**
+ * 
+ * @export
+ * @interface SetTeamRunPoolMemberDto
+ */
+export interface SetTeamRunPoolMemberDto {
+    /**
+     * The pool member (1-based) to run the member's own conversation on
+     * @type {number}
+     * @memberof SetTeamRunPoolMemberDto
+     */
+    member: number;
 }
 /**
  * 
