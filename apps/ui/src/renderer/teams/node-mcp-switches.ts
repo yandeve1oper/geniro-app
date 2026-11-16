@@ -85,10 +85,30 @@ export function nextMcpDisabled(
  * writes the CLI's own config.
  */
 export function nodeMcpHint(subject: 'member', hasProfile: boolean): string {
-  const whose = hasProfile
+  return `${whoseServers(subject, hasProfile)} A switch here applies only to this ${subject}'s turns — nothing in the CLI's own config changes. ${RUN_FOLDER_SERVERS}`;
+}
+
+/** The same dialog's words on a project's page, where a switch overrides the team's for that project. */
+export function projectMemberMcpHint(hasProfile: boolean): string {
+  return `${whoseServers('member', hasProfile)} A switch here applies only to this member's turns in this project — the team's own switches and the CLI's own config stay as they are. ${RUN_FOLDER_SERVERS}`;
+}
+
+/** A member's switches in a few words, for the team value an overridden row names. */
+export function mcpSwitchesWords(
+  disabled: readonly string[] | undefined,
+): string {
+  return disabled === undefined || disabled.length === 0
+    ? 'every server on'
+    : `off: ${disabled.join(', ')}`;
+}
+
+const RUN_FOLDER_SERVERS =
+  "The run folder's own project servers are added when it runs.";
+
+function whoseServers(subject: 'member', hasProfile: boolean): string {
+  return hasProfile
     ? `The servers in this ${subject}'s own config directory.`
     : 'Global servers.';
-  return `${whose} A switch here applies only to this ${subject}'s turns — nothing in the CLI's own config changes. The run folder's own project servers are added when it runs.`;
 }
 
 /** Why a row the profile itself switched off has no switch on a member. */

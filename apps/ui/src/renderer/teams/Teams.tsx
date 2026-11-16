@@ -29,14 +29,11 @@ import { AnalysisDialog } from '../chats/analysis-dialog';
 import { AnalyzeThreadDialog } from '../chats/analyze-thread-dialog';
 import { Chats } from '../chats/Chats';
 import { mcpConfigActions } from '../chats/mcp-config-actions';
-import { CliLoginProgress } from '../components/cli-login-progress';
+import { CliServerLoginProgress } from '../components/cli-login-progress';
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { EmptyState } from '../components/empty-state';
 import { ErrorBanner } from '../components/error-banner';
 import { ErrorText } from '../components/error-text';
-import { McpDialogButton } from '../components/mcp-dialog-button';
-import { NoteBox } from '../components/note-box';
-import { SettingRow } from '../components/setting-row';
 import { Button } from '../components/ui/button';
 import { Menu, type MenuGroup } from '../components/ui/menu';
 import { MenuAnchorContext } from '../components/ui/menu-anchor';
@@ -67,6 +64,7 @@ import { type HeldProblem, HeldProblems } from './held-problems';
 import { InstructionSizeCard } from './instruction-size-card';
 import { InstructionsCard } from './instructions-card';
 import { AddMemberCard, MemberCard } from './member-card';
+import { MemberMcpRow } from './member-mcp-row';
 import { MemberModelGroup } from './member-model-group';
 import { MemberPerformance } from './member-performance';
 import { memberLabels } from './member-pick';
@@ -77,11 +75,7 @@ import {
   validateInstructionBlock,
   validateMember,
 } from './member-validate';
-import {
-  nextMcpDisabled,
-  nodeMcpHint,
-  withNodeSwitches,
-} from './node-mcp-switches';
+import { nextMcpDisabled, nodeMcpHint } from './node-mcp-switches';
 import { EntryCard, StageJourney } from './stage-journey';
 import { stageTitle, validateStageFields } from './stage-validate';
 import { StagesDialog } from './stages-dialog';
@@ -1162,35 +1156,12 @@ export function Teams({
     configDir: string | null;
   } | null>(null);
   const [poolMcpSettled, setPoolMcpSettled] = useState(0);
-  const mcpLoginPanel =
-    login.login && login.login.server !== null ? (
-      <CliLoginProgress
-        session={login.login.session}
-        onSubmitCode={(code) => void login.submitCode(code)}
-        onCancel={() => void login.cancel()}
-        onDismiss={login.dismiss}
-        error={login.error}
-        variant="inline"
-        scope="server"
-      />
-    ) : null;
-
-  /** Why the member's config directory cannot be used — the daemon's refusal. */
-  const configDirError = memberMcp.invalidConfigDir;
+  const mcpLoginPanel = <CliServerLoginProgress login={login} />;
 
   const configDirCapability = configDirCapabilityFrom(
     capabilities,
     capabilitiesLoading,
   );
-
-  // Closed on every selection change: it is titled with the member it was
-  // opened from.
-  const [mcpOpen, setMcpOpen] = useState(false);
-  const selectionKey =
-    selection === null ? null : `${selection.kind}:${selection.id}`;
-  useEffect(() => {
-    setMcpOpen(false);
-  }, [selectionKey]);
 
   const profileSources = useMemberProfileSources(active);
   const { recentConfigDirs, configProfiles } = profileSources;
@@ -1729,80 +1700,47 @@ export function Teams({
 
   const toolsGroup =
     selected === null ? null : (
-      <>
-        {configDirError === null ? (
-          <div className="@container flex flex-col rounded-card bg-card ring-1 ring-border">
-            <SettingRow width="compact" label="MCP">
-              <McpDialogButton
-                variant="chip"
-                chipNamesItself={false}
-                title={`MCP servers — ${labels.get(selected.id)}`}
-                open={mcpOpen}
-                onOpenChange={setMcpOpen}
-                listing={withNodeSwitches(
-                  memberMcp.listing,
-                  selected.mcpDisabled,
-                )}
-                loading={memberMcp.loading}
-                hint={nodeMcpHint('member', Boolean(selected.configDir))}
-                onSetEnabled={(server, enabled) =>
-                  patchSelected({
-                    mcpDisabled: nextMcpDisabled(
-                      selected.mcpDisabled,
-                      server,
-                      enabled,
-                    ),
-                  })
-                }
-                onRefresh={memberMcp.refresh}
-                onSignIn={(server) => {
-                  setPoolMcpScope(null);
-                  void login.startMcp({
-                    kind: selected.agent,
-                    server,
-                    configDir: selected.configDir ?? null,
-                  });
-                }}
-                signingIn={
-                  poolMcpScope === null
-                    ? (login.starting?.server ?? login.login?.server ?? null)
-                    : null
-                }
-                loginServer={
-                  poolMcpScope === null ? (login.login?.server ?? null) : null
-                }
-                loginPanel={poolMcpScope === null ? mcpLoginPanel : null}
-                configActions={
-                  apis
-                    ? mcpConfigActions(apis.agents, {
-                        agent: selected.agent,
-                        configDir: selected.configDir ?? null,
-                      })
-                    : undefined
-                }
-              />
-            </SettingRow>
-          </div>
-        ) : (
-          <ErrorText
-            id="member-config-dir-error"
-            className="text-xs break-words">
-            {configDirError}
-          </ErrorText>
+      <MemberMcpRow
+        key={selected.id}
+        title={`MCP servers — ${labels.get(selected.id)}`}
+        mcp={memberMcp}
+        mcpDisabled={selected.mcpDisabled}
+        hint={nodeMcpHint('member', Boolean(selected.configDir))}
+        configDir={selected.configDir ?? null}
+        configDirUnavailableReason={configDirCapability.unavailableReasonFor(
+          selected.agent,
         )}
-        {selected.configDir &&
-        configDirCapability.unavailableReasonFor(selected.agent) ? (
-          <NoteBox aria-label="Config directory" className="text-xs">
-            <span className="block">
-              {configDirCapability.unavailableReasonFor(selected.agent)}
-            </span>
-            <span className="block text-warning">
-              This member names {selected.configDir}, which will be ignored when
-              it runs.
-            </span>
-          </NoteBox>
-        ) : null}
-      </>
+        onSetEnabled={(server, enabled) =>
+          patchSelected({
+            mcpDisabled: nextMcpDisabled(selected.mcpDisabled, server, enabled),
+          })
+        }
+        onSignIn={(server) => {
+          setPoolMcpScope(null);
+          void login.startMcp({
+            kind: selected.agent,
+            server,
+            configDir: selected.configDir ?? null,
+          });
+        }}
+        signingIn={
+          poolMcpScope === null
+            ? (login.starting?.server ?? login.login?.server ?? null)
+            : null
+        }
+        loginServer={
+          poolMcpScope === null ? (login.login?.server ?? null) : null
+        }
+        loginPanel={poolMcpScope === null ? mcpLoginPanel : null}
+        configActions={
+          apis
+            ? mcpConfigActions(apis.agents, {
+                agent: selected.agent,
+                configDir: selected.configDir ?? null,
+              })
+            : undefined
+        }
+      />
     );
 
   const poolGroup =

@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 
 import type { CliKind } from '../../shared/contracts';
 import { mcpConfigActions } from '../chats/mcp-config-actions';
-import { CliLoginProgress } from '../components/cli-login-progress';
+import {
+  CliLoginProgress,
+  CliServerLoginProgress,
+} from '../components/cli-login-progress';
 import { ErrorText } from '../components/error-text';
 import { McpDialogButton } from '../components/mcp-dialog-button';
 import { Dialog } from '../components/ui/dialog';
@@ -48,7 +51,6 @@ function McpFixDialog({
       refresh();
     }
   }, [settledToken, refresh]);
-  const serverLogin = login.login !== null && login.login.server !== null;
   return (
     <McpDialogButton
       variant="chip"
@@ -77,19 +79,7 @@ function McpFixDialog({
       }
       signingIn={login.starting?.server ?? login.login?.server ?? null}
       loginServer={login.login?.server ?? null}
-      loginPanel={
-        serverLogin && login.login !== null ? (
-          <CliLoginProgress
-            session={login.login.session}
-            onSubmitCode={(code) => void login.submitCode(code)}
-            onCancel={() => void login.cancel()}
-            onDismiss={login.dismiss}
-            error={login.error}
-            variant="inline"
-            scope="server"
-          />
-        ) : null
-      }
+      loginPanel={<CliServerLoginProgress login={login} />}
       configActions={mcpConfigActions(apis.agents, {
         agent: target.agent,
         configDir: target.configDir,

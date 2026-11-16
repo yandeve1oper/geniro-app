@@ -98,6 +98,13 @@ export function effectiveMemberOf(
       ),
     );
   }
+  if (own?.mcpDisabled !== undefined) {
+    if (own.mcpDisabled.length > 0) {
+      out.mcpDisabled = own.mcpDisabled;
+    } else {
+      delete out.mcpDisabled;
+    }
+  }
   return out;
 }
 
@@ -209,7 +216,7 @@ export function isOverridden(
   return settings[field] !== undefined || settings.agent !== undefined;
 }
 
-/** Every Model setting and the pool back to the team's; the member's extra instructions stay. */
+/** Every Model setting, the pool and the MCP switches back to the team's; the member's extra instructions stay. */
 export function withTeamSettings(
   overlay: TeamOverlay,
   memberId: string,
@@ -218,6 +225,24 @@ export function withTeamSettings(
     const next = { ...own };
     delete next.settings;
     delete next.pool;
+    delete next.mcpDisabled;
+    return next;
+  });
+}
+
+/** `disabled` undefined goes back to the team's switches; `[]` runs every server. */
+export function withMemberMcpDisabled(
+  overlay: TeamOverlay,
+  memberId: string,
+  disabled: string[] | undefined,
+): TeamOverlay {
+  return withOwn(overlay, memberId, (own) => {
+    const next = { ...own };
+    if (disabled === undefined) {
+      delete next.mcpDisabled;
+    } else {
+      next.mcpDisabled = disabled;
+    }
     return next;
   });
 }
@@ -266,7 +291,8 @@ export function memberOverlayBadges(
   return {
     overrides:
       Object.keys(own?.settings ?? {}).length +
-      (own?.pool === undefined ? 0 : 1),
+      (own?.pool === undefined ? 0 : 1) +
+      (own?.mcpDisabled === undefined ? 0 : 1),
     notes: (own?.extraInstructions ?? '').trim() !== '',
   };
 }

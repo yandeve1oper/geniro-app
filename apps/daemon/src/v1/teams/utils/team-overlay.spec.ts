@@ -21,6 +21,7 @@ const TEAM: Team = {
       configDir: '/profiles/claude-home',
       autoCompactPercent: 80,
       instructions: 'Plan the work.',
+      mcpDisabled: ['linear'],
       pool: [
         { agent: 'claude', model: 'sonnet' },
         { agent: 'codex', model: 'gpt-5' },
@@ -157,6 +158,26 @@ describe('applyTeamOverlay', () => {
     expect(team.members[0]!.pool).toEqual([]);
   });
 
+  it('a member MCP override replaces the team’s switches whole, and [] runs every server', () => {
+    expect(
+      apply({ members: { lead: { mcpDisabled: ['figma', 'github'] } } }).team
+        .members[0]!.mcpDisabled,
+    ).toEqual(['figma', 'github']);
+    expect(
+      apply({ members: { lead: { mcpDisabled: [] } } }).team.members[0]!
+        .mcpDisabled,
+    ).toBeUndefined();
+    expect(apply({}).team.members[0]!.mcpDisabled).toEqual(['linear']);
+  });
+
+  it('an agent override keeps the member’s MCP switches', () => {
+    const { team } = apply({
+      members: { lead: { settings: { agent: 'codex' } } },
+    });
+
+    expect(team.members[0]!.mcpDisabled).toEqual(['linear']);
+  });
+
   it('appends extra instructions and leaves the stages as the team has them', () => {
     const { team } = apply({
       members: { lead: { extraInstructions: 'Use the staging DB.' } },
@@ -218,6 +239,7 @@ describe('overlayCounts', () => {
           lead: {
             settings: { model: 'opus', effort: 'max' },
             pool: [],
+            mcpDisabled: [],
             extraInstructions: 'x',
           },
         },
@@ -225,7 +247,7 @@ describe('overlayCounts', () => {
           { id: 'o', title: '', text: '', audience: 'everyone' },
         ],
       }),
-    ).toEqual({ overrides: 4, blocks: 1, notes: 1 });
+    ).toEqual({ overrides: 5, blocks: 1, notes: 1 });
   });
 });
 
@@ -235,12 +257,15 @@ describe('team overlay YAML', () => {
       allMembers: { codex: {} },
       members: {
         lead: { settings: { effort: 'max' }, extraInstructions: '  ' },
-        reviewer: {},
+        reviewer: { mcpDisabled: [] },
       },
     });
 
     expect(parseTeamOverlayYaml(text)).toEqual({
-      members: { lead: { settings: { effort: 'max' } } },
+      members: {
+        lead: { settings: { effort: 'max' } },
+        reviewer: { mcpDisabled: [] },
+      },
     });
   });
 

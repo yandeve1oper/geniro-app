@@ -62,13 +62,16 @@ function modelGroupOf(
   );
 }
 
-/** Each member's id, name, Model group and pool, as the shared team holds them. */
+/** Each member's id, name, Model group, MCP switches and pool, as the shared team holds them. */
 function membersYaml(team: Team): string {
   return new Document(
     team.members.map((member) => ({
       id: member.id,
       name: member.name,
       ...modelGroupOf(member),
+      ...(member.mcpDisabled === undefined
+        ? {}
+        : { mcpDisabled: member.mcpDisabled }),
       ...(member.pool === undefined
         ? {}
         : { pool: member.pool.map(modelGroupOf) }),
@@ -129,7 +132,8 @@ change needs to know it: with that slug alone it answers the whole team while
 it fits one answer, else its outline; then read the members, blocks or stages
 a change touches, or \`search\` for the words it names.
 
-What it holds for each member's Model group and pool:
+What it holds for each member's Model group, MCP switches
+(\`mcpDisabled\`: the servers it runs without) and pool:
 
 \`\`\`yaml
 ${membersYaml(target.team)}

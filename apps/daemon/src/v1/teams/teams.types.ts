@@ -672,6 +672,9 @@ export const TeamOverlayMemberSchema = z
       .describe(
         'Replaces the member’s whole pool (members 2, 3, …) in this project; [] = no pool; omitted = the team’s pool',
       ),
+    mcpDisabled: McpDisabledSchema.optional().describe(
+      'Replaces the member’s own MCP switches in this project: the servers it runs without; [] = none off; omitted = the team’s',
+    ),
   })
   .meta({ id: 'TeamOverlayMember' });
 export type TeamOverlayMember = z.infer<typeof TeamOverlayMemberSchema>;
@@ -680,7 +683,7 @@ export type TeamOverlayMember = z.infer<typeof TeamOverlayMemberSchema>;
  * What one project changes about a shared team it defaults to — the
  * `<userData>/teams/overlays/<slug>/<projectId>.overlay.yaml` shape and its
  * wire shape. Only listed keys override; members, stages' structure,
- * triggers, mode, identity and MCP switches stay the team's.
+ * triggers, mode, identity stay the team's.
  */
 export const TeamOverlaySchema = z
   .object({

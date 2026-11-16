@@ -16343,6 +16343,12 @@ export interface TeamOverlayMember {
      * @memberof TeamOverlayMember
      */
     pool?: Array<TeamAgentPoolMember>;
+    /**
+     * Replaces the member’s own MCP switches in this project: the servers it runs without; [] = none off; omitted = the team’s
+     * @type {Array<string>}
+     * @memberof TeamOverlayMember
+     */
+    mcpDisabled?: Array<string>;
 }
 /**
  * 

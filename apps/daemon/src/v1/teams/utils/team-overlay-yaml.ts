@@ -57,6 +57,9 @@ export function compactTeamOverlay(overlay: TeamOverlay): TeamOverlay {
       if (member.pool !== undefined) {
         kept.pool = member.pool;
       }
+      if (member.mcpDisabled !== undefined) {
+        kept.mcpDisabled = member.mcpDisabled;
+      }
       return Object.keys(kept).length > 0 ? [[id, kept]] : [];
     }),
   );

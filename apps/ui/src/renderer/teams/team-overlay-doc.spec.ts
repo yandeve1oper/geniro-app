@@ -7,6 +7,7 @@ import {
   memberOverlayBadges,
   overrideFields,
   resetFields,
+  withMemberMcpDisabled,
   withMemberPool,
   withMemberSettings,
   withTeamSettings,
@@ -20,6 +21,7 @@ const LEAD: TeamMember = {
   model: 'opus',
   effort: 'high',
   configDir: '/profiles/home',
+  mcpDisabled: ['linear'],
   pool: [{ agent: 'claude', model: 'sonnet' }],
 };
 
@@ -100,12 +102,34 @@ describe('editing an overlay', () => {
     expect(withMemberPool(pooled, 'lead', undefined)).toEqual({ members: {} });
   });
 
-  it('restores every setting and the pool, keeping the extra instructions and other members', () => {
+  it('replaces the MCP switches whole, [] running every server, and keeps them through an agent switch', () => {
+    const off = withMemberMcpDisabled({}, 'lead', ['figma']);
+    expect(effectiveMemberOf(LEAD, off).mcpDisabled).toEqual(['figma']);
+    expect(memberOverlayBadges(off, 'lead')).toEqual({
+      overrides: 1,
+      notes: false,
+    });
+    expect(
+      effectiveMemberOf(LEAD, withMemberMcpDisabled({}, 'lead', []))
+        .mcpDisabled,
+    ).toBeUndefined();
+    expect(
+      effectiveMemberOf(LEAD, {
+        members: { lead: { settings: { agent: 'codex' } } },
+      }).mcpDisabled,
+    ).toEqual(['linear']);
+    expect(withMemberMcpDisabled(off, 'lead', undefined)).toEqual({
+      members: {},
+    });
+  });
+
+  it('restores every setting, the pool and the MCP switches, keeping the extra instructions and other members', () => {
     const before: TeamOverlay = {
       members: {
         lead: {
           settings: { agent: 'codex', effort: 'low' },
           pool: [],
+          mcpDisabled: [],
           extraInstructions: 'Use the staging DB.',
         },
         reviewer: { settings: { effort: 'max' } },

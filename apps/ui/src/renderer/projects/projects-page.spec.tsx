@@ -27,6 +27,9 @@ const projectsApi = vi.hoisted(() => ({
   openProjectChat: vi.fn(),
   discardProjectChat: vi.fn(),
 }));
+const agentsApi = vi.hoisted(() => ({
+  listAgentMcpServers: vi.fn(),
+}));
 const knowledgeApi = vi.hoisted(() => ({
   knowledgeCounts: vi.fn(),
 }));
@@ -85,13 +88,7 @@ vi.mock('../daemon-api', async (importOriginal) => {
           parameters: [],
           unavailableReason: null,
         }),
-        listAgentMcpServers: async () => ({
-          servers: [],
-          plugins: [],
-          unavailableReason: null,
-          interactiveOnlyNote: null,
-          pending: false,
-        }),
+        listAgentMcpServers: agentsApi.listAgentMcpServers,
       }),
     }),
   };
@@ -1248,6 +1245,13 @@ describe('Projects page', () => {
       projectsApi.listProjects.mockResolvedValue([
         aProject({ teamSlug: 'crew' }),
       ]);
+      agentsApi.listAgentMcpServers.mockReset().mockResolvedValue({
+        servers: [],
+        plugins: [],
+        unavailableReason: null,
+        interactiveOnlyNote: null,
+        pending: false,
+      });
       teamsApi.getTeam.mockReset().mockResolvedValue({
         slug: 'crew',
         hash: 'team-1',
@@ -1468,7 +1472,7 @@ describe('Projects page', () => {
       );
     });
 
-    it('offers no stage addenda, no MCP group and no chat of its own: the page’s header chat changes the overlay', async () => {
+    it('offers no stage addenda and no chat of its own: the page’s header chat changes the overlay', async () => {
       teamsApi.getTeam.mockResolvedValue({
         slug: 'crew',
         hash: 'team-1',
@@ -1497,13 +1501,219 @@ describe('Projects page', () => {
         ),
       ).not.toContain('Change with chat');
       const sheet = await openMember(el);
-      expect(
-        sheet.querySelector('section[aria-label="Tools & MCP"]'),
-      ).toBeNull();
       expect(sheet.querySelector('section[aria-label="Model"]')).not.toBeNull();
     });
 
-    it('restores every setting and the pool of a member to the team’s on confirm, keeping its extra instructions', async () => {
+    describe('a member’s MCP servers', () => {
+      const mcpRow = (name: string): unknown => ({
+        name,
+        target: null,
+        transport: 'stdio',
+        status: 'connected',
+        detail: null,
+        scope: 'user',
+        shadowsUser: false,
+        disabled: false,
+        toggleUnavailableReason: null,
+        signInUnavailableReason: null,
+        approveUnavailableReason: null,
+        turnToggleUnavailableReason: null,
+      });
+      beforeEach(() => {
+        vi.useFakeTimers();
+        teamsApi.getTeam.mockResolvedValue({
+          slug: 'crew',
+          hash: 'team-1',
+          team: {
+            ...CREW,
+            members: [{ ...CREW.members[0], mcpDisabled: ['linear'] }],
+          },
+        });
+        agentsApi.listAgentMcpServers.mockResolvedValue({
+          servers: [mcpRow('codegraph'), mcpRow('linear')],
+          plugins: [],
+          unavailableReason: null,
+          interactiveOnlyNote: null,
+          pending: false,
+        });
+      });
+
+      const afterAutosave = async (): Promise<void> => {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_000);
+        });
+        await settle();
+      };
+      const savedLead = (): unknown =>
+        (
+          teamsApi.saveTeamOverlay.mock.lastCall?.[0] as {
+            saveTeamOverlayDto: {
+              overlay: { members?: Record<string, unknown> };
+            };
+          }
+        ).saveTeamOverlayDto.overlay.members?.lead;
+      const mcpGroup = (): HTMLElement =>
+        [
+          ...document
+            .querySelector<HTMLElement>('[data-slot="member-sheet"]')!
+            .querySelectorAll<HTMLElement>('section'),
+        ].find(
+          (section) => section.getAttribute('aria-label') === 'Tools & MCP',
+        )!;
+      const openMcpDialog = async (): Promise<void> => {
+        await act(async () => {
+          mcpGroup()
+            .querySelector<HTMLButtonElement>(
+              'button[aria-label="MCP servers"]',
+            )!
+            .click();
+        });
+      };
+
+      it('lists the servers of the profile the project gives the member, and a switch there is this project’s own', async () => {
+        teamsApi.getTeamOverlay.mockResolvedValue(
+          overlayWire(
+            {
+              members: {
+                lead: { settings: { configDir: '/Users/me/.claude-work' } },
+              },
+            },
+            'o-1',
+          ),
+        );
+        const el = await mountOpen();
+        await openMember(el);
+        await afterDebounce();
+
+        expect(agentsApi.listAgentMcpServers).toHaveBeenLastCalledWith(
+          { agent: 'claude', configDir: '/Users/me/.claude-work' },
+          expect.anything(),
+        );
+        expect(
+          mcpGroup().querySelector('[data-slot="overridable-row"]'),
+        ).not.toBeNull();
+        expect(mcpGroup().querySelector('[data-overridden="true"]')).toBeNull();
+        await openMcpDialog();
+
+        const struck = (name: string): boolean | undefined =>
+          [...document.body.querySelectorAll('[role="dialog"] span')]
+            .find((span) => span.textContent === name)
+            ?.classList.contains('line-through');
+        expect(struck('linear')).toBe(true);
+        expect(struck('codegraph')).toBe(false);
+        expect(document.body.textContent).toContain(
+          'A switch here applies only to this member',
+        );
+        expect(
+          document.body.querySelector('[data-slot="mcp-add-server"]'),
+        ).not.toBeNull();
+        const linear = document.body.querySelector<HTMLElement>(
+          '[aria-label="Load linear"]',
+        )!;
+        expect(linear.getAttribute('aria-checked')).toBe('false');
+
+        await act(async () => {
+          linear.click();
+        });
+        await afterAutosave();
+
+        expect(savedLead()).toEqual({
+          settings: { configDir: '/Users/me/.claude-work' },
+          mcpDisabled: [],
+        });
+        expect(teamsApi.saveTeam).not.toHaveBeenCalled();
+      });
+
+      it('marks an overridden set and resets it to the team’s', async () => {
+        teamsApi.getTeamOverlay.mockResolvedValue(
+          overlayWire(
+            { members: { lead: { mcpDisabled: ['codegraph'] } } },
+            'o-1',
+          ),
+        );
+        const el = await mountOpen();
+        await openMember(el);
+        await afterDebounce();
+        await openMcpDialog();
+
+        expect(
+          document.body
+            .querySelector('[aria-label="Load codegraph"]')
+            ?.getAttribute('aria-checked'),
+        ).toBe('false');
+        expect(
+          document.body
+            .querySelector('[aria-label="Load linear"]')
+            ?.getAttribute('aria-checked'),
+        ).toBe('true');
+        expect(mcpGroup().textContent).toContain('Team: off: linear');
+
+        await act(async () => {
+          mcpGroup()
+            .querySelector<HTMLButtonElement>(
+              'button[aria-label^="Reset MCP to the team"]',
+            )!
+            .click();
+        });
+        await afterAutosave();
+
+        expect(savedLead()).toBeUndefined();
+      });
+
+      it('asks the CLI the project switches the member to, under no profile of the team’s', async () => {
+        teamsApi.getTeam.mockResolvedValue({
+          slug: 'crew',
+          hash: 'team-1',
+          team: {
+            ...CREW,
+            members: [
+              { ...CREW.members[0], configDir: '/Users/me/.claude-team' },
+            ],
+          },
+        });
+        teamsApi.getTeamOverlay.mockResolvedValue(
+          overlayWire(
+            { members: { lead: { settings: { agent: 'codex' } } } },
+            'o-1',
+          ),
+        );
+        const el = await mountOpen();
+        await openMember(el);
+        await afterDebounce();
+
+        expect(agentsApi.listAgentMcpServers).toHaveBeenCalledTimes(1);
+        expect(agentsApi.listAgentMcpServers).toHaveBeenCalledWith(
+          { agent: 'codex' },
+          expect.anything(),
+        );
+      });
+
+      it('shows the daemon’s refusal of the profile instead of an empty list', async () => {
+        teamsApi.getTeamOverlay.mockResolvedValue(
+          overlayWire(
+            { members: { lead: { settings: { configDir: '/nope' } } } },
+            'o-1',
+          ),
+        );
+        agentsApi.listAgentMcpServers.mockRejectedValue(
+          new Error(
+            'daemon GET /v1/agents/mcp failed (400): /nope is not a directory',
+          ),
+        );
+        const el = await mountOpen();
+        const sheet = await openMember(el);
+        await afterDebounce();
+
+        expect(
+          sheet.querySelector('#member-config-dir-error')?.textContent,
+        ).toContain('/nope is not a directory');
+        expect(
+          sheet.querySelector('button[aria-label="MCP servers"]'),
+        ).toBeNull();
+      });
+    });
+
+    it('restores every setting, the pool and the MCP switches of a member to the team’s on confirm, keeping its extra instructions', async () => {
       teamsApi.getTeamOverlay.mockResolvedValue(
         overlayWire(
           {
@@ -1511,6 +1721,7 @@ describe('Projects page', () => {
               lead: {
                 settings: { model: 'haiku', effort: 'low' },
                 pool: [],
+                mcpDisabled: ['codegraph'],
                 extraInstructions: 'Use the staging DB.',
               },
             },

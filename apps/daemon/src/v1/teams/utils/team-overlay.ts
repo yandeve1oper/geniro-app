@@ -118,6 +118,13 @@ function effectiveMember(member: TeamMember, overlay: TeamOverlay): TeamMember {
       ),
     );
   }
+  if (own?.mcpDisabled !== undefined) {
+    if (own.mcpDisabled.length > 0) {
+      out.mcpDisabled = [...own.mcpDisabled];
+    } else {
+      delete out.mcpDisabled;
+    }
+  }
   const extra = own?.extraInstructions?.trim();
   if (extra) {
     out.instructions = appended(member.instructions, extra);
@@ -212,6 +219,9 @@ export function overlayCounts(overlay: TeamOverlay): {
   for (const member of Object.values(overlay.members ?? {})) {
     overrides += Object.keys(member.settings ?? {}).length;
     if (member.pool !== undefined) {
+      overrides += 1;
+    }
+    if (member.mcpDisabled !== undefined) {
       overrides += 1;
     }
     if (member.extraInstructions?.trim()) {

@@ -67,13 +67,15 @@ own ids:
   group over from the new CLI's defaults.
 - \`members.<memberId>.pool\`: the member's whole pool in this project
   (members 2, 3, …; \`[]\` = none), each entry shaped like a team pool entry.
+- \`members.<memberId>.mcpDisabled\`: the MCP servers that member runs
+  without in this project, replacing the team's list whole (\`[]\` = none off).
 - \`members.<memberId>.extraInstructions\`: appended to that member's own
   instructions in this project.
 - \`instructionBlocks\`: blocks only this project's runs carry, shaped like
   the team's (\`id\`, \`title\`, \`text\`, \`audience\`).
 
-Members, stages, the trigger, the mode, names, roles, MCP switches and
-avatars are shared and cannot be changed per project.`;
+Members, stages, the trigger, the mode, names, roles and avatars are shared
+and cannot be changed per project.`;
 
 export interface BuilderOverlayRef {
   projectId: string;

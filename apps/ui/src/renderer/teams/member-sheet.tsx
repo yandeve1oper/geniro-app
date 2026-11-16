@@ -426,14 +426,12 @@ export function MemberSheet({
             {fieldErrors('settings')}
           </SheetGroup>
 
-          {project === null ? (
-            <SheetGroup title="Tools & MCP">
-              {toolsGroup}
-              <p className="text-sm text-muted-foreground">
-                Every member can call every other member.
-              </p>
-            </SheetGroup>
-          ) : null}
+          <SheetGroup title="Tools & MCP">
+            {toolsGroup}
+            <p className="text-sm text-muted-foreground">
+              Every member can call every other member.
+            </p>
+          </SheetGroup>
 
           <SheetGroup title="Pool" warning={hasIssues(['pool'])}>
             {poolGroup}
@@ -452,7 +450,7 @@ export function MemberSheet({
               variant="ghost"
               className="self-start gap-2 rounded-control"
               question={`Restore the team’s settings for ${name || member.id}?`}
-              description={`Every setting and the pool ${project.name} changed for this member go back to the team’s. Its extra instructions for ${project.name} stay.`}
+              description={`Every setting, the pool and the MCP switches ${project.name} changed for this member go back to the team’s. Its extra instructions for ${project.name} stay.`}
               confirmLabel="Restore"
               busyLabel="Restoring…"
               onConfirm={project.onRestoreTeamSettings}>
