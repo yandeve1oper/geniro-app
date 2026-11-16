@@ -293,6 +293,23 @@ describe('ChatSearchIndexDao (in-memory sqlite)', () => {
     expect(await dao.run('wf-analysis')).toBeUndefined();
   });
 
+  it('leaves a run being deleted out of the search and out of a context read', async () => {
+    const RETIRING = '00000000-0000-4000-8000-00000000000c';
+    await db.run(RUN_A);
+    await db.run(RETIRING, { pendingDeleteAt: new Date() });
+    await db.item('kept', { runId: RUN_A, payload: said('retiring wording') });
+    await db.item('hidden', {
+      runId: RETIRING,
+      payload: said('retiring wording'),
+    });
+    await db.ensureIndex();
+
+    expect(await ids('retiring')).toEqual(['kept']);
+    expect(await ids('retiring', { runId: RETIRING })).toEqual([]);
+    expect((await db.dao().run(RUN_A))?.id).toBe(RUN_A);
+    expect(await db.dao().run(RETIRING)).toBeUndefined();
+  });
+
   it('reads neighbours nearest first, words only, breaking a seq tie by id', async () => {
     await db.run(RUN_A);
     await db.item('m1', { runId: RUN_A, seq: 1 });

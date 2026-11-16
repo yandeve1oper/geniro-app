@@ -4,6 +4,7 @@ import { AgentsModule } from '../agents/agents.module';
 import { BrowserModule } from '../browser/browser.module';
 import { DiagnosticsModule } from '../diagnostics/diagnostics.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
+import { LessonsModule } from '../lessons/lessons.module';
 import { MemoryModule } from '../memory/memory.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { SharesModule } from '../shares/shares.module';
@@ -40,6 +41,7 @@ import { WsPresenceService } from './services/ws-presence.service';
     KnowledgeModule,
     ProjectsModule,
     BrowserModule,
+    LessonsModule,
   ],
   providers: [NotificationsGateway, WsPresenceService],
   // Exported for the idle shutdown: "is anyone connected?" is a fact only this

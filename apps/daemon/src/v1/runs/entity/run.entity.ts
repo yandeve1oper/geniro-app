@@ -631,6 +631,15 @@ export class Run extends TimestampsEntity {
   reflectedThroughSeq: number | null = null;
 
   /**
+   * Set when the user deleted this run with "Extract lessons first": it is
+   * archived, hidden from every listing, and deleted through the ordinary
+   * delete once its reflection settles, after `LESSON_PENDING_DELETE_MAX_MS`,
+   * or at the next daemon start.
+   */
+  @Property({ type: DateTimeType, nullable: true })
+  pendingDeleteAt: Date | null = null;
+
+  /**
    * The library team this chat was started to ANALYSE across its recent
    * runs ("Analyze & improve"), or null for every other chat. A team
    * analysis carries no {@link analysisSourceRunId}: it reads the runs named

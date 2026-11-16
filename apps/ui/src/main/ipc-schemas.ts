@@ -281,14 +281,26 @@ export const memorySchema = z.strictObject({
 });
 
 /**
+ * One CLI and everything it runs with for a lessons reflection or its check.
+ * TWIN PARSER: `LessonModelChoiceSchema` in `apps/daemon/src/v1/lessons/lessons.types.ts`.
+ */
+export const lessonChoiceSchema = z.strictObject({
+  agent: cliKind,
+  configDir: absolutePath.nullable(),
+  model: z.string().min(1).max(200).nullable(),
+  effort: z.string().min(1).max(50).nullable(),
+  contextWindow: z.string().min(1).max(50).nullable(),
+  modelParameters: z.record(z.string().max(100), z.string().max(200)),
+});
+
+/**
  * TWIN PARSER: `LessonsConfigSchema` in `apps/daemon/src/v1/lessons/lessons.types.ts`,
  * which `lessons-config-push.ts` pushes this to.
  */
 export const lessonsSchema = z.strictObject({
-  mode: z.enum(['off', 'offer']),
-  agentKind: z.string().min(1).max(64).nullable(),
-  model: z.string().min(1).max(200).nullable(),
-  effort: z.string().min(1).max(50).nullable(),
+  mode: z.enum(['off', 'auto']),
+  reflector: lessonChoiceSchema.nullable(),
+  checker: lessonChoiceSchema.nullable(),
 });
 
 /** Twin of the day bound in `MemoryConfigSchema` (`apps/daemon/src/v1/memory/memory.types.ts`). */

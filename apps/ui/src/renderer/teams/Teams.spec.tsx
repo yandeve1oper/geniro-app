@@ -1776,6 +1776,71 @@ describe('Teams — a team’s stages', () => {
   });
 });
 
+describe('Teams — a team’s lessons setting', () => {
+  function opens(lessons: 'on' | 'off' | undefined): void {
+    getTeam.mockImplementation(async ({ slug }: { slug: string }) => ({
+      slug,
+      team: {
+        ...teamOf({
+          members: [{ ...LEAD }, { ...LEAD, id: 'qa', name: 'QA' }],
+        }),
+        ...(lessons === undefined ? {} : { lessons }),
+      },
+    }));
+  }
+
+  const lessonsOption = (label: string): HTMLButtonElement => {
+    const option = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        '[aria-label="Lessons"] button',
+      ),
+    ].find((button) => button.textContent === label);
+    if (option === undefined) {
+      throw new Error(`no lessons option ${label}`);
+    }
+    return option;
+  };
+
+  async function openMemoryTab(): Promise<void> {
+    const tab = [
+      ...container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ].find((button) => button.textContent?.startsWith('Memory'));
+    if (tab === undefined) {
+      throw new Error('no Memory tab');
+    }
+    await act(async () => {
+      tab.click();
+    });
+  }
+
+  it('saves the choice made on the Memory tab with the team, and inherits again when set back', async () => {
+    opens(undefined);
+    await openBuilder();
+    await openMemoryTab();
+
+    await act(async () => {
+      lessonsOption('Off').click();
+    });
+    await wait(900);
+    expect(lastSaved().lessons).toBe('off');
+
+    await act(async () => {
+      lessonsOption('Inherit').click();
+    });
+    await wait(900);
+    expect('lessons' in lastSaved()).toBe(false);
+  });
+
+  it('shows the team’s own value as pressed when it has one', async () => {
+    opens('on');
+    await openBuilder();
+    await openMemoryTab();
+
+    expect(lessonsOption('On').getAttribute('aria-pressed')).toBe('true');
+    expect(lessonsOption('Inherit').getAttribute('aria-pressed')).toBe('false');
+  });
+});
+
 describe('Teams — a member’s always-on instruction size', () => {
   beforeEach(() => {
     getTeam.mockImplementation(async ({ slug }: { slug: string }) => ({

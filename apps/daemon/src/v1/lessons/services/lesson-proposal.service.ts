@@ -12,7 +12,9 @@ import { UsageEventDao } from '../../stats/dao/usage-event.dao';
 import { LessonProposalDao } from '../dao/lesson-proposal.dao';
 import type { LessonProposal } from '../entity/lesson-proposal.entity';
 import type {
+  EditLesson,
   LessonDedup,
+  LessonOutcomePayload,
   LessonProposalListQuery,
   LessonProposalWire,
   LessonReflectionFacts,
@@ -24,9 +26,11 @@ import { billedModelOf } from '../utils/billed-model';
 import { LessonRowWriter } from './lesson-row.writer';
 
 /**
- * The user's decision on a proposed lesson. Save is the approval itself, so
- * the daemon writes the memory entry as the user — active at once, whatever
- * the review mode — and names the thread and proposal it came from.
+ * The user's decision on a lesson. Save is the approval itself, so the daemon
+ * writes the memory entry as the user — active at once, whatever the review
+ * mode — and names the thread and proposal it came from. A lesson a
+ * reflection filed on its own is undone (its entry forgotten, restorable),
+ * edited (the entry becomes the user's own) or approved (into the index).
  */
 @Injectable()
 export class LessonProposalService {
@@ -77,18 +81,68 @@ export class LessonProposalService {
       decidedAt: new Date(),
     });
     await em.flush();
-    await this.rows.write(row.sourceRunId, {
-      kind: 'lesson_outcome',
-      payload: {
-        proposalId: row.id,
-        status: 'saved',
-        title,
-        rule,
-        target,
-        memoryHandle: entry.handle,
-        reason: null,
-      },
+    await this.writeOutcome(row, 'saved', entry.handle, null);
+    return toWire(row);
+  }
+
+  /** "Undo" on a lesson filed on its own: its entry is forgotten, restorable from Settings → Memory. */
+  async undo(id: string): Promise<LessonProposalWire> {
+    const em = this.em.fork();
+    const row = await this.filed(id, em);
+    const entry = await this.entryOf(row);
+    if (entry !== null && entry.status !== 'forgotten') {
+      await this.memory.setStatus({ kind: 'user' }, entry.id, 'forgotten');
+    }
+    Object.assign(row, {
+      status: 'undone' as const,
+      rejectReason: 'undone on the lessons card',
+      decidedAt: new Date(),
     });
+    await em.flush();
+    await this.writeOutcome(row, 'undone', row.resultRef, null);
+    return toWire(row);
+  }
+
+  /** "Edit" on a lesson filed on its own: the entry takes the new text and becomes the user's own. */
+  async edit(id: string, input: EditLesson): Promise<LessonProposalWire> {
+    const em = this.em.fork();
+    const row = await this.filed(id, em);
+    const entry = await this.entryOf(row);
+    if (entry === null || entry.status === 'forgotten') {
+      throw new ConflictException(
+        'LESSON_ENTRY_GONE',
+        'the memory entry this lesson wrote is gone or forgotten',
+      );
+    }
+    savedEntryOrThrow(
+      await this.memory.edit(entry.id, {
+        rev: entry.rev,
+        title: input.title,
+        body: memoryBodyOf(row, input.rule),
+        type: entry.type,
+        projectId: entry.projectId,
+        teamSlug: entry.teamSlug,
+      }),
+    );
+    Object.assign(row, { title: input.title, rule: input.rule });
+    await em.flush();
+    await this.writeOutcome(row, 'saved', row.resultRef, null, 'user');
+    return toWire(row);
+  }
+
+  /** "Approve" on a lesson filed on its own: the entry joins the memory index, and leaves review when it waited on it. */
+  async approve(id: string): Promise<LessonProposalWire> {
+    const em = this.em.fork();
+    const row = await this.filed(id, em);
+    const entry = await this.entryOf(row);
+    if (entry === null || entry.status === 'forgotten') {
+      throw new ConflictException(
+        'LESSON_ENTRY_GONE',
+        'the memory entry this lesson wrote is gone or forgotten',
+      );
+    }
+    await this.memory.setStatus({ kind: 'user' }, entry.id, 'active');
+    await this.writeOutcome(row, 'saved', row.resultRef, null, 'user');
     return toWire(row);
   }
 
@@ -103,18 +157,7 @@ export class LessonProposalService {
       decidedAt: new Date(),
     });
     await em.flush();
-    await this.rows.write(row.sourceRunId, {
-      kind: 'lesson_outcome',
-      payload: {
-        proposalId: row.id,
-        status: 'rejected',
-        title: row.title,
-        rule: row.rule,
-        target: targetOf(row),
-        memoryHandle: null,
-        reason,
-      },
-    });
+    await this.writeOutcome(row, 'rejected', null, reason);
     return toWire(row);
   }
 
@@ -126,7 +169,8 @@ export class LessonProposalService {
     const run = await this.runDao.getById(reflectionRunId, em);
     if (
       run === null ||
-      run.analysisPurpose !== 'lessons' ||
+      (run.analysisPurpose !== 'lessons' &&
+        run.analysisPurpose !== 'lessons_check') ||
       run.agentKind === null
     ) {
       throw new NotFoundException(
@@ -144,6 +188,7 @@ export class LessonProposalService {
       model:
         billedModelOf(turns.map((item) => parseJsonColumn(item.payload))) ??
         run.model,
+      effort: run.effort,
       working: !isTerminalRunStatus(run.status),
       startedAt: run.createdAt.toISOString(),
       durationMs: sumMeasured(events.map((event) => event.durationMs)),
@@ -166,13 +211,60 @@ export class LessonProposalService {
     if (row === null) {
       throw new NotFoundException('LESSON_NOT_FOUND', `no lesson ${id}`);
     }
-    if (row.status !== 'proposed') {
+    if (row.status !== 'proposed' && row.status !== 'check_failed') {
       throw new ConflictException(
         'LESSON_DECIDED',
         `this lesson was already ${row.status}`,
       );
     }
     return row;
+  }
+
+  private async filed(id: string, em: EntityManager): Promise<LessonProposal> {
+    const row = await this.proposals.getById(id, em);
+    if (row === null) {
+      throw new NotFoundException('LESSON_NOT_FOUND', `no lesson ${id}`);
+    }
+    if (row.status !== 'saved' || row.resultRef === null) {
+      throw new ConflictException(
+        'LESSON_NOT_FILED',
+        `this lesson is ${row.status}, not saved to memory`,
+      );
+    }
+    return row;
+  }
+
+  private async entryOf(row: LessonProposal) {
+    if (row.resultRef === null) {
+      return null;
+    }
+    const { memories } = await this.memory.list({
+      handle: row.resultRef,
+      limit: 1,
+    });
+    return memories[0] ?? null;
+  }
+
+  private writeOutcome(
+    row: LessonProposal,
+    status: LessonOutcomePayload['status'],
+    memoryHandle: string | null,
+    reason: string | null,
+    by: LessonOutcomePayload['by'] = 'user',
+  ): Promise<void> {
+    return this.rows.write(row.sourceRunId, {
+      kind: 'lesson_outcome',
+      payload: {
+        proposalId: row.id,
+        status,
+        by,
+        title: row.title,
+        rule: row.rule,
+        target: targetOf(row),
+        memoryHandle,
+        reason,
+      },
+    });
   }
 
   private placeOf(row: LessonProposal, scope: 'project' | 'team'): string {
@@ -222,6 +314,8 @@ function toWire(row: LessonProposal): LessonProposalWire {
     dedup: JSON.parse(row.dedup) as LessonDedup,
     status: row.status,
     rejectReason: row.rejectReason,
+    checkVerdict: row.checkVerdict,
+    checkReason: row.checkReason,
     memoryHandle: row.resultRef,
     createdAt: row.createdAt.toISOString(),
     decidedAt: row.decidedAt?.toISOString() ?? null,

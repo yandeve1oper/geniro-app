@@ -43,6 +43,16 @@ describe('normalizedTeam / teamSnapshot', () => {
     expect(normalizedTeam(team({ name: ' ' })).name).toBe('team');
   });
 
+  it('keeps the team’s own lessons setting in a save, and leaves it out while inherited', () => {
+    expect(normalizedTeam(team({ lessons: 'off' })).lessons).toBe('off');
+    expect('lessons' in normalizedTeam(team({ lessons: undefined }))).toBe(
+      false,
+    );
+    expect(teamSnapshot(team({ lessons: 'on' }))).not.toBe(
+      teamSnapshot(team()),
+    );
+  });
+
   it('serializes equal teams alike, whatever order their fields came in', () => {
     const { members, ...rest } = team({ description: 'd', maxActiveTurns: 2 });
     expect(teamSnapshot({ members, ...rest })).toBe(

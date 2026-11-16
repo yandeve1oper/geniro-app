@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import {
   CLI_KINDS,
+  type CliDetection,
   DEFAULT_MEMORY,
   type MemorySettings,
   type MemoryTriageConfig,
@@ -371,9 +372,17 @@ export function Memory({
   agentsApi = null,
   capabilities = null,
   capabilitiesLoading = false,
+  lessonsApi = null,
+  lessonsClient = null,
+  cliDetections = null,
 }: {
   api: MemoriesClient | null;
   client: Pick<DaemonClient, 'onMemoryChanged'> | null;
+  /** The lessons spend reads, and the live socket that re-reads them. */
+  lessonsApi?: DaemonApis['lessons'] | null;
+  lessonsClient?: Pick<DaemonClient, 'onLessonsChanged'> | null;
+  /** Which CLIs this machine can run, for the lessons pickers; null until probed. */
+  cliDetections?: readonly CliDetection[] | null;
   /** The team library, whose agents' profiles the import reads too. */
   teams?: TeamsClient | null;
   projects: readonly ProjectOption[];
@@ -1007,6 +1016,10 @@ export function Memory({
       <LessonsSettingsPanel
         agentsApi={agentsApi}
         capabilities={capabilities}
+        capabilitiesLoading={capabilitiesLoading}
+        cliDetections={cliDetections}
+        lessonsApi={lessonsApi}
+        client={lessonsClient}
         remote={remote}
       />
 

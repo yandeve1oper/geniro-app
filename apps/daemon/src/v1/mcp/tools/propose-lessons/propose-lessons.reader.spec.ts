@@ -61,10 +61,10 @@ describe('proposeLessonsResultText', () => {
   it('counts the lessons recorded, singular and plural', () => {
     expect(
       proposeLessonsResultText({ status: 'recorded', count: 1 }).text,
-    ).toMatch(/^1 lesson recorded /);
+    ).toMatch(/^1 lesson recorded; geniro files them /);
     expect(
       proposeLessonsResultText({ status: 'recorded', count: 2 }).text,
-    ).toMatch(/^2 lessons recorded /);
+    ).toMatch(/^2 lessons recorded; geniro files them /);
   });
 
   it('tells the reflection to reply in its own words when the thread is unreachable', () => {

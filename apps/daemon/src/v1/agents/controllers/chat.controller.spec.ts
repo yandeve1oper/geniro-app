@@ -389,3 +389,57 @@ describe('POST /v1/chats/:runId/actions/:seq/press|dismiss', () => {
     expect(actionPresses.dismissChat).toHaveBeenCalledWith(RUN, 4, 'remote');
   });
 });
+
+describe('DELETE /v1/chats/:runId', () => {
+  function deleteController(extracted: { deleted: boolean } | null) {
+    const extractLessons = {
+      extract: vi.fn(async (_runId: string) => extracted),
+    };
+    const chatService = {
+      delete: vi.fn(async (_runId: string) => ({ deleted: true })),
+    };
+    const controller = Object.create(
+      ChatController.prototype,
+    ) as ChatController;
+    Object.assign(controller, { extractLessons, chatService });
+    return { controller, extractLessons, chatService };
+  }
+
+  it('answers the extract-first outcome and deletes nothing itself when the lessons take the run', async () => {
+    const { controller, extractLessons, chatService } = deleteController({
+      deleted: true,
+    });
+
+    await expect(
+      controller.delete(RUN, { extractLessons: 'true' }),
+    ).resolves.toEqual({ deleted: true });
+
+    expect(extractLessons.extract).toHaveBeenCalledWith(RUN);
+    expect(chatService.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes the run as usual when the lessons have nothing to take', async () => {
+    const { controller, extractLessons, chatService } = deleteController(null);
+
+    await expect(
+      controller.delete(RUN, { extractLessons: 'true' }),
+    ).resolves.toEqual({ deleted: true });
+
+    expect(extractLessons.extract).toHaveBeenCalledWith(RUN);
+    expect(chatService.delete).toHaveBeenCalledWith(RUN);
+  });
+
+  it.each([{ extractLessons: 'false' as const }, {}])(
+    'does not consult the lessons without the flag (%j)',
+    async (query) => {
+      const { controller, extractLessons, chatService } = deleteController({
+        deleted: true,
+      });
+
+      await controller.delete(RUN, query);
+
+      expect(extractLessons.extract).not.toHaveBeenCalled();
+      expect(chatService.delete).toHaveBeenCalledWith(RUN);
+    },
+  );
+});

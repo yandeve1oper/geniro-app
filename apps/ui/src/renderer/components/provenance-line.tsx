@@ -30,6 +30,10 @@ function Who({ entry }: { entry: MemoryEntry }): React.ReactNode {
       return agent === null
         ? 'Saved by an analysis'
         : `Saved by an analysis (${agent})`;
+    case 'lesson':
+      return agent === null
+        ? 'Filed by a lessons reflection'
+        : `Filed by a lessons reflection (${agent}${model === null ? '' : `, ${model}`})`;
     case 'import':
       return importedFrom === null ? (
         'Imported'

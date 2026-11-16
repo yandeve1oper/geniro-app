@@ -32,6 +32,7 @@ export const MEMORY_ACTOR_KINDS = [
   'user',
   'import',
   'analysis',
+  'lesson',
 ] as const;
 export type MemoryActorKind = (typeof MEMORY_ACTOR_KINDS)[number];
 
@@ -116,6 +117,13 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
 export type MemoryActor =
   | {
       kind: 'agent' | 'analysis';
+      runId: string;
+      agentKind: AgentKind | null;
+      model: string | null;
+    }
+  | {
+      /** A lesson a hidden reflection filed on its own; `runId` is the reflection's. */
+      kind: 'lesson';
       runId: string;
       agentKind: AgentKind | null;
       model: string | null;

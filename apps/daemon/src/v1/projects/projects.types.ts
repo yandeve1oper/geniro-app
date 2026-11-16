@@ -174,6 +174,13 @@ export const AUTOPILOT_LIMIT_RESET_GRACE_MS = 60_000;
 /** How long the autopilot waits on a usage limit that named no reset. */
 export const AUTOPILOT_LIMIT_FALLBACK_MS = 30 * 60_000;
 
+/** A project's or a team's own say on lesson offers; null inherits. */
+export const LESSON_OVERRIDES = ['on', 'off'] as const;
+export type LessonOverride = (typeof LESSON_OVERRIDES)[number];
+export const LessonOverrideSchema = z
+  .enum(LESSON_OVERRIDES)
+  .meta({ id: 'LessonOverride' });
+
 /**
  * One project on the wire.
  *
@@ -265,6 +272,9 @@ export const ProjectWireSchema = z.object({
     ),
   provider: TaskSourceSchema.describe(
     "Where this project's tasks come from — the value its tasks carry as their own source",
+  ),
+  lessons: LessonOverrideSchema.nullable().describe(
+    "Whether this project's threads are offered lessons reflections; null inherits the app setting, and a team's own setting wins over it",
   ),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),

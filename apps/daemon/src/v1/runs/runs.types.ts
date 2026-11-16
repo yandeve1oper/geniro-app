@@ -50,9 +50,14 @@ export type ProjectSource = (typeof PROJECT_SOURCES)[number];
 
 /**
  * What an analysis chat is for: the user's own "Analyze thread" (`review`;
- * null on rows written before purposes) or a hidden lessons reflection.
+ * null on rows written before purposes), a hidden lessons reflection, or the
+ * hidden second-model check of the lessons a reflection found.
  */
-export const ANALYSIS_PURPOSES = ['review', 'lessons'] as const;
+export const ANALYSIS_PURPOSES = [
+  'review',
+  'lessons',
+  'lessons_check',
+] as const;
 export type AnalysisPurpose = (typeof ANALYSIS_PURPOSES)[number];
 
 /** A member may additionally be `skipped` — it was never started before the run settled. */
@@ -192,6 +197,8 @@ export type NodeStatus = z.infer<typeof NodeStatusSchema>;
  * `lessons` is the lessons a hidden reflection proposed about this thread
  * (`propose_lessons`), written into the thread it read; `lesson_outcome` is
  * the user's save or reject of one of them, append-only like the action pair.
+ * `lesson_offer` is a closed stretch of the thread with a learning signal in
+ * it, offered for a reflection the user starts with a press.
  */
 export const ItemKindSchema = z
   .enum([

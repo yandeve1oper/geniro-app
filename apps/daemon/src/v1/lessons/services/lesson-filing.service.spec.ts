@@ -6,15 +6,22 @@ import type { RunDao } from '../../agents/dao/run.dao';
 import { clearSecrets, registerSecret } from '../../diagnostics/utils/redact';
 import type { MemoryService } from '../../memory/services/memory.service';
 import type { ProjectScopeService } from '../../projects/services/project-scope.service';
+import type { LessonProposalDao } from '../dao/lesson-proposal.dao';
 import type { LessonSegmentDao } from '../dao/lesson-segment.dao';
 import { LessonProposal } from '../entity/lesson-proposal.entity';
-import type { LessonDedup, LessonTarget } from '../lessons.types';
+import type {
+  LessonDedup,
+  LessonModelChoice,
+  LessonTarget,
+} from '../lessons.types';
 import {
   type LessonFiled,
   LessonFilingService,
   type ProposedLesson,
 } from './lesson-filing.service';
 import type { LessonRowWriter } from './lesson-row.writer';
+import type { LessonsConfigService } from './lessons-config.service';
+import type { LessonsEventBus } from './lessons-events.bus';
 
 type Item = {
   seq: number;
@@ -23,8 +30,17 @@ type Item = {
   payload: string;
 };
 
+type SavedOutcome =
+  | { kind: 'created'; entry: { handle: string; status: 'active' | 'pending' } }
+  | {
+      kind: 'near_duplicate';
+      candidates: { handle: string }[];
+      pending: string[];
+    };
+
 const SEGMENT_FROM = 4;
 const SEGMENT_TO = 9;
+const LEASE = new Date('2026-11-15T10:00:00.000Z');
 
 const ITEMS: Item[] = [
   message(4, 'the earlier stretch says use pnpm not npm too'),
@@ -51,6 +67,15 @@ const TURN: AnalysisTurn = {
   purpose: 'lessons',
 };
 
+const CHECKER: LessonModelChoice = {
+  agent: 'claude',
+  configDir: null,
+  model: 'opus',
+  effort: 'high',
+  contextWindow: null,
+  modelParameters: {},
+};
+
 function lesson(overrides: Partial<ProposedLesson> = {}): ProposedLesson {
   return {
     title: "WHEN a check fails → DON'T retry it unchanged",
@@ -71,6 +96,9 @@ function build(
     project?: { id: string } | null;
     visible?: { handle: string; title: string }[];
     items?: Item[];
+    closedBy?: 'manual' | 'archive' | 'delete';
+    checker?: LessonModelChoice | null;
+    saved?: SavedOutcome;
   } = {},
 ) {
   const source =
@@ -96,8 +124,11 @@ function build(
   };
   const segment = {
     id: 'seg-1',
+    runId: 'src',
     fromSeq: SEGMENT_FROM,
     toSeq: SEGMENT_TO,
+    closedBy: options.closedBy ?? 'manual',
+    leaseUntil: LEASE,
     status: 'reflecting',
   };
   const items = options.items ?? ITEMS;
@@ -132,6 +163,14 @@ function build(
   };
   const memory = {
     listVisible: vi.fn(() => Promise.resolve(options.visible ?? [])),
+    fileLesson: vi.fn(() =>
+      Promise.resolve(
+        options.saved ?? {
+          kind: 'created',
+          entry: { handle: 'm-new', status: 'active' },
+        },
+      ),
+    ),
   };
   const projectScope = {
     projectOfRun: vi.fn(() => Promise.resolve(options.project ?? null)),
@@ -143,8 +182,17 @@ function build(
       return Promise.resolve();
     }),
   };
+  const proposals = {
+    updateById: vi.fn(() => Promise.resolve()),
+  };
   const rows = {
     write: vi.fn(() => Promise.resolve()),
+  };
+  const config = {
+    checkChoice: vi.fn(() => options.checker ?? null),
+  };
+  const events = {
+    publishChanged: vi.fn(),
   };
   const service = new LessonFilingService(
     em as never,
@@ -153,7 +201,10 @@ function build(
     memory as unknown as MemoryService,
     projectScope as unknown as ProjectScopeService,
     segments as unknown as LessonSegmentDao,
+    proposals as unknown as LessonProposalDao,
     rows as unknown as LessonRowWriter,
+    config as unknown as LessonsConfigService,
+    events as unknown as LessonsEventBus,
   );
   return {
     service,
@@ -162,7 +213,11 @@ function build(
     runDao,
     segments,
     segment,
+    proposals,
     rows,
+    memory,
+    config,
+    events,
   };
 }
 
@@ -177,7 +232,12 @@ function expectNothingWritten(fixture: ReturnType<typeof build>): void {
   expect(fixture.segments.updateById).not.toHaveBeenCalled();
   expect(fixture.runDao.updateById).not.toHaveBeenCalled();
   expect(fixture.rows.write).not.toHaveBeenCalled();
+  expect(fixture.memory.fileLesson).not.toHaveBeenCalled();
   expect(fixture.segment.status).toBe('reflecting');
+}
+
+function persistedOf(fixture: ReturnType<typeof build>): LessonProposal[] {
+  return fixture.tx.persist.mock.calls.map(([row]) => row as LessonProposal);
 }
 
 describe('LessonFilingService.file', () => {
@@ -389,6 +449,18 @@ describe('LessonFilingService.file', () => {
     },
   );
 
+  it('ends a stretch reflected inside the filing transaction when no checker is set', async () => {
+    const fixture = build();
+
+    await fixture.service.file(fixture.turn, [lesson()]);
+
+    expect(fixture.segments.updateById).toHaveBeenCalledWith(
+      'seg-1',
+      { status: 'reflected', leaseUntil: null },
+      fixture.tx,
+    );
+  });
+
   it('records every lesson at once, moves the watermark and writes one lessons row', async () => {
     const fixture = build();
     const second: ProposedLesson = lesson({
@@ -404,15 +476,10 @@ describe('LessonFilingService.file', () => {
     const result = await fixture.service.file(fixture.turn, [lesson(), second]);
 
     expect(result).toEqual({ status: 'recorded', count: 2 });
-    const persisted = fixture.tx.persist.mock.calls.map(
-      ([row]) => row as LessonProposal,
-    );
+    const persisted = persistedOf(fixture);
     expect(persisted).toHaveLength(2);
     expect(persisted[0]).toBeInstanceOf(LessonProposal);
-    expect(persisted.map((row) => row.status)).toEqual([
-      'proposed',
-      'proposed',
-    ]);
+    expect(persisted.map((row) => row.status)).toEqual(['proposed', 'saved']);
     expect(persisted.map((row) => row.segmentId)).toEqual(['seg-1', 'seg-1']);
     expect(persisted.map((row) => row.sourceRunId)).toEqual(['src', 'src']);
     expect(persisted.map((row) => row.reflectionRunId)).toEqual([
@@ -428,7 +495,7 @@ describe('LessonFilingService.file', () => {
 
     expect(fixture.segments.updateById).toHaveBeenCalledWith(
       'seg-1',
-      { status: 'reflected' },
+      { status: 'reflected', leaseUntil: null },
       fixture.tx,
     );
     expect(fixture.segment.status).toBe('reflected');
@@ -437,7 +504,6 @@ describe('LessonFilingService.file', () => {
       { reflectedThroughSeq: SEGMENT_TO },
       fixture.tx,
     );
-    expect(fixture.rows.write).toHaveBeenCalledTimes(1);
     expect(fixture.rows.write).toHaveBeenCalledWith('src', {
       kind: 'lessons',
       payload: {
@@ -473,6 +539,7 @@ describe('LessonFilingService.file', () => {
           },
         ],
         places: { project: false, team: false },
+        check: null,
       },
     });
   });
@@ -491,9 +558,7 @@ describe('LessonFilingService.file', () => {
         places: { project: true, team: true },
       }),
     });
-    expect(
-      fixture.tx.persist.mock.calls.map(([row]) => row as LessonProposal),
-    ).toEqual([
+    expect(persistedOf(fixture)).toEqual([
       expect.objectContaining({ projectId: 'proj-1', teamSlug: 'reviewers' }),
     ]);
   });
@@ -509,14 +574,19 @@ describe('LessonFilingService.file', () => {
     expect(fixture.runDao.updateById).not.toHaveBeenCalled();
   });
 
-  it('records a stretch with no lesson as a success that moves the watermark and writes an empty lessons row', async () => {
+  it('records a stretch with no lesson as empty, moves the watermark and writes an empty lessons card on a manual stretch', async () => {
     const fixture = build();
 
     const result = await fixture.service.file(fixture.turn, []);
 
     expect(result).toEqual({ status: 'recorded', count: 0 });
     expect(fixture.tx.persist).not.toHaveBeenCalled();
-    expect(fixture.segment.status).toBe('reflected');
+    expect(fixture.segments.updateById).toHaveBeenCalledWith(
+      'seg-1',
+      { status: 'empty', leaseUntil: null },
+      fixture.tx,
+    );
+    expect(fixture.segment.status).toBe('empty');
     expect(fixture.runDao.updateById).toHaveBeenCalledWith(
       'src',
       { reflectedThroughSeq: SEGMENT_TO },
@@ -526,6 +596,150 @@ describe('LessonFilingService.file', () => {
       kind: 'lessons',
       payload: expect.objectContaining({ proposals: [] }),
     });
+  });
+
+  it('writes no card for an automatic stretch that found no lesson, and tells the thread it changed', async () => {
+    const fixture = build({ closedBy: 'archive' });
+
+    const result = await fixture.service.file(fixture.turn, []);
+
+    expect(result).toEqual({ status: 'recorded', count: 0 });
+    expect(fixture.segment.status).toBe('empty');
+    expect(fixture.rows.write).not.toHaveBeenCalled();
+    expect(fixture.events.publishChanged).toHaveBeenCalledWith('src');
+  });
+
+  it('files a memory-target lesson through fileLesson as a lesson write and records it saved by auto', async () => {
+    const fixture = build();
+
+    await fixture.service.file(fixture.turn, [
+      lesson({
+        target: { kind: 'memory', scope: 'global', type: 'feedback' },
+      }),
+    ]);
+
+    expect(fixture.memory.fileLesson).toHaveBeenCalledWith(
+      {
+        kind: 'lesson',
+        runId: 'refl',
+        agentKind: 'claude',
+        model: 'opus',
+      },
+      expect.objectContaining({
+        title: lesson().title,
+        type: 'feedback',
+      }),
+      { projectId: null, teamSlug: null },
+      { sourceRunId: 'src', proposalId: persistedOf(fixture)[0]!.id },
+    );
+    expect(fixture.rows.write).toHaveBeenCalledWith('src', {
+      kind: 'lesson_outcome',
+      payload: expect.objectContaining({
+        proposalId: persistedOf(fixture)[0]!.id,
+        status: 'saved',
+        by: 'auto',
+        memoryHandle: 'm-new',
+      }),
+    });
+    expect(fixture.proposals.updateById).toHaveBeenCalledWith(
+      persistedOf(fixture)[0]!.id,
+      expect.objectContaining({ status: 'saved', resultRef: 'm-new' }),
+      expect.anything(),
+    );
+  });
+
+  it('records a lesson filed under agent writes pending as pending, not saved', async () => {
+    const fixture = build({
+      saved: {
+        kind: 'created',
+        entry: { handle: 'm-wait', status: 'pending' },
+      },
+    });
+
+    await fixture.service.file(fixture.turn, [
+      lesson({
+        target: { kind: 'memory', scope: 'global', type: 'feedback' },
+      }),
+    ]);
+
+    expect(fixture.rows.write).toHaveBeenCalledWith('src', {
+      kind: 'lesson_outcome',
+      payload: expect.objectContaining({
+        status: 'pending',
+        memoryHandle: 'm-wait',
+      }),
+    });
+  });
+
+  it('records a lesson that near-duplicates an entry as skipped_duplicate, naming the handle', async () => {
+    const fixture = build({
+      saved: {
+        kind: 'near_duplicate',
+        candidates: [{ handle: 'm3' }],
+        pending: [],
+      },
+    });
+
+    await fixture.service.file(fixture.turn, [
+      lesson({
+        target: { kind: 'memory', scope: 'global', type: 'feedback' },
+      }),
+    ]);
+
+    expect(fixture.rows.write).toHaveBeenCalledWith('src', {
+      kind: 'lesson_outcome',
+      payload: expect.objectContaining({
+        status: 'skipped_duplicate',
+        memoryHandle: 'm3',
+        reason: 'm3 already says this',
+      }),
+    });
+    expect(fixture.proposals.updateById).toHaveBeenCalledWith(
+      persistedOf(fixture)[0]!.id,
+      expect.objectContaining({ status: 'skipped_duplicate', resultRef: 'm3' }),
+      expect.anything(),
+    );
+  });
+
+  it('holds the proposals as checking and starts the check instead of filing when a checker is set', async () => {
+    const fixture = build({ checker: CHECKER });
+    const starter = vi.fn(() => Promise.resolve());
+    fixture.service.useCheck(starter);
+
+    const result = await fixture.service.file(fixture.turn, [
+      lesson({
+        target: { kind: 'memory', scope: 'global', type: 'feedback' },
+      }),
+    ]);
+
+    expect(result).toEqual({ status: 'recorded', count: 1 });
+    expect(persistedOf(fixture).map((row) => row.status)).toEqual(['checking']);
+    expect(fixture.segments.updateById).toHaveBeenCalledWith(
+      'seg-1',
+      { status: 'checking', leaseUntil: LEASE },
+      fixture.tx,
+    );
+    expect(starter).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'seg-1', status: 'checking' }),
+      [expect.objectContaining({ status: 'checking' })],
+    );
+    expect(fixture.memory.fileLesson).not.toHaveBeenCalled();
+    expect(fixture.rows.write).not.toHaveBeenCalled();
+  });
+
+  it('files every lesson at once without a check when no checker is set, even with a check starter registered', async () => {
+    const fixture = build();
+    const starter = vi.fn(() => Promise.resolve());
+    fixture.service.useCheck(starter);
+
+    await fixture.service.file(fixture.turn, [
+      lesson({
+        target: { kind: 'memory', scope: 'global', type: 'feedback' },
+      }),
+    ]);
+
+    expect(starter).not.toHaveBeenCalled();
+    expect(fixture.memory.fileLesson).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a second filing of the same reflection, writing nothing more', async () => {

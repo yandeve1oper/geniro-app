@@ -2,17 +2,50 @@ import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 import {
+  EditLessonSchema,
+  LessonEstimateQuerySchema,
   LessonProposalListQuerySchema,
   LessonProposalListSchema,
   LessonProposalWireSchema,
   LessonReflectionFactsSchema,
   LessonsConfigSchema,
+  LessonSegmentListQuerySchema,
+  LessonSegmentListSchema,
+  LessonSegmentWireSchema,
   LessonsReflectStartedSchema,
+  LessonsSpendSchema,
   ReflectLessonsSchema,
   RejectLessonSchema,
   SaveLessonSchema,
+  ThreadLessonEstimateSchema,
   ThreadLessonsStateSchema,
 } from '../lessons.types';
+
+export class LessonSegmentListQueryDto extends createZodDto(
+  LessonSegmentListQuerySchema,
+) {}
+
+export class LessonSegmentListDto extends createZodDto(
+  LessonSegmentListSchema,
+) {}
+
+export class LessonSegmentDto extends createZodDto(
+  z.object(LessonSegmentWireSchema.shape),
+) {}
+
+export class LessonsSpendDto extends createZodDto(
+  z.object(LessonsSpendSchema.shape),
+) {}
+
+export class EditLessonDto extends createZodDto(EditLessonSchema) {}
+
+export class LessonEstimateQueryDto extends createZodDto(
+  LessonEstimateQuerySchema,
+) {}
+
+export class ThreadLessonEstimateDto extends createZodDto(
+  z.object(ThreadLessonEstimateSchema.shape),
+) {}
 
 export class ReflectLessonsDto extends createZodDto(ReflectLessonsSchema) {}
 

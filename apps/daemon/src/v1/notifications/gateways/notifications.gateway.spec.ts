@@ -14,6 +14,7 @@ import type { SubagentRecoveryService } from '../../agents/services/subagent-rec
 import { BrowserBridgeService } from '../../browser/services/browser-bridge.service';
 import { DebugLogService } from '../../diagnostics/services/debug-log.service';
 import { KnowledgeEventBus } from '../../knowledge/services/knowledge-events.bus';
+import { LessonsEventBus } from '../../lessons/services/lessons-events.bus';
 import { MemoryEventBus } from '../../memory/services/memory-events.bus';
 import { ProjectEventBus } from '../../projects/services/project-events.bus';
 import { ShareEventBus } from '../../shares/services/share-events.bus';
@@ -148,6 +149,43 @@ describe('NotificationsGateway', () => {
     knowledge.publish(change);
 
     expect(emit).toHaveBeenCalledWith('knowledge_changed', change);
+  });
+
+  it('broadcasts a lessons change to every client, naming the thread only, and stops on destroy', () => {
+    const lessons = new LessonsEventBus();
+    const gw = new NotificationsGateway(
+      runtime,
+      new AgentEventBus(),
+      new ApprovalRegistry(),
+      new WsPresenceService(),
+      debugLog(),
+      new UsageEventBus(),
+      new TaskEventBus(),
+      partials(),
+      subagents(),
+      new ShareEventBus(),
+      new MemoryEventBus(),
+      new ProjectEventBus(),
+      new KnowledgeEventBus(),
+      new ResourceAlertEventBus(),
+      new BrowserBridgeService(),
+      lessons,
+    );
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit: vi.fn() }));
+    gw.afterInit({ emit, to } as unknown as Server);
+
+    lessons.publishChanged('run-1');
+
+    expect(emit).toHaveBeenCalledWith('lessons_changed', { runId: 'run-1' });
+    expect(to).not.toHaveBeenCalled();
+
+    lessons.publishChanged(null);
+    expect(emit).toHaveBeenLastCalledWith('lessons_changed', { runId: null });
+
+    gw.onModuleDestroy();
+    lessons.publishChanged('run-2');
+    expect(emit).toHaveBeenCalledTimes(2);
   });
 
   it('disconnects a socket presenting a bad token and never says hello', () => {

@@ -23,6 +23,7 @@ import {
   MAX_FAST_ACTIONS,
   MAX_RUN_CONFIGS,
   type MemorySettings,
+  type MemoryTriageConfig,
   type ResourceAlertSettings,
   type Settings,
   type ShareDestination,
@@ -30,7 +31,9 @@ import {
 } from '../shared/contracts';
 import {
   autoRevokeAfterDaysSchema,
+  cliKindSchema,
   knowledgeSchema,
+  lessonChoiceSchema,
   lessonsSchema,
   MAX_SHARE_DESTINATIONS,
   memorySchema,
@@ -307,7 +310,11 @@ function salvageMemory(value: unknown): MemorySettings {
   };
 }
 
-/** The lessons settings field by field: one bad value keeps the others. */
+/**
+ * The lessons settings field by field: one bad value keeps the others. The
+ * dev stand's `offer` mode reads as `auto`, and its agent, model and effort
+ * become the reflector's choice.
+ */
 function salvageLessons(value: unknown): LessonsSettings {
   if (typeof value !== 'object' || value === null) {
     return DEFAULT_LESSONS;
@@ -316,16 +323,52 @@ function salvageLessons(value: unknown): LessonsSettings {
   return {
     mode: lessonsSchema.shape.mode
       .catch(DEFAULT_LESSONS.mode)
-      .parse(record.mode),
-    agentKind: lessonsSchema.shape.agentKind
-      .catch(DEFAULT_LESSONS.agentKind)
-      .parse(record.agentKind ?? null),
-    model: lessonsSchema.shape.model
-      .catch(DEFAULT_LESSONS.model)
-      .parse(record.model ?? null),
-    effort: lessonsSchema.shape.effort
-      .catch(DEFAULT_LESSONS.effort)
-      .parse(record.effort ?? null),
+      .parse(record.mode === 'offer' ? 'auto' : record.mode),
+    reflector: salvageLessonChoice(
+      record.reflector === undefined
+        ? legacyReflectorOf(record)
+        : record.reflector,
+    ),
+    checker: salvageLessonChoice(record.checker),
+  };
+}
+
+function legacyReflectorOf(record: Record<string, unknown>): unknown {
+  if (typeof record.agentKind !== 'string') {
+    return null;
+  }
+  return {
+    agent: record.agentKind,
+    configDir: null,
+    model: record.model ?? null,
+    effort: record.effort ?? null,
+    contextWindow: null,
+    modelParameters: {},
+  };
+}
+
+/** One lessons choice field by field: a choice with no valid agent is no choice. */
+function salvageLessonChoice(value: unknown): MemoryTriageConfig | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const agent = cliKindSchema.safeParse(record.agent);
+  if (!agent.success) {
+    return null;
+  }
+  const shape = lessonChoiceSchema.shape;
+  return {
+    agent: agent.data,
+    configDir: shape.configDir.catch(null).parse(record.configDir ?? null),
+    model: shape.model.catch(null).parse(record.model ?? null),
+    effort: shape.effort.catch(null).parse(record.effort ?? null),
+    contextWindow: shape.contextWindow
+      .catch(null)
+      .parse(record.contextWindow ?? null),
+    modelParameters: shape.modelParameters
+      .catch({})
+      .parse(record.modelParameters ?? {}),
   };
 }
 

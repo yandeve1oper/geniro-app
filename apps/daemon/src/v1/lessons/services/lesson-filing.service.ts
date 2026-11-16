@@ -6,25 +6,35 @@ import { ItemDao } from '../../agents/dao/item.dao';
 import { RunDao } from '../../agents/dao/run.dao';
 import { quoteIn } from '../../agents/utils/memory-check-prompt';
 import { redactSecrets } from '../../diagnostics/utils/redact';
-import { memoryHandle, parseMemoryHandle } from '../../memory/memory.types';
+import {
+  memoryHandle,
+  type MemorySaveOutcome,
+  parseMemoryHandle,
+} from '../../memory/memory.types';
 import { MemoryService } from '../../memory/services/memory.service';
 import { similarTitles } from '../../memory/utils/memory-text';
 import { ProjectScopeService } from '../../projects/services/project-scope.service';
 import { AgentKind } from '../../runs/runs.types';
+import { LessonProposalDao } from '../dao/lesson-proposal.dao';
 import { LessonSegmentDao } from '../dao/lesson-segment.dao';
 import { LessonProposal } from '../entity/lesson-proposal.entity';
+import type { LessonSegment } from '../entity/lesson-segment.entity';
 import {
   LESSON_RULE_MAX_CHARS,
   LESSON_TITLE_MAX_CHARS,
   LESSON_WHY_MAX_CHARS,
   type LessonDedup,
+  type LessonOutcomePayload,
   type LessonProposalCard,
   LESSONS_PER_REFLECTION_MAX,
   type LessonSignalKind,
   type LessonsPayload,
   type LessonTarget,
 } from '../lessons.types';
+import { memoryBodyOf } from './lesson-proposal.service';
 import { LessonRowWriter } from './lesson-row.writer';
+import { LessonsConfigService } from './lessons-config.service';
+import { LessonsEventBus } from './lessons-events.bus';
 
 /** One lesson as `propose_lessons` hands it over, already shape-checked. */
 export interface ProposedLesson {
@@ -56,15 +66,35 @@ export type LessonFiled =
       problems: { code: LessonRefusalCode; reason: string }[];
     };
 
+/** The model behind a check, as a lessons card's footer names it. */
+export interface LessonCheckFacts {
+  runId: string;
+  agentKind: AgentKind;
+  model: string | null;
+}
+
+/** Hands proposals to the second-model check; registered by `LessonCheckService`. */
+export type LessonCheckStarter = (
+  segment: LessonSegment,
+  proposals: readonly LessonProposal[],
+) => Promise<void>;
+
 /**
  * Where `propose_lessons` lands: checks every lesson against the stretch the
- * reflection was started on, then records the proposals, puts the lessons
- * card into the thread they are about and moves that thread's watermark.
- * Nothing is recorded unless every lesson passes, so the model corrects and
- * sends the whole set again.
+ * reflection was started on, records the proposals and moves the thread's
+ * watermark. Nothing is recorded unless every lesson passes, so the model
+ * corrects and sends the whole set again.
+ *
+ * Then each lesson is filed into shared memory at once, as a `lesson` write
+ * (searchable, outside the memory index until approved) — or, with "Check
+ * found lessons with" set, held until the second model's verdicts. The
+ * lessons card and an outcome row per lesson go into the thread last. An
+ * automatic reflection that found nothing writes no card.
  */
 @Injectable()
 export class LessonFilingService {
+  private checkStarter: LessonCheckStarter | null = null;
+
   constructor(
     private readonly em: EntityManager,
     private readonly runDao: RunDao,
@@ -72,8 +102,21 @@ export class LessonFilingService {
     private readonly memory: MemoryService,
     private readonly projectScope: ProjectScopeService,
     private readonly segments: LessonSegmentDao,
+    private readonly proposals: LessonProposalDao,
     private readonly rows: LessonRowWriter,
+    private readonly config: LessonsConfigService,
+    private readonly events: LessonsEventBus,
   ) {}
+
+  /** Register the check; the returned function unregisters it. */
+  useCheck(starter: LessonCheckStarter): () => void {
+    this.checkStarter = starter;
+    return () => {
+      if (this.checkStarter === starter) {
+        this.checkStarter = null;
+      }
+    };
+  }
 
   async file(
     turn: AnalysisTurn,
@@ -93,16 +136,13 @@ export class LessonFilingService {
         'this reflection was started on no stretch of the thread',
       );
     }
-    if (segment.status === 'reflected') {
+    if (segment.status !== 'reflecting') {
       return refusedWith(
         'ALREADY_FILED',
         'this reflection has already filed its lessons',
       );
     }
-    const [source, reflection] = await Promise.all([
-      this.runDao.getById(turn.sourceRunId, em),
-      this.runDao.getById(turn.analysisRunId, em),
-    ]);
+    const source = await this.runDao.getById(turn.sourceRunId, em);
     if (source === null) {
       return refusedWith('SOURCE_GONE', 'the thread has been deleted');
     }
@@ -161,6 +201,10 @@ export class LessonFilingService {
     if (problems.length > 0) {
       return { status: 'refused', problems };
     }
+    const checking =
+      lessons.length > 0 &&
+      this.checkStarter !== null &&
+      this.config.checkChoice() !== null;
     const rows = lessons.map((lesson) =>
       Object.assign(new LessonProposal(), {
         sourceRunId: source.id,
@@ -177,14 +221,20 @@ export class LessonFilingService {
         evidenceQuote: lesson.evidence.quote,
         target: JSON.stringify(lesson.target),
         dedup: JSON.stringify(lesson.dedup),
-        status: 'proposed' as const,
+        status: checking ? ('checking' as const) : ('proposed' as const),
       }),
     );
+    const status =
+      rows.length === 0 ? 'empty' : checking ? 'checking' : 'reflected';
     await em.transactional(async (tx) => {
       for (const row of rows) {
         tx.persist(row);
       }
-      await this.segments.updateById(segment.id, { status: 'reflected' }, tx);
+      await this.segments.updateById(
+        segment.id,
+        { status, leaseUntil: checking ? segment.leaseUntil : null },
+        tx,
+      );
       if ((source.reflectedThroughSeq ?? -1) < segment.toSeq) {
         await this.runDao.updateById(
           source.id,
@@ -193,8 +243,186 @@ export class LessonFilingService {
         );
       }
     });
+    if (rows.length === 0) {
+      if (segment.closedBy === 'manual') {
+        await this.writeCard(segment, turn.analysisRunId, rows, null);
+      } else {
+        this.events.publishChanged(source.id);
+      }
+      return { status: 'recorded', count: 0 };
+    }
+    if (checking) {
+      this.events.publishChanged(source.id);
+      await this.checkStarter!(
+        Object.assign(segment, { status: 'checking' as const }),
+        rows,
+      );
+      return { status: 'recorded', count: rows.length };
+    }
+    await this.deliver(segment, rows, null);
+    return { status: 'recorded', count: rows.length };
+  }
+
+  /**
+   * File every proposal still to file into memory, then put the lessons card
+   * and the outcome rows into the thread and end the stretch `reflected`.
+   * Proposals the check dropped are on the card with their reason.
+   */
+  async deliver(
+    segment: LessonSegment,
+    rows: readonly LessonProposal[],
+    check: LessonCheckFacts | null,
+  ): Promise<void> {
+    const em = this.em.fork();
+    const reflection =
+      rows[0] === undefined
+        ? null
+        : await this.runDao.getById(rows[0].reflectionRunId, em);
+    const outcomes: LessonOutcomePayload[] = [];
+    for (const row of rows) {
+      if (row.status === 'dropped_by_check') {
+        outcomes.push(
+          outcomeOf(row, 'dropped_by_check', null, row.checkReason),
+        );
+        continue;
+      }
+      const outcome = await this.fileOne(row, reflection);
+      if (outcome !== null) {
+        outcomes.push(outcome);
+      }
+    }
+    for (const row of rows) {
+      await this.proposals.updateById(
+        row.id,
+        {
+          status: row.status,
+          resultRef: row.resultRef,
+          title: row.title,
+          rule: row.rule,
+          decidedAt: row.decidedAt,
+        },
+        em,
+      );
+    }
+    await this.segments.updateById(
+      segment.id,
+      { status: 'reflected', leaseUntil: null },
+      em,
+    );
+    await this.writeCard(segment, rows[0]?.reflectionRunId ?? '', rows, check);
+    for (const outcome of outcomes) {
+      await this.rows.write(segment.runId, {
+        kind: 'lesson_outcome',
+        payload: outcome,
+      });
+    }
+  }
+
+  /**
+   * The check could not judge the lessons: they wait on the card for the
+   * user's Save or Reject, as in a reflection without a check.
+   */
+  async deliverUnchecked(
+    segment: LessonSegment,
+    rows: readonly LessonProposal[],
+    check: LessonCheckFacts | null,
+    reason: string,
+  ): Promise<void> {
+    const em = this.em.fork();
+    for (const row of rows) {
+      row.status = 'check_failed';
+      await this.proposals.updateById(row.id, { status: 'check_failed' }, em);
+    }
+    await this.segments.updateById(
+      segment.id,
+      { status: 'reflected', leaseUntil: null, failReason: reason },
+      em,
+    );
+    await this.writeCard(segment, rows[0]?.reflectionRunId ?? '', rows, check);
+  }
+
+  private async fileOne(
+    row: LessonProposal,
+    reflection: {
+      id: string;
+      agentKind: AgentKind | null;
+      model: string | null;
+    } | null,
+  ): Promise<LessonOutcomePayload | null> {
+    const target = JSON.parse(row.target) as LessonTarget;
+    const place =
+      target.scope === 'global'
+        ? { projectId: null, teamSlug: null }
+        : target.scope === 'project'
+          ? row.projectId === null
+            ? null
+            : { projectId: row.projectId, teamSlug: null }
+          : row.teamSlug === null
+            ? null
+            : { projectId: null, teamSlug: row.teamSlug };
+    if (place === null) {
+      row.status = 'proposed';
+      return null;
+    }
+    const dedup = JSON.parse(row.dedup) as LessonDedup;
+    const saved: MemorySaveOutcome = await this.memory.fileLesson(
+      {
+        kind: 'lesson',
+        runId: row.reflectionRunId,
+        agentKind: reflection?.agentKind ?? null,
+        model: reflection?.model ?? null,
+      },
+      {
+        title: row.title,
+        body: memoryBodyOf(row, row.rule),
+        type: target.type,
+        ...(dedup.verdict !== 'new' && dedup.handle !== null
+          ? { notDuplicateOf: [dedup.handle] }
+          : {}),
+      },
+      place,
+      { sourceRunId: row.sourceRunId, proposalId: row.id },
+    );
+    if (saved.kind === 'created' || saved.kind === 'updated') {
+      row.status = 'saved';
+      row.resultRef = saved.entry.handle;
+      row.decidedAt = new Date();
+      return outcomeOf(
+        row,
+        saved.entry.status === 'pending' ? 'pending' : 'saved',
+        saved.entry.handle,
+        null,
+      );
+    }
+    if (saved.kind === 'near_duplicate') {
+      const handle = saved.candidates[0]?.handle ?? saved.pending[0] ?? null;
+      row.status = 'skipped_duplicate';
+      row.resultRef = handle;
+      row.decidedAt = new Date();
+      return outcomeOf(
+        row,
+        'skipped_duplicate',
+        handle,
+        handle === null ? null : `${handle} already says this`,
+      );
+    }
+    row.status = 'proposed';
+    return null;
+  }
+
+  private async writeCard(
+    segment: LessonSegment,
+    reflectionRunId: string,
+    rows: readonly LessonProposal[],
+    check: LessonCheckFacts | null,
+  ): Promise<void> {
+    const em = this.em.fork();
+    const reflection = await this.runDao.getById(reflectionRunId, em);
+    const source = await this.runDao.getById(segment.runId, em);
+    const project =
+      source === null ? null : await this.projectScope.projectOfRun(source);
     const payload: LessonsPayload = {
-      reflectionRunId: turn.analysisRunId,
+      reflectionRunId,
       segmentId: segment.id,
       fromSeq: segment.fromSeq,
       toSeq: segment.toSeq,
@@ -202,12 +430,12 @@ export class LessonFilingService {
       model: reflection?.model ?? null,
       proposals: rows.map(cardOf),
       places: {
-        project: place.projectId !== null,
-        team: place.teamSlug !== null,
+        project: (project?.id ?? null) !== null,
+        team: (source?.teamId ?? null) !== null,
       },
+      check,
     };
-    await this.rows.write(source.id, { kind: 'lessons', payload });
-    return { status: 'recorded', count: rows.length };
+    await this.rows.write(segment.runId, { kind: 'lessons', payload });
   }
 
   private textProblems(
@@ -259,6 +487,24 @@ export class LessonFilingService {
 
 function refusedWith(code: LessonRefusalCode, reason: string): LessonFiled {
   return { status: 'refused', problems: [{ code, reason }] };
+}
+
+function outcomeOf(
+  row: LessonProposal,
+  status: LessonOutcomePayload['status'],
+  memoryHandle: string | null,
+  reason: string | null,
+): LessonOutcomePayload {
+  return {
+    proposalId: row.id,
+    status,
+    by: 'auto',
+    title: row.title,
+    rule: row.rule,
+    target: JSON.parse(row.target) as LessonTarget,
+    memoryHandle,
+    reason,
+  };
 }
 
 function cardOf(row: LessonProposal): LessonProposalCard {

@@ -93,6 +93,7 @@ export interface TeamsApiDeleteTeamOverlayRequest {
 
 export interface TeamsApiDeleteTeamRunRequest {
     runId: string;
+    extractLessons?: DeleteTeamRunExtractLessonsEnum;
 }
 
 export interface TeamsApiDiscardTeamChatRequest {
@@ -604,6 +605,10 @@ export class TeamsApi extends runtime.BaseAPI {
         }
 
         const queryParameters: any = {};
+
+        if (requestParameters['extractLessons'] != null) {
+            queryParameters['extractLessons'] = requestParameters['extractLessons'];
+        }
 
         const headerParameters: runtime.HTTPHeaders = {};
 
@@ -2061,6 +2066,14 @@ export const DeleteTeamKnowledgeEnum = {
     Delete: 'delete'
 } as const;
 export type DeleteTeamKnowledgeEnum = typeof DeleteTeamKnowledgeEnum[keyof typeof DeleteTeamKnowledgeEnum];
+/**
+ * @export
+ */
+export const DeleteTeamRunExtractLessonsEnum = {
+    True: 'true',
+    False: 'false'
+} as const;
+export type DeleteTeamRunExtractLessonsEnum = typeof DeleteTeamRunExtractLessonsEnum[keyof typeof DeleteTeamRunExtractLessonsEnum];
 /**
  * @export
  */

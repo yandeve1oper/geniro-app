@@ -10,6 +10,7 @@ import { TaskSourceSchema, TaskStatusSchema } from '../../tasks/tasks.types';
 import {
   KNOWLEDGE_FATES,
   KnowledgeRenamedSchema,
+  LessonOverrideSchema,
   MAX_PROJECT_INSTRUCTION_BLOCKS,
   PROJECT_DESCRIPTION_MAX,
   PROJECT_MAX_CONCURRENT_CEILING,
@@ -121,6 +122,7 @@ export const updateProjectSchema = z
     approval: ChatApprovalModeSchema.nullable().optional(),
     configDir: z.string().min(1).nullable().optional(),
     teamSlug: z.string().min(1).nullable().optional(),
+    lessons: LessonOverrideSchema.nullable().optional(),
     /**
      * The three policy fields break the nullable pattern of every field above
      * them, and the reason is the column: these are NOT NULL with defaults, so

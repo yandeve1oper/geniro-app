@@ -58,7 +58,11 @@ export function usageDimensions(
       model: state?.model ?? run?.model ?? null,
       cwd: run?.cwd ?? null,
       teamName: teamNameOf(run),
-      purpose: run?.analysisPurpose === 'lessons' ? 'lessons' : null,
+      purpose:
+        run?.analysisPurpose === 'lessons' ||
+        run?.analysisPurpose === 'lessons_check'
+          ? run.analysisPurpose
+          : null,
     },
     reportedModel,
     member,

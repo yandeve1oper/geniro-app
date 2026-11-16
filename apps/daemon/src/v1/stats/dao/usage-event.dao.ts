@@ -4,7 +4,11 @@ import { BaseDao } from '@packages/mikroorm';
 
 import { idBatches } from '../../agents/utils/id-batches';
 import { UsageEvent } from '../entity/usage-event.entity';
-import { POLLED_SPEND_SEQ, type UsageEventInput } from '../stats.types';
+import {
+  POLLED_SPEND_SEQ,
+  type UsageEventInput,
+  type UsagePurpose,
+} from '../stats.types';
 
 @Injectable()
 export class UsageEventDao extends BaseDao<UsageEvent> {
@@ -245,6 +249,18 @@ export class UsageEventDao extends BaseDao<UsageEvent> {
    * Runs' POLLED-spend rows come back too, dated by their run's last activity —
    * a caller that counts turns tells them apart with `isPolledSpend`.
    */
+  /** Every row of these purposes since `from`, polled spend included — the lessons spend readout. */
+  async ofPurposesSince(
+    purposes: readonly UsagePurpose[],
+    from: Date,
+    txEm?: EntityManager,
+  ): Promise<UsageEvent[]> {
+    return this.getRepo(txEm).find(
+      { purpose: { $in: [...purposes] }, occurredAt: { $gte: from } },
+      { disableIdentityMap: true },
+    );
+  }
+
   async inRange(
     from: Date,
     to: Date,

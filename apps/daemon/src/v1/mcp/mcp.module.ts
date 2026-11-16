@@ -32,6 +32,7 @@ import { UserQuestionBroker } from '../agents/services/user-question.broker';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { KnowledgeService } from '../knowledge/services/knowledge.service';
 import { LessonsModule } from '../lessons/lessons.module';
+import { LessonCheckService } from '../lessons/services/lesson-check.service';
 import { LessonFilingService } from '../lessons/services/lesson-filing.service';
 import { MemoryModule } from '../memory/memory.module';
 import { MemoryService } from '../memory/services/memory.service';
@@ -122,6 +123,7 @@ import { createMcpTools, MCP_TOOLS } from './tools/mcp-tools';
         threadDelivery: ThreadDeliveryService,
         knowledgeItems: KnowledgeItemsService,
         lessons: LessonFilingService,
+        lessonChecks: LessonCheckService,
       ) =>
         createMcpTools({
           calls,
@@ -165,6 +167,7 @@ import { createMcpTools, MCP_TOOLS } from './tools/mcp-tools';
           threadDelivery,
           knowledgeItems,
           lessons,
+          lessonChecks,
         }),
       inject: [
         CallBroker,
@@ -208,6 +211,7 @@ import { createMcpTools, MCP_TOOLS } from './tools/mcp-tools';
         ThreadDeliveryService,
         KnowledgeItemsService,
         LessonFilingService,
+        LessonCheckService,
       ],
     },
     McpServerService,

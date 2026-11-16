@@ -16,11 +16,13 @@ import type {
 
 /**
  * One stretch of a thread a reflection reads: the items after `fromSeq`, up to
- * and including `toSeq`. Dropped with its run by `LessonReflectionService`
- * on `bus.allDeleted()`.
+ * and including `toSeq`. Queued by an archive, a delete with the box ticked
+ * or "Reflect now", and run by `LessonAutoRunner`. Dropped with its run by
+ * `LessonReflectionService` on `bus.allDeleted()`.
  */
 @Entity({ tableName: 'lesson_segments' })
 @Index({ properties: ['runId', 'status'] })
+@Index({ properties: ['status', 'closedAt'] })
 export class LessonSegment extends TimestampsEntity {
   @PrimaryKey({ type: 'string' })
   id: string = randomUUID();
@@ -48,8 +50,23 @@ export class LessonSegment extends TimestampsEntity {
   @Property({ type: 'string' })
   status!: LessonSegmentStatus;
 
+  /** Why a stretch was skipped: the user's Skip, or Lessons switched off before it ran. */
+  @Property({ type: 'string', nullable: true })
+  skipReason: 'user_skipped' | 'off' | null = null;
+
+  /** Until when a running reflection or check holds the stretch; the runner takes it back after. */
+  @Property({ type: DateTimeType, nullable: true })
+  leaseUntil: Date | null = null;
+
   @Property({ type: 'string', nullable: true })
   reflectionRunId: string | null = null;
+
+  @Property({ type: 'string', nullable: true })
+  checkRunId: string | null = null;
+
+  /** Why the last attempt failed, in the daemon's words. */
+  @Property({ type: 'text', nullable: true })
+  failReason: string | null = null;
 
   @Property({ type: 'integer', nullable: true })
   estimateTokens: number | null = null;

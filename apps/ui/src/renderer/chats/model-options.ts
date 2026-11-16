@@ -7,6 +7,16 @@ export function modelLabel(model: AgentModel): string {
     : `${model.label} · ${formatTokens(model.contextTokens)}`;
 }
 
+/** A model id or alias as the model menu names it; an id the CLI does not list reads as itself. */
+export function modelDisplayName(models: AgentModel[], model: string): string {
+  const named =
+    models.find((entry) => entry.id === model) ??
+    models.find(
+      (entry) => entry.id !== 'default' && entry.resolvedModel === model,
+    );
+  return named?.label ?? model;
+}
+
 export function modelDescription(model: AgentModel): string | undefined {
   return (
     model.unavailableReason ??

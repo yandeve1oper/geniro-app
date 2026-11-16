@@ -22,6 +22,7 @@ export function identity(
     details: [],
     icon,
     callerEscalatesQuestions: false,
+    lightModel: null,
   };
 }
 

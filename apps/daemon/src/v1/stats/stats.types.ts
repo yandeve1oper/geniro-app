@@ -16,7 +16,7 @@ import {
 import type { AgentKind } from '../runs/runs.types';
 
 /** What a turn's spend was for, beside the user's own work: a lessons reflection. */
-export type UsagePurpose = 'lessons';
+export type UsagePurpose = 'lessons' | 'lessons_check';
 
 /**
  * One ledger row as its writers hand it over — the shape both the live recorder

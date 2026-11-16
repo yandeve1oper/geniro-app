@@ -116,6 +116,21 @@ describe('ProvenanceLine', () => {
     expect(line.textContent).toContain('Saved by an analysis (Codex)');
   });
 
+  it('says a lessons reflection filed it, with the agent and model it ran on', () => {
+    const line = render(
+      memoryEntry({
+        source: source({
+          actor: 'lesson',
+          agentKind: 'claude',
+          model: 'claude-haiku-5-5',
+        }),
+      }),
+    );
+    expect(line.textContent).toContain(
+      'Filed by a lessons reflection (Claude, claude-haiku-5-5)',
+    );
+  });
+
   it('shows only the file name of an import and keeps the full path in the title', () => {
     const path = '/Users/me/.cursor/projects/website/memory/deploys.md';
     const line = render(

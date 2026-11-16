@@ -57,8 +57,11 @@ export function triageChoiceFor(
   return agents.length === 0 ? null : blankTriageChoice(agents[0]!);
 }
 
-export function MemoryTriageSettings({
-  agents,
+/**
+ * The model, effort, context window, parameters and profile of one choice,
+ * through the composer's own model picker. The CLI is chosen beside it.
+ */
+export function ChoiceModelSettings({
   value,
   onChange,
   agentsApi,
@@ -66,9 +69,7 @@ export function MemoryTriageSettings({
   capabilitiesLoading,
   recentConfigDirs,
   configProfiles,
-  agentLabel = 'Agent that sorts',
 }: {
-  agents: readonly AgentKind[];
   value: MemoryTriageConfig;
   onChange: (next: MemoryTriageConfig) => void;
   agentsApi: DaemonApis['agents'] | null;
@@ -76,9 +77,7 @@ export function MemoryTriageSettings({
   capabilitiesLoading: boolean;
   recentConfigDirs: Partial<Record<CliKind, readonly string[]>>;
   configProfiles: readonly ConfigProfile[];
-  agentLabel?: string;
 }): React.JSX.Element {
-  const identities = useContext(AgentIdentityContext);
   const { agent: agentKind, model, configDir } = value;
   const models = useAgentModels(agentsApi, agentKind, configDir, model);
   const efforts = useAgentEfforts(agentsApi, agentKind, model, configDir);
@@ -106,6 +105,74 @@ export function MemoryTriageSettings({
       patch({ configDir: chosen });
     }
   };
+
+  return (
+    <ModelSettingsSelect
+      agentKind={agentKind}
+      models={models.models}
+      model={model}
+      onModelChange={(next) =>
+        patch({ model: next, contextWindow: null, modelParameters: {} })
+      }
+      efforts={efforts.efforts}
+      effort={value.effort}
+      onEffortChange={(next) => patch({ effort: next })}
+      approvalCapability={undefined}
+      approval={null}
+      onApprovalChange={() => undefined}
+      windows={windows.windows}
+      contextWindow={value.contextWindow}
+      onContextWindowChange={(next) => patch({ contextWindow: next })}
+      parameters={parameters.parameters}
+      parameterValues={value.modelParameters}
+      onParameterChange={(parameterId, next) =>
+        patch({
+          modelParameters: withModelParameter(
+            value.modelParameters,
+            parameterId,
+            next,
+          ),
+        })
+      }
+      configDir={configDir}
+      recentConfigDirs={recentConfigDirs[agentKind] ?? NO_RECENTS}
+      configProfiles={configProfiles.filter(
+        (profile) => profile.agent === agentKind,
+      )}
+      configDirUnavailableReason={configDirCapability.unavailableReasonFor(
+        agentKind,
+      )}
+      onConfigDirChange={(next) => patch({ configDir: next })}
+      onBrowseConfigDir={() => void pickConfigDir()}
+      loading={models.loading}
+      settingsLoading={efforts.loading || windows.loading || parameters.loading}
+    />
+  );
+}
+
+export function MemoryTriageSettings({
+  agents,
+  value,
+  onChange,
+  agentsApi,
+  capabilities,
+  capabilitiesLoading,
+  recentConfigDirs,
+  configProfiles,
+  agentLabel = 'Agent that sorts',
+}: {
+  agents: readonly AgentKind[];
+  value: MemoryTriageConfig;
+  onChange: (next: MemoryTriageConfig) => void;
+  agentsApi: DaemonApis['agents'] | null;
+  capabilities: CapabilitiesDto | null;
+  capabilitiesLoading: boolean;
+  recentConfigDirs: Partial<Record<CliKind, readonly string[]>>;
+  configProfiles: readonly ConfigProfile[];
+  agentLabel?: string;
+}): React.JSX.Element {
+  const identities = useContext(AgentIdentityContext);
+  const agentKind = value.agent;
 
   return (
     <div
@@ -136,47 +203,14 @@ export function MemoryTriageSettings({
           with {agentShortName(identities, agentKind)}
         </span>
       )}
-      <ModelSettingsSelect
-        agentKind={agentKind}
-        models={models.models}
-        model={model}
-        onModelChange={(next) =>
-          patch({ model: next, contextWindow: null, modelParameters: {} })
-        }
-        efforts={efforts.efforts}
-        effort={value.effort}
-        onEffortChange={(next) => patch({ effort: next })}
-        approvalCapability={undefined}
-        approval={null}
-        onApprovalChange={() => undefined}
-        windows={windows.windows}
-        contextWindow={value.contextWindow}
-        onContextWindowChange={(next) => patch({ contextWindow: next })}
-        parameters={parameters.parameters}
-        parameterValues={value.modelParameters}
-        onParameterChange={(parameterId, next) =>
-          patch({
-            modelParameters: withModelParameter(
-              value.modelParameters,
-              parameterId,
-              next,
-            ),
-          })
-        }
-        configDir={configDir}
-        recentConfigDirs={recentConfigDirs[agentKind] ?? NO_RECENTS}
-        configProfiles={configProfiles.filter(
-          (profile) => profile.agent === agentKind,
-        )}
-        configDirUnavailableReason={configDirCapability.unavailableReasonFor(
-          agentKind,
-        )}
-        onConfigDirChange={(next) => patch({ configDir: next })}
-        onBrowseConfigDir={() => void pickConfigDir()}
-        loading={models.loading}
-        settingsLoading={
-          efforts.loading || windows.loading || parameters.loading
-        }
+      <ChoiceModelSettings
+        value={value}
+        onChange={onChange}
+        agentsApi={agentsApi}
+        capabilities={capabilities}
+        capabilitiesLoading={capabilitiesLoading}
+        recentConfigDirs={recentConfigDirs}
+        configProfiles={configProfiles}
       />
     </div>
   );

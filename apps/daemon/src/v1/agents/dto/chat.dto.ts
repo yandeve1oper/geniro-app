@@ -498,6 +498,16 @@ export const listChatsQuerySchema = z
   );
 export class ListChatsQueryDto extends createZodDto(listChatsQuerySchema) {}
 
+export const deleteRunQuerySchema = z.object({
+  extractLessons: z
+    .enum(['true', 'false'])
+    .optional()
+    .describe(
+      '"Extract lessons first": hide the run now, reflect on what is unreflected, then delete it. Without it, or with nothing to reflect on, the run is deleted at once',
+    ),
+});
+export class DeleteRunQueryDto extends createZodDto(deleteRunQuerySchema) {}
+
 export const searchChatQuerySchema = z.object({
   /**
    * What to look for. Split into terms by `searchTerms`, ALL of which a row

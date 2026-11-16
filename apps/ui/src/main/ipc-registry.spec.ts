@@ -55,7 +55,11 @@ const mocks = vi.hoisted(() => {
       autoRevokeAfterDays: null,
     },
     memory: { enabled: true, agentWrites: 'active', nativeMemoryOff: false },
-    lessons: { mode: 'offer', agentKind: null, model: null, effort: null },
+    lessons: {
+      mode: 'auto',
+      reflector: null,
+      checker: null,
+    },
     knowledge: { enabled: true, agentWrites: 'review' },
     resourceAlerts: {
       enabled: true,

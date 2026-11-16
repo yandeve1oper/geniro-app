@@ -41,6 +41,7 @@ import { Button } from '../components/ui/button';
 import { Menu, type MenuGroup } from '../components/ui/menu';
 import { MenuAnchorContext } from '../components/ui/menu-anchor';
 import { Select } from '../components/ui/select';
+import { useAppLessonsMode } from '../components/use-app-lessons-mode';
 import { useLatestCallback } from '../components/use-latest-callback';
 import { useNarrowViewport } from '../components/use-narrow-viewport';
 import { usePhoneBackEntry } from '../components/use-phone-back-entry';
@@ -290,6 +291,7 @@ export function Teams({
   const [memoryQuery, setMemoryQuery] = useState('');
   const teamStats = useTeamStats(apis, activeSlug, client);
   const teamMemories = useTeamMemories(apis, activeSlug, memoryQuery, client);
+  const appLessonsMode = useAppLessonsMode();
   /** A member just added, whose Name field takes the cursor. */
   const [focusNameOf, setFocusNameOf] = useState<string | null>(null);
   const narrow = useNarrowViewport();
@@ -1960,6 +1962,12 @@ export function Teams({
                 teamName={team.name}
                 memories={teamMemories}
                 query={memoryQuery}
+                lessons={{
+                  value: team.lessons,
+                  appMode: appLessonsMode,
+                  onChange: (value) =>
+                    editTeam((current) => ({ ...current, lessons: value })),
+                }}
               />
             )}
           </TeamMemoryTab>

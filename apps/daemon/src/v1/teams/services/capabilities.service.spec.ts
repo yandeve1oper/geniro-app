@@ -351,6 +351,47 @@ describe('CapabilitiesService — how each CLI is named', () => {
   });
 });
 
+describe('CapabilitiesService — the light model', () => {
+  const lightModels = () =>
+    new Map(
+      service()
+        .service.capabilitiesWire()
+        .agents.map((row) => [row.agent, row.lightModel]),
+    );
+
+  it('serves claude’s haiku, codex’s luna and no light model for cursor', () => {
+    expect(lightModels().get('claude')).toBe('haiku');
+    expect(lightModels().get('codex')).toBe('gpt-6-luna');
+    expect(lightModels().get('cursor-agent')).toBeNull();
+  });
+
+  it('reads the light model off the adapter config, never from a list of its own', () => {
+    const claude = new ClaudeAdapter();
+    const config = claude.getConfig();
+    vi.spyOn(claude, 'getConfig').mockReturnValue({
+      ...config,
+      lightModel: 'a-model-only-this-test-names',
+    });
+    const cursor = new CursorAcpAdapter({
+      vocabularyStore: freshVocabularyStore(),
+    });
+    const cursorConfig = cursor.getConfig();
+    vi.spyOn(cursor, 'getConfig').mockReturnValue({
+      ...cursorConfig,
+      lightModel: null,
+    });
+
+    const rows = new Map(
+      new CapabilitiesService(new AgentAdapterRegistry([claude, cursor]))
+        .capabilitiesWire()
+        .agents.map((row) => [row.agent, row.lightModel]),
+    );
+
+    expect(rows.get('claude')).toBe('a-model-only-this-test-names');
+    expect(rows.get('cursor-agent')).toBeNull();
+  });
+});
+
 describe('CapabilitiesService — each CLI’s own switches', () => {
   const options = () =>
     new Map(

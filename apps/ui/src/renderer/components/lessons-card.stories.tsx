@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 
 import {
+  CHECK_FOOTER,
   LESSON_BROKEN_AGAIN,
   LESSON_CORRECTION,
   LESSON_REFINES,
@@ -17,12 +18,13 @@ import {
 
 const LOOK = { formatDuration, formatUsd };
 
-/** Save and Reject record their outcome in place, the way the daemon's row would. */
+/** Decisions are recorded in place, the way the daemon's outcome rows would. */
 function LessonsDemo({
   lessons,
   initial,
   reflection,
-}: Pick<LessonsCardProps, 'lessons' | 'reflection'> & {
+  check,
+}: Pick<LessonsCardProps, 'lessons' | 'reflection' | 'check'> & {
   initial?: Record<string, LessonOutcomeView>;
 }): React.JSX.Element {
   const [outcomes, setOutcomes] = useState<Record<string, LessonOutcomeView>>(
@@ -37,13 +39,16 @@ function LessonsDemo({
         lessons={lessons}
         outcomes={outcomes}
         reflection={reflection}
+        check={check}
         onSave={async (proposalId, request) => {
           setOutcomes((current) => ({
             ...current,
             [proposalId]: {
               proposalId,
               status: 'saved',
+              by: 'user',
               title: request.title ?? titleOf(proposalId),
+              rule: null,
               target: request.target,
               memoryHandle: 'm40',
               reason: null,
@@ -56,7 +61,9 @@ function LessonsDemo({
             [proposalId]: {
               proposalId,
               status: 'rejected',
+              by: 'user',
               title: titleOf(proposalId),
+              rule: null,
               target: LESSON_CORRECTION.target,
               memoryHandle: null,
               reason,
@@ -67,6 +74,17 @@ function LessonsDemo({
     </div>
   );
 }
+
+const SAVED_AUTOMATICALLY = {
+  proposalId: LESSON_CORRECTION.id,
+  status: 'saved',
+  by: 'auto',
+  title: LESSON_CORRECTION.title,
+  rule: LESSON_CORRECTION.rule,
+  target: LESSON_CORRECTION.target,
+  memoryHandle: 'm31',
+  reason: null,
+} satisfies LessonOutcomeView;
 
 const meta = {
   title: 'Components/LessonsCard',
@@ -82,10 +100,68 @@ type Story = StoryObj<typeof meta>;
 
 export const Proposed: Story = {};
 
+export const WithCheck: Story = {
+  args: {
+    lessons: [LESSON_CORRECTION, LESSON_REFINES],
+    check: CHECK_FOOTER,
+  },
+};
+
 export const Working: Story = {
   args: {
     lessons: [LESSON_CORRECTION],
-    reflection: { ...REFLECTION_FOOTER, working: true },
+    reflection: {
+      ...REFLECTION_FOOTER,
+      figures: { working: true, durationMs: null, costUsd: null },
+    },
+  },
+};
+
+export const AutoSaved: Story = {
+  args: {
+    lessons: [LESSON_CORRECTION, LESSON_REFINES],
+    initial: {
+      [LESSON_CORRECTION.id]: SAVED_AUTOMATICALLY,
+      [LESSON_REFINES.id]: {
+        proposalId: LESSON_REFINES.id,
+        status: 'pending',
+        by: 'auto',
+        title: LESSON_REFINES.title,
+        rule: LESSON_REFINES.rule,
+        target: LESSON_REFINES.target,
+        memoryHandle: null,
+        reason: null,
+      },
+    },
+  },
+};
+
+export const DroppedByCheck: Story = {
+  args: {
+    lessons: [LESSON_CORRECTION, LESSON_REFINES, LESSON_BROKEN_AGAIN],
+    initial: {
+      [LESSON_CORRECTION.id]: SAVED_AUTOMATICALLY,
+      [LESSON_REFINES.id]: {
+        proposalId: LESSON_REFINES.id,
+        status: 'dropped_by_check',
+        by: 'auto',
+        title: LESSON_REFINES.title,
+        rule: LESSON_REFINES.rule,
+        target: LESSON_REFINES.target,
+        memoryHandle: null,
+        reason: 'The user never corrected this; the build simply failed once.',
+      },
+      [LESSON_BROKEN_AGAIN.id]: {
+        proposalId: LESSON_BROKEN_AGAIN.id,
+        status: 'dropped_by_check',
+        by: 'auto',
+        title: LESSON_BROKEN_AGAIN.title,
+        rule: LESSON_BROKEN_AGAIN.rule,
+        target: LESSON_BROKEN_AGAIN.target,
+        memoryHandle: null,
+        reason: 'Restates the repository’s own docs.',
+      },
+    },
   },
 };
 
@@ -94,17 +170,15 @@ export const Handled: Story = {
     lessons: [LESSON_CORRECTION, LESSON_REFINES],
     initial: {
       [LESSON_CORRECTION.id]: {
-        proposalId: LESSON_CORRECTION.id,
-        status: 'saved',
-        title: LESSON_CORRECTION.title,
-        target: LESSON_CORRECTION.target,
-        memoryHandle: 'm31',
-        reason: null,
+        ...SAVED_AUTOMATICALLY,
+        by: 'user',
       },
       [LESSON_REFINES.id]: {
         proposalId: LESSON_REFINES.id,
         status: 'rejected',
+        by: 'user',
         title: LESSON_REFINES.title,
+        rule: LESSON_REFINES.rule,
         target: LESSON_REFINES.target,
         memoryHandle: null,
         reason: 'already covered by m12',

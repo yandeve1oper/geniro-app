@@ -30,11 +30,21 @@ export interface LessonView {
   dedup: { verdict: LessonDedupVerdict; handle: string | null };
 }
 
-/** The user's decision on one lesson, as its `lesson_outcome` row states it. */
+export type LessonOutcomeStatus =
+  | 'saved'
+  | 'pending'
+  | 'rejected'
+  | 'undone'
+  | 'skipped_duplicate'
+  | 'dropped_by_check';
+
+/** The decision on one lesson, as its `lesson_outcome` row states it. */
 export interface LessonOutcomeView {
   proposalId: string;
-  status: 'saved' | 'rejected';
+  status: LessonOutcomeStatus;
+  by: 'user' | 'auto';
   title: string;
+  rule: string | null;
   target: LessonMemoryTarget;
   memoryHandle: string | null;
   reason: string | null;
@@ -51,14 +61,25 @@ export interface LessonSaveRequest {
   rule?: string;
 }
 
-/** The reflection's footer, from the lessons row and its figures. */
-export interface LessonsReflectionView {
-  agent: string;
-  model: string | null;
+export interface LessonEdit {
+  title: string;
+  rule: string;
+}
+
+export interface LessonsReflectionFigures {
   working: boolean;
   durationMs: number | null;
   costUsd: number | null;
-  tokens: number | null;
+}
+
+/** One run's footer line: the reflection itself, or the check that re-reads its lessons. */
+export interface LessonsReflectionView {
+  label: 'Reflection' | 'Check';
+  agent: string;
+  model: string | null;
+  effort: string | null;
+  /** Null until the daemon has answered for the run. */
+  figures: LessonsReflectionFigures | null;
 }
 
 export interface LessonsLook {
@@ -71,9 +92,13 @@ export interface LessonsCardProps {
   lessons: readonly LessonView[];
   outcomes: Readonly<Record<string, LessonOutcomeView>>;
   reflection: LessonsReflectionView;
+  check?: LessonsReflectionView | null;
   places?: LessonPlaces;
   onSave?: (proposalId: string, request: LessonSaveRequest) => Promise<void>;
   onReject?: (proposalId: string, reason: string | null) => Promise<void>;
+  onUndo?: (proposalId: string) => Promise<void>;
+  onEdit?: (proposalId: string, edit: LessonEdit) => Promise<void>;
+  onApprove?: (proposalId: string) => Promise<void>;
   /** Scroll the transcript to the evidence's row; absent draws no link. */
   onShowInThread?: (seq: number) => void;
 }
@@ -94,6 +119,16 @@ const EVERY_PLACE: LessonPlaces = { project: true, team: true };
 const TITLE_MAX_CHARS = 120;
 const RULE_MAX_CHARS = 300;
 const REJECT_REASON_MAX_CHARS = 300;
+
+const SUMMARY_PARTS: readonly [LessonOutcomeStatus | 'proposed', string][] = [
+  ['proposed', 'proposed'],
+  ['saved', 'saved'],
+  ['pending', 'waiting for review'],
+  ['rejected', 'rejected'],
+  ['undone', 'undone'],
+  ['skipped_duplicate', 'already in memory'],
+  ['dropped_by_check', 'dropped by the check'],
+];
 
 function scopeLabel(scope: LessonScope): string {
   return `Memory · ${scope}`;
@@ -131,39 +166,47 @@ function dedupLabel(dedup: LessonView['dedup']): string {
   }
 }
 
-function verdictText(outcome: LessonOutcomeView): string {
-  const named = `“${outcome.title}”`;
-  if (outcome.status === 'rejected') {
-    return outcome.reason === null
-      ? `✗ ${named} rejected`
-      : `✗ ${named} rejected — ${outcome.reason}`;
-  }
-  const where = `${named} saved to memory · ${outcome.target.scope}`;
-  return outcome.memoryHandle === null
-    ? `✓ ${where}`
-    : `✓ ${where} as ${outcome.memoryHandle}`;
-}
-
-function reflectionText(
-  reflection: LessonsReflectionView,
-  look: LessonsLook,
-): string {
-  const who = [reflection.agent, reflection.model].filter(
+function footerText(view: LessonsReflectionView, look: LessonsLook): string {
+  const parts = [view.agent, view.model, view.effort].filter(
     (part): part is string => part !== null && part !== '',
   );
-  if (reflection.working) {
-    return `Reflection: ${who.join(' · ')} · working…`;
+  if (view.figures !== null) {
+    if (view.figures.working) {
+      parts.push('working…');
+    } else {
+      if (view.figures.durationMs !== null) {
+        parts.push(look.formatDuration(view.figures.durationMs));
+      }
+      parts.push(
+        view.figures.costUsd === null
+          ? 'cost not reported'
+          : look.formatUsd(view.figures.costUsd),
+      );
+    }
   }
-  const parts = [...who];
-  if (reflection.durationMs !== null) {
-    parts.push(look.formatDuration(reflection.durationMs));
+  return `${view.label}: ${parts.join(' · ')}`;
+}
+
+function countsOf(
+  lessons: readonly LessonView[],
+  outcomes: Readonly<Record<string, LessonOutcomeView>>,
+): string {
+  if (lessons.length === 0) {
+    return '0 proposed';
   }
-  if (reflection.costUsd !== null) {
-    parts.push(look.formatUsd(reflection.costUsd));
-  } else if (reflection.tokens !== null) {
-    parts.push(`≈${reflection.tokens} tokens`);
-  }
-  return `Reflection: ${parts.join(' · ')}`;
+  return SUMMARY_PARTS.flatMap(([status, label]) => {
+    const n = lessons.filter(
+      (lesson) => (outcomes[lesson.id]?.status ?? 'proposed') === status,
+    ).length;
+    return n === 0 ? [] : [`${n} ${label}`];
+  }).join(' · ');
+}
+
+function summaryOf(
+  lessons: readonly LessonView[],
+  outcomes: Readonly<Record<string, LessonOutcomeView>>,
+): string {
+  return `Lessons: ${countsOf(lessons, outcomes)}`;
 }
 
 function messageOf(err: unknown): string {
@@ -175,56 +218,92 @@ export function LessonsCard({
   lessons,
   outcomes,
   reflection,
+  check = null,
   places = EVERY_PLACE,
   onSave,
   onReject,
+  onUndo,
+  onEdit,
+  onApprove,
   onShowInThread,
 }: LessonsCardProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const saved = lessons.filter(
-    (lesson) => outcomes[lesson.id]?.status === 'saved',
-  ).length;
-  const rejected = lessons.filter(
-    (lesson) => outcomes[lesson.id]?.status === 'rejected',
-  ).length;
-  const allHandled = lessons.length > 0 && saved + rejected === lessons.length;
   const scopes = offeredScopes(places);
+  const kept = lessons.filter(
+    (lesson) => outcomes[lesson.id]?.status !== 'dropped_by_check',
+  );
+  const dropped = lessons.filter(
+    (lesson) => outcomes[lesson.id]?.status === 'dropped_by_check',
+  );
+  // A lesson still open to a decision (undecided, saved, waiting) keeps the card open.
+  const settled =
+    kept.length > 0 &&
+    kept.every((lesson) => {
+      const status = outcomes[lesson.id]?.status;
+      return (
+        status === 'rejected' ||
+        status === 'undone' ||
+        status === 'skipped_duplicate'
+      );
+    });
+  const undecided = kept.some((lesson) => outcomes[lesson.id] === undefined);
   const hint =
     lessons.length === 0
       ? 'No lessons from this stretch — nothing passed the bar.'
-      : allHandled
-        ? null
-        : "Nothing reaches agents' instructions until you save it.";
+      : undecided
+        ? "Nothing reaches agents' instructions until you save it."
+        : null;
 
   const body = (
     <>
       <div className="flex min-w-0 flex-col gap-1">
         <p className="m-0 flex items-center gap-1.5 text-sm font-medium">
           <span aria-hidden>💡</span>
-          {`Lessons from this thread · ${lessons.length} proposed`}
+          {`Lessons from this thread · ${countsOf(lessons, outcomes)}`}
         </p>
         {hint === null ? null : (
           <p className="m-0 text-xs text-muted-foreground">{hint}</p>
         )}
       </div>
-      {lessons.map((lesson) => (
-        <LessonRow
-          key={lesson.id}
-          lesson={lesson}
-          outcome={outcomes[lesson.id] ?? null}
-          scopes={scopes}
-          onSave={onSave}
-          onReject={onReject}
-          onShowInThread={onShowInThread}
-        />
-      ))}
-      <p className="m-0 text-[11px] text-muted-foreground">
-        {reflectionText(reflection, look)}
-      </p>
+      {kept.map((lesson) => {
+        const outcome = outcomes[lesson.id] ?? null;
+        return outcome === null ? (
+          <UndecidedRow
+            key={lesson.id}
+            lesson={lesson}
+            scopes={scopes}
+            onSave={onSave}
+            onReject={onReject}
+            onShowInThread={onShowInThread}
+          />
+        ) : (
+          <DecidedRow
+            key={lesson.id}
+            lesson={lesson}
+            outcome={outcome}
+            onUndo={onUndo}
+            onEdit={onEdit}
+            onApprove={onApprove}
+          />
+        );
+      })}
+      {dropped.length === 0 ? null : (
+        <DroppedGroup lessons={dropped} outcomes={outcomes} />
+      )}
+      <div className="flex flex-col gap-1">
+        <p className="m-0 text-[11px] text-muted-foreground">
+          {footerText(reflection, look)}
+        </p>
+        {check === null ? null : (
+          <p className="m-0 text-[11px] text-muted-foreground">
+            {footerText(check, look)}
+          </p>
+        )}
+      </div>
     </>
   );
 
-  if (!allHandled) {
+  if (!settled) {
     return (
       <div
         data-slot="lessons-card"
@@ -238,7 +317,7 @@ export function LessonsCard({
       data-slot="lessons-card"
       className="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-3">
       <Disclosure
-        label={`Lessons: ${saved} saved · ${rejected} rejected`}
+        label={summaryOf(lessons, outcomes)}
         open={open}
         onToggle={() => setOpen((value) => !value)}>
         <div className="flex min-w-0 flex-col gap-3">{body}</div>
@@ -247,16 +326,244 @@ export function LessonsCard({
   );
 }
 
-function LessonRow({
+function DroppedGroup({
+  lessons,
+  outcomes,
+}: {
+  lessons: readonly LessonView[];
+  outcomes: Readonly<Record<string, LessonOutcomeView>>;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-t border-border pt-3 first:border-t-0 first:pt-0">
+      <Disclosure
+        label={`${lessons.length} dropped by the check`}
+        open={open}
+        onToggle={() => setOpen((value) => !value)}>
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
+          {lessons.map((lesson) => {
+            const reason = outcomes[lesson.id]?.reason ?? null;
+            return (
+              <li key={lesson.id} className="flex flex-col gap-0.5 text-xs">
+                <span className="text-muted-foreground">{lesson.title}</span>
+                {reason === null ? null : (
+                  <span className="text-muted-foreground">{reason}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </Disclosure>
+    </div>
+  );
+}
+
+function DecidedRow({
   lesson,
   outcome,
+  onUndo,
+  onEdit,
+  onApprove,
+}: {
+  lesson: LessonView;
+  outcome: LessonOutcomeView;
+  onUndo?: LessonsCardProps['onUndo'];
+  onEdit?: LessonsCardProps['onEdit'];
+  onApprove?: LessonsCardProps['onApprove'];
+}): React.JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [edited, setEdited] = useState(false);
+  const [title, setTitle] = useState(outcome.title);
+  const [rule, setRule] = useState(outcome.rule ?? lesson.rule);
+  const [request, setRequest] = useState<'undo' | 'edit' | 'approve' | null>(
+    null,
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const busy = request !== null;
+  const draftValid = title.trim() !== '' && rule.trim() !== '';
+
+  const run = (
+    kind: 'undo' | 'edit' | 'approve',
+    action: () => Promise<void>,
+    done: () => void = () => undefined,
+  ): void => {
+    setRequest(kind);
+    setError(null);
+    action().then(
+      () => {
+        setRequest(null);
+        done();
+      },
+      (err: unknown) => {
+        setRequest(null);
+        setError(messageOf(err));
+      },
+    );
+  };
+
+  const save = (): void => {
+    if (onEdit === undefined) {
+      return;
+    }
+    run(
+      'edit',
+      () => onEdit(lesson.id, { title: title.trim(), rule: rule.trim() }),
+      () => {
+        setEditing(false);
+        setEdited(true);
+      },
+    );
+  };
+
+  const undo = (): void => {
+    if (onUndo === undefined) {
+      return;
+    }
+    run('undo', () => onUndo(lesson.id));
+  };
+
+  const approve = (): void => {
+    if (onApprove === undefined) {
+      return;
+    }
+    run('approve', () => onApprove(lesson.id));
+  };
+
+  const muted = outcome.status !== 'saved' && outcome.status !== 'pending';
+  const statusText = decidedStatusText(outcome, edited);
+  const undoDisabled = busy || onUndo === undefined;
+
+  return (
+    <div className="flex min-w-0 flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
+      {editing ? (
+        <div className="flex min-w-0 flex-col gap-2">
+          <Input
+            aria-label="Lesson title"
+            value={title}
+            maxLength={TITLE_MAX_CHARS}
+            disabled={busy}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+          <ExpandableTextarea
+            title="Lesson rule"
+            ariaLabel="Lesson rule"
+            value={rule}
+            maxLength={RULE_MAX_CHARS}
+            rows={3}
+            onChange={setRule}
+          />
+        </div>
+      ) : (
+        <p
+          className={
+            muted
+              ? 'm-0 text-sm font-medium text-muted-foreground'
+              : 'm-0 text-sm font-medium'
+          }>
+          {outcome.title}
+        </p>
+      )}
+      <p className="m-0 text-xs text-muted-foreground">{statusText}</p>
+      {editing ? (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            disabled={busy || !draftValid || onEdit === undefined}
+            onClick={save}>
+            {request === 'edit' ? 'Saving…' : 'Save'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              setTitle(outcome.title);
+              setRule(outcome.rule ?? lesson.rule);
+              setEditing(false);
+            }}>
+            Cancel
+          </Button>
+        </div>
+      ) : outcome.status === 'saved' ? (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={undoDisabled}
+            onClick={undo}>
+            {request === 'undo' ? 'Undoing…' : 'Undo'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || onEdit === undefined}
+            onClick={() => setEditing(true)}>
+            Edit
+          </Button>
+        </div>
+      ) : outcome.status === 'pending' ? (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            disabled={busy || onApprove === undefined}
+            onClick={approve}>
+            {request === 'approve' ? 'Approving…' : 'Approve'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={undoDisabled}
+            onClick={undo}>
+            {request === 'undo' ? 'Undoing…' : 'Undo'}
+          </Button>
+        </div>
+      ) : null}
+      {error === null ? null : (
+        <ErrorBanner
+          message={error}
+          size="sm"
+          onDismiss={() => setError(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function decidedStatusText(
+  outcome: LessonOutcomeView,
+  edited: boolean,
+): string {
+  switch (outcome.status) {
+    case 'saved':
+      return outcome.by === 'auto' && !edited
+        ? `Saved to memory · ${outcome.target.scope} · Searchable only`
+        : `Saved to memory · ${outcome.target.scope}`;
+    case 'pending':
+      return 'Waiting for review';
+    case 'undone':
+      return 'Undone';
+    case 'skipped_duplicate':
+      return outcome.memoryHandle === null
+        ? 'Already in memory'
+        : `Already in memory as ${outcome.memoryHandle}`;
+    case 'rejected':
+      return outcome.reason === null
+        ? '✗ Rejected'
+        : `✗ Rejected — ${outcome.reason}`;
+    case 'dropped_by_check':
+      return 'Dropped by the check';
+  }
+}
+
+function UndecidedRow({
+  lesson,
   scopes,
   onSave,
   onReject,
   onShowInThread,
 }: {
   lesson: LessonView;
-  outcome: LessonOutcomeView | null;
   scopes: readonly LessonScope[];
   onSave?: LessonsCardProps['onSave'];
   onReject?: LessonsCardProps['onReject'];
@@ -273,14 +580,6 @@ function LessonRow({
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [request, setRequest] = useState<'save' | 'reject' | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  if (outcome !== null) {
-    return (
-      <p className="m-0 border-t border-border pt-3 text-xs text-muted-foreground first:border-t-0 first:pt-0">
-        {verdictText(outcome)}
-      </p>
-    );
-  }
 
   const busy = request !== null;
   const saveDisabled = onSave === undefined || busy;

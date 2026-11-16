@@ -15,6 +15,16 @@ const BODY_RULE =
   'Rerun a failing check only after changing what it exercises.';
 const BODY_WHY = 'The same check was retried three times unchanged.';
 
+const FILED_ENTRY = {
+  id: 'mem-7',
+  handle: 'm7',
+  rev: 3,
+  status: 'active',
+  type: 'feedback',
+  projectId: 'p1',
+  teamSlug: null,
+};
+
 function proposal(overrides: Partial<LessonProposal> = {}): LessonProposal {
   return Object.assign(new LessonProposal(), {
     id: 'lp-1',
@@ -46,6 +56,7 @@ function build(
     kind: 'created',
     entry: { handle: 'm7', title: 'Saved' },
   },
+  entry: Record<string, unknown> | null = FILED_ENTRY,
 ) {
   const em = {
     fork: () => em,
@@ -62,6 +73,13 @@ function build(
   };
   const memory = {
     create: vi.fn(() => Promise.resolve(memoryOutcome)),
+    list: vi.fn(() =>
+      Promise.resolve({ memories: entry === null ? [] : [entry], next: null }),
+    ),
+    setStatus: vi.fn(() => Promise.resolve({ kind: 'changed' })),
+    edit: vi.fn(() =>
+      Promise.resolve({ kind: 'updated', entry: { handle: 'm7' } }),
+    ),
   };
   const rows = {
     write: vi.fn(() => Promise.resolve()),
@@ -111,6 +129,7 @@ describe('LessonProposalService.save', () => {
       payload: {
         proposalId: 'lp-1',
         status: 'saved',
+        by: 'user',
         title: row.title,
         rule: BODY_RULE,
         target: TARGET_PROJECT,
@@ -306,6 +325,7 @@ describe('LessonProposalService.reject', () => {
       payload: {
         proposalId: 'lp-1',
         status: 'rejected',
+        by: 'user',
         title: row.title,
         rule: BODY_RULE,
         target: TARGET_PROJECT,
@@ -337,6 +357,7 @@ describe('LessonProposalService.reflectionFacts', () => {
     analysisPurpose: 'lessons',
     agentKind: 'claude',
     model: 'opus',
+    effort: 'high',
     status: 'completed',
     createdAt: new Date('2026-11-12T10:00:00.000Z'),
   };
@@ -353,6 +374,7 @@ describe('LessonProposalService.reflectionFacts', () => {
       reflectionRunId: 'refl',
       agentKind: 'claude',
       model: 'opus',
+      effort: 'high',
       working: false,
       startedAt: '2026-11-12T10:00:00.000Z',
       durationMs: 1500,
@@ -409,6 +431,192 @@ describe('LessonProposalService.reflectionFacts', () => {
 
     await expect(service.reflectionFacts('refl')).rejects.toMatchObject({
       errorCode: 'LESSONS_REFLECTION_NOT_FOUND',
+    });
+  });
+});
+
+describe('LessonProposalService.undo', () => {
+  it('forgets the entry the lesson wrote as the user and marks the proposal undone', async () => {
+    const row = proposal({ status: 'saved', resultRef: 'm7' });
+    const { service, memory, rows, em } = build(row);
+
+    const wire = await service.undo('lp-1');
+
+    expect(memory.list).toHaveBeenCalledWith({ handle: 'm7', limit: 1 });
+    expect(memory.setStatus).toHaveBeenCalledWith(
+      { kind: 'user' },
+      'mem-7',
+      'forgotten',
+    );
+    expect(wire).toMatchObject({
+      status: 'undone',
+      memoryHandle: 'm7',
+      decidedAt: expect.any(String),
+    });
+    expect(row.status).toBe('undone');
+    expect(em.flush).toHaveBeenCalled();
+    expect(rows.write).toHaveBeenCalledWith('src', {
+      kind: 'lesson_outcome',
+      payload: {
+        proposalId: 'lp-1',
+        status: 'undone',
+        by: 'user',
+        title: row.title,
+        rule: BODY_RULE,
+        target: TARGET_PROJECT,
+        memoryHandle: 'm7',
+        reason: null,
+      },
+    });
+  });
+
+  it('does not forget an entry that is already forgotten, and still marks the proposal undone', async () => {
+    const row = proposal({ status: 'saved', resultRef: 'm7' });
+    const { service, memory } = build(row, undefined, {
+      ...FILED_ENTRY,
+      status: 'forgotten',
+    });
+
+    await service.undo('lp-1');
+
+    expect(memory.setStatus).not.toHaveBeenCalled();
+    expect(row.status).toBe('undone');
+  });
+});
+
+describe('LessonProposalService.edit', () => {
+  it('rewrites the entry at the rev it was read at, as the user', async () => {
+    const row = proposal({ status: 'saved', resultRef: 'm7' });
+    const { service, memory, rows } = build(row);
+
+    const wire = await service.edit('lp-1', {
+      title: 'Check before retrying',
+      rule: 'Change the input first.',
+    });
+
+    expect(memory.edit).toHaveBeenCalledWith('mem-7', {
+      rev: 3,
+      title: 'Check before retrying',
+      body: `Change the input first.\n\nWhy: ${BODY_WHY}\n\nLesson from "Migrate the cache", message #7: “use pnpm not npm”`,
+      type: 'feedback',
+      projectId: 'p1',
+      teamSlug: null,
+    });
+    expect(wire).toMatchObject({
+      title: 'Check before retrying',
+      rule: 'Change the input first.',
+      status: 'saved',
+    });
+    expect(rows.write).toHaveBeenCalledWith('src', {
+      kind: 'lesson_outcome',
+      payload: expect.objectContaining({
+        status: 'saved',
+        by: 'user',
+        title: 'Check before retrying',
+        rule: 'Change the input first.',
+        memoryHandle: 'm7',
+      }),
+    });
+  });
+
+  it('refuses when the entry is forgotten, writing nothing', async () => {
+    const row = proposal({ status: 'saved', resultRef: 'm7' });
+    const { service, memory, rows } = build(row, undefined, {
+      ...FILED_ENTRY,
+      status: 'forgotten',
+    });
+
+    await expect(
+      service.edit('lp-1', { title: 't', rule: 'r' }),
+    ).rejects.toMatchObject({ errorCode: 'LESSON_ENTRY_GONE' });
+    expect(memory.edit).not.toHaveBeenCalled();
+    expect(rows.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('LessonProposalService.approve', () => {
+  it('sets the entry active as the user and writes a user-approved saved outcome', async () => {
+    const row = proposal({ status: 'saved', resultRef: 'm7' });
+    const { service, memory, rows } = build(row, undefined, {
+      ...FILED_ENTRY,
+      status: 'pending',
+    });
+
+    const wire = await service.approve('lp-1');
+
+    expect(memory.setStatus).toHaveBeenCalledWith(
+      { kind: 'user' },
+      'mem-7',
+      'active',
+    );
+    expect(wire.status).toBe('saved');
+    expect(rows.write).toHaveBeenCalledWith('src', {
+      kind: 'lesson_outcome',
+      payload: expect.objectContaining({
+        status: 'saved',
+        by: 'user',
+        memoryHandle: 'm7',
+      }),
+    });
+  });
+
+  it('refuses when the entry is gone, writing nothing', async () => {
+    const row = proposal({ status: 'saved', resultRef: 'm7' });
+    const { service, memory, rows } = build(row, undefined, null);
+
+    await expect(service.approve('lp-1')).rejects.toMatchObject({
+      errorCode: 'LESSON_ENTRY_GONE',
+    });
+    expect(memory.setStatus).not.toHaveBeenCalled();
+    expect(rows.write).not.toHaveBeenCalled();
+  });
+});
+
+describe.each(['undo', 'edit', 'approve'] as const)(
+  'LessonProposalService.%s on a lesson that is not saved',
+  (action) => {
+    it.each(['proposed', 'rejected', 'undone'] as const)(
+      'refuses a %s lesson with LESSON_NOT_FILED, touching nothing',
+      async (status) => {
+        const row = proposal({ status, resultRef: null });
+        const { service, memory, rows, em } = build(row);
+        const call =
+          action === 'edit'
+            ? service.edit('lp-1', { title: 't', rule: 'r' })
+            : service[action]('lp-1');
+
+        await expect(call).rejects.toMatchObject({
+          errorCode: 'LESSON_NOT_FILED',
+        });
+        expect(memory.setStatus).not.toHaveBeenCalled();
+        expect(memory.edit).not.toHaveBeenCalled();
+        expect(rows.write).not.toHaveBeenCalled();
+        expect(em.flush).not.toHaveBeenCalled();
+        expect(row.status).toBe(status);
+      },
+    );
+  },
+);
+
+describe('LessonProposalService.reflectionFacts for the check', () => {
+  it('serves a lessons_check run with its agent, model and effort', async () => {
+    const { service, runDao } = build(null);
+    runDao.getById.mockResolvedValueOnce({
+      id: 'chk',
+      analysisPurpose: 'lessons_check',
+      agentKind: 'codex',
+      model: 'gpt-5',
+      effort: 'low',
+      status: 'running',
+      createdAt: new Date('2026-11-12T10:00:00.000Z'),
+    } as never);
+
+    expect(await service.reflectionFacts('chk')).toMatchObject({
+      reflectionRunId: 'chk',
+      agentKind: 'codex',
+      model: 'gpt-5',
+      effort: 'low',
+      working: true,
     });
   });
 });

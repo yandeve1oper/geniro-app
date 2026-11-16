@@ -92,6 +92,60 @@ describe('POST /v1/teams/runs/:runId/stages', () => {
   });
 });
 
+describe('DELETE /v1/teams/runs/:runId', () => {
+  function deleteController(extracted: { deleted: boolean } | null) {
+    const extractLessons = {
+      extract: vi.fn(async (_runId: string) => extracted),
+    };
+    const executor = {
+      deleteRun: vi.fn(async (_runId: string) => ({ deleted: true })),
+    };
+    const controller = Object.create(
+      TeamsController.prototype,
+    ) as TeamsController;
+    Object.assign(controller, { extractLessons, executor });
+    return { controller, extractLessons, executor };
+  }
+
+  it('answers the extract-first outcome and deletes nothing itself when the lessons take the run', async () => {
+    const { controller, extractLessons, executor } = deleteController({
+      deleted: true,
+    });
+
+    await expect(
+      controller.deleteRun('run-w', { extractLessons: 'true' }),
+    ).resolves.toEqual({ deleted: true });
+
+    expect(extractLessons.extract).toHaveBeenCalledWith('run-w');
+    expect(executor.deleteRun).not.toHaveBeenCalled();
+  });
+
+  it('deletes the run as usual when the lessons have nothing to take', async () => {
+    const { controller, extractLessons, executor } = deleteController(null);
+
+    await expect(
+      controller.deleteRun('run-w', { extractLessons: 'true' }),
+    ).resolves.toEqual({ deleted: true });
+
+    expect(extractLessons.extract).toHaveBeenCalledWith('run-w');
+    expect(executor.deleteRun).toHaveBeenCalledWith('run-w');
+  });
+
+  it.each([{ extractLessons: 'false' as const }, {}])(
+    'does not consult the lessons without the flag (%j)',
+    async (query) => {
+      const { controller, extractLessons, executor } = deleteController({
+        deleted: true,
+      });
+
+      await controller.deleteRun('run-w', query);
+
+      expect(extractLessons.extract).not.toHaveBeenCalled();
+      expect(executor.deleteRun).toHaveBeenCalledWith('run-w');
+    },
+  );
+});
+
 describe('team avatar routes', () => {
   const PNG = Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),

@@ -27,6 +27,9 @@ export const CODEX_MODEL_MISMATCH_MESSAGE =
 export const CODEX_CONFIG_FLAG = '-c';
 export const CODEX_TITLE_MODEL_FLAG = '-m';
 
+/** The model codex 0.169's own list calls "fast and affordable … for easier tasks" (`codex debug models`, 2026-11-15). */
+export const CODEX_LIGHT_MODEL = 'gpt-6-luna';
+
 export const CODEX_OLLAMA_PROVIDER = 'geniro-ollama';
 
 /**

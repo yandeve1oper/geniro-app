@@ -56,7 +56,8 @@ export class ChatSearchIndexDao extends BaseDao<Item> {
       // own surface.
       .where('r.edits_team_slug', 'is', null)
       .where('r.analysis_source_run_id', 'is', null)
-      .where('r.analysis_team_slug', 'is', null);
+      .where('r.analysis_team_slug', 'is', null)
+      .where('r.pending_delete_at', 'is', null);
     if (!options.includeArchived) {
       query = query.where('r.archived_at', 'is', null);
     }
@@ -85,6 +86,7 @@ export class ChatSearchIndexDao extends BaseDao<Item> {
         .where('edits_team_slug', 'is', null)
         .where('analysis_source_run_id', 'is', null)
         .where('analysis_team_slug', 'is', null)
+        .where('pending_delete_at', 'is', null)
         .executeTakeFirst()
     );
   }

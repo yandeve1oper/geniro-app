@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  CHECK_FOOTER,
   LESSON_BROKEN_AGAIN,
   LESSON_CORRECTION,
   LESSON_REFINES,
@@ -94,132 +95,25 @@ function typeInto(
   });
 }
 
-async function choose(
-  el: HTMLElement,
-  label: string,
-  option: string,
-): Promise<void> {
-  const trigger = el.querySelector<HTMLElement>(
-    `[data-menu-trigger][aria-label="${label}"]`,
-  );
-  if (!trigger) {
-    throw new Error(`no select ${label}`);
-  }
-  await press(trigger);
-  const item = [
-    ...document.querySelectorAll<HTMLElement>('[role="option"]'),
-  ].find((candidate) => candidate.textContent?.trim() === option);
-  if (!item) {
-    throw new Error(`no option ${option}`);
-  }
-  await press(item);
+function outcome(
+  proposalId: string,
+  patch: Partial<LessonOutcomeView> = {},
+): LessonOutcomeView {
+  return {
+    proposalId,
+    status: 'saved',
+    by: 'user',
+    title: LESSON_CORRECTION.title,
+    rule: LESSON_CORRECTION.rule,
+    target: { kind: 'memory', scope: 'project', type: 'feedback' },
+    memoryHandle: 'm21',
+    reason: null,
+    ...patch,
+  };
 }
 
-const SAVED: LessonOutcomeView = {
-  proposalId: LESSON_CORRECTION.id,
-  status: 'saved',
-  title: LESSON_CORRECTION.title,
-  target: { kind: 'memory', scope: 'project', type: 'feedback' },
-  memoryHandle: 'm12',
-  reason: null,
-};
-
-async function optionsOf(el: HTMLElement, label: string): Promise<string[]> {
-  const trigger = el.querySelector<HTMLElement>(
-    `[data-menu-trigger][aria-label="${label}"]`,
-  );
-  if (!trigger) {
-    throw new Error(`no select ${label}`);
-  }
-  await press(trigger);
-  return [...document.querySelectorAll<HTMLElement>('[role="option"]')].map(
-    (option) => option.textContent?.trim() ?? '',
-  );
-}
-
-describe('LessonsCard', () => {
-  it('draws each lesson with its title, why, chips and an evidence disclosure', async () => {
-    const el = await render({ lessons: [LESSON_CORRECTION] });
-
-    expect(el.textContent).toContain('Lessons from this thread · 1 proposed');
-    expect(el.textContent).toContain(LESSON_CORRECTION.title);
-    expect(el.textContent).toContain(LESSON_CORRECTION.why);
-    expect(el.textContent).toContain('User correction');
-    expect(el.textContent).toContain('New');
-    expect(el.textContent).toContain('→ Memory · project');
-    expect(el.textContent).not.toContain('не запускай vitest');
-
-    await press(buttonContaining(el, 'Evidence · message #31'));
-
-    expect(el.textContent).toContain('не запускай vitest');
-  });
-
-  it('jumps the transcript to the evidence row from Show in thread, and draws no link without a jump', async () => {
-    const onShowInThread = vi.fn();
-    const el = await render({ lessons: [LESSON_CORRECTION], onShowInThread });
-
-    await press(buttonContaining(el, 'Evidence · message #31'));
-    await press(buttonNamed(el, 'Show in thread'));
-
-    expect(onShowInThread).toHaveBeenCalledWith(31);
-
-    const bare = await render({ lessons: [LESSON_CORRECTION] });
-    await press(buttonContaining(bare, 'Evidence · message #31'));
-    expect(() => buttonNamed(bare, 'Show in thread')).toThrow();
-  });
-
-  it('shows the rule in full under its title when the two differ', async () => {
-    const el = await render({
-      lessons: [
-        {
-          ...LESSON_CORRECTION,
-          rule: 'Run tests through the package script only.',
-        },
-      ],
-    });
-
-    expect(el.textContent).toContain(
-      'Run tests through the package script only.',
-    );
-  });
-
-  it('names the dedup verdict with the memory entry it refines or breaks', async () => {
-    const el = await render({
-      lessons: [LESSON_REFINES, LESSON_BROKEN_AGAIN],
-    });
-
-    expect(el.textContent).toContain('Refines m12');
-    expect(el.textContent).toContain('Broken again m7');
-    expect(el.textContent).toContain('Failing step, then fixed');
-    expect(el.textContent).toContain('Review finding');
-  });
-
-  it('saves with the scope picked and the title and rule as edited', async () => {
-    const onSave = vi.fn(async () => undefined);
-    const el = await render({ lessons: [LESSON_CORRECTION], onSave });
-
-    await press(buttonNamed(el, 'Edit'));
-    typeInto(
-      el.querySelector<HTMLInputElement>('input[aria-label="Lesson title"]')!,
-      'Run tests through the package filter',
-    );
-    typeInto(
-      el.querySelector<HTMLTextAreaElement>(
-        'textarea[aria-label="Lesson rule"]',
-      )!,
-      'Use the package filter for every test run.',
-    );
-    await choose(el, 'Save to', 'Memory · team');
-    await press(buttonNamed(el, 'Save'));
-
-    expect(onSave).toHaveBeenCalledWith(LESSON_CORRECTION.id, {
-      target: { kind: 'memory', scope: 'team', type: 'feedback' },
-      title: 'Run tests through the package filter',
-      rule: 'Use the package filter for every test run.',
-    });
-  });
-
-  it('sends only the target when the lesson was not edited', async () => {
+describe('LessonsCard — a lesson with no decision yet', () => {
+  it('saves it to the scope it was proposed for, when Save is pressed', async () => {
     const onSave = vi.fn(async () => undefined);
     const el = await render({ lessons: [LESSON_CORRECTION], onSave });
 
@@ -230,255 +124,302 @@ describe('LessonsCard', () => {
     });
   });
 
-  it('sends the typed reason with Reject', async () => {
+  it('sends the edited title and rule when Save follows an Edit', async () => {
+    const onSave = vi.fn(async () => undefined);
+    const el = await render({ lessons: [LESSON_CORRECTION], onSave });
+
+    await press(buttonNamed(el, 'Edit'));
+    typeInto(
+      el.querySelector<HTMLInputElement>('input[aria-label="Lesson title"]')!,
+      'Use pnpm for tests',
+    );
+    await press(buttonNamed(el, 'Save'));
+
+    expect(onSave).toHaveBeenCalledWith(
+      LESSON_CORRECTION.id,
+      expect.objectContaining({ title: 'Use pnpm for tests' }),
+    );
+  });
+
+  it('sends the reject reason when one is typed, and none when it is left empty', async () => {
     const onReject = vi.fn(async () => undefined);
-    const el = await render({ lessons: [LESSON_CORRECTION], onReject });
+    const el = await render({ lessons: [LESSON_REFINES], onReject });
 
     await press(buttonNamed(el, 'Reject'));
     typeInto(
       el.querySelector<HTMLInputElement>('input[aria-label="Reject reason"]')!,
-      '  too narrow  ',
+      'Not a rule',
     );
     await press(buttonNamed(el, 'Reject'));
 
-    expect(onReject).toHaveBeenCalledWith(LESSON_CORRECTION.id, 'too narrow');
+    expect(onReject).toHaveBeenCalledWith(LESSON_REFINES.id, 'Not a rule');
   });
+});
 
-  it('sends no reason when Reject is confirmed with the field left empty', async () => {
-    const onReject = vi.fn(async () => undefined);
-    const el = await render({ lessons: [LESSON_CORRECTION], onReject });
-
-    await press(buttonNamed(el, 'Reject'));
-    await press(buttonNamed(el, 'Reject'));
-
-    expect(onReject).toHaveBeenCalledWith(LESSON_CORRECTION.id, null);
-  });
-
-  it('shows a saved lesson as its verdict line, named, with the memory it became', async () => {
+describe('LessonsCard — a lesson saved to memory', () => {
+  it('reads saved automatically as searchable only, with Undo and Edit', async () => {
     const el = await render({
-      lessons: [LESSON_CORRECTION, LESSON_REFINES],
-      outcomes: { [LESSON_CORRECTION.id]: SAVED },
+      lessons: [LESSON_CORRECTION],
+      outcomes: {
+        [LESSON_CORRECTION.id]: outcome(LESSON_CORRECTION.id, { by: 'auto' }),
+      },
+      onUndo: vi.fn(async () => undefined),
+      onEdit: vi.fn(async () => undefined),
     });
 
     expect(el.textContent).toContain(
-      `✓ “${LESSON_CORRECTION.title}” saved to memory · project as m12`,
+      'Saved to memory · project · Searchable only',
     );
-    expect(el.textContent).not.toContain('Evidence · message #31');
+    expect(buttonNamed(el, 'Undo')).toBeTruthy();
+    expect(buttonNamed(el, 'Edit')).toBeTruthy();
   });
 
-  it('shows a rejected lesson as its verdict line, named, with the reason', async () => {
+  it('undoes the lesson when Undo is pressed', async () => {
+    const onUndo = vi.fn(async () => undefined);
     const el = await render({
-      lessons: [LESSON_CORRECTION, LESSON_REFINES],
+      lessons: [LESSON_CORRECTION],
       outcomes: {
-        [LESSON_CORRECTION.id]: {
-          proposalId: LESSON_CORRECTION.id,
-          status: 'rejected',
-          title: LESSON_CORRECTION.title,
-          target: LESSON_CORRECTION.target,
-          memoryHandle: null,
-          reason: 'too narrow',
-        },
+        [LESSON_CORRECTION.id]: outcome(LESSON_CORRECTION.id, { by: 'auto' }),
       },
+      onUndo,
     });
 
-    expect(el.textContent).toContain(
-      `✗ “${LESSON_CORRECTION.title}” rejected — too narrow`,
-    );
+    await press(buttonNamed(el, 'Undo'));
+
+    expect(onUndo).toHaveBeenCalledWith(LESSON_CORRECTION.id);
   });
 
-  it('tells two decided lessons apart by their titles', async () => {
+  it('edits the title and rule inline, and after Save reads as saved without the searchable note', async () => {
+    const onEdit = vi.fn(async () => undefined);
     const el = await render({
-      lessons: [LESSON_CORRECTION, LESSON_REFINES],
+      lessons: [LESSON_CORRECTION],
       outcomes: {
-        [LESSON_CORRECTION.id]: SAVED,
-        [LESSON_REFINES.id]: {
-          proposalId: LESSON_REFINES.id,
-          status: 'rejected',
-          title: LESSON_REFINES.title,
-          target: LESSON_REFINES.target,
-          memoryHandle: null,
-          reason: null,
-        },
+        [LESSON_CORRECTION.id]: outcome(LESSON_CORRECTION.id, { by: 'auto' }),
       },
-    });
-    await press(buttonContaining(el, 'Lessons: 1 saved · 1 rejected'));
-
-    expect(el.textContent).toContain(`“${LESSON_CORRECTION.title}” saved`);
-    expect(el.textContent).toContain(`✗ “${LESSON_REFINES.title}” rejected`);
-  });
-
-  it('collapses to a summary once every lesson is handled, and opens on press', async () => {
-    const el = await render({
-      lessons: [LESSON_CORRECTION, LESSON_REFINES],
-      outcomes: {
-        [LESSON_CORRECTION.id]: SAVED,
-        [LESSON_REFINES.id]: {
-          proposalId: LESSON_REFINES.id,
-          status: 'rejected',
-          title: LESSON_REFINES.title,
-          target: LESSON_REFINES.target,
-          memoryHandle: null,
-          reason: null,
-        },
-      },
+      onEdit,
     });
 
-    expect(el.textContent).toContain('Lessons: 1 saved · 1 rejected');
-    expect(el.textContent).not.toContain(`“${LESSON_CORRECTION.title}” saved`);
-
-    await press(buttonContaining(el, 'Lessons: 1 saved · 1 rejected'));
-
-    expect(el.textContent).toContain(`“${LESSON_CORRECTION.title}” saved`);
-    expect(el.textContent).toContain(`✗ “${LESSON_REFINES.title}” rejected`);
-  });
-
-  it('keeps the hint that nothing reaches agents until a lesson is decided, and drops it once all are', async () => {
-    const undecided = await render({ lessons: [LESSON_CORRECTION] });
-    expect(undecided.textContent).toContain(
-      "Nothing reaches agents' instructions until you save it.",
+    await press(buttonNamed(el, 'Edit'));
+    typeInto(
+      el.querySelector<HTMLInputElement>('input[aria-label="Lesson title"]')!,
+      'Run tests through pnpm',
     );
-
-    const decided = await render({
-      lessons: [LESSON_CORRECTION],
-      outcomes: { [LESSON_CORRECTION.id]: SAVED },
-    });
-    await press(buttonContaining(decided, 'Lessons: 1 saved · 0 rejected'));
-
-    expect(decided.textContent).not.toContain(
-      "Nothing reaches agents' instructions until you save it.",
-    );
-  });
-
-  it('offers only the scopes the thread has a place for, and global', async () => {
-    const el = await render({
-      lessons: [LESSON_CORRECTION],
-      onSave: vi.fn(async () => undefined),
-      places: { project: false, team: true },
-    });
-
-    expect(await optionsOf(el, 'Save to')).toEqual([
-      'Memory · team',
-      'Memory · global',
-    ]);
-  });
-
-  it('offers the project scope on a thread that has one, and not the team', async () => {
-    const el = await render({
-      lessons: [LESSON_CORRECTION],
-      onSave: vi.fn(async () => undefined),
-      places: { project: true, team: false },
-    });
-
-    expect(await optionsOf(el, 'Save to')).toEqual([
-      'Memory · project',
-      'Memory · global',
-    ]);
-  });
-
-  it('offers every scope when the thread’s places are not known', async () => {
-    const el = await render({
-      lessons: [LESSON_CORRECTION],
-      onSave: vi.fn(async () => undefined),
-    });
-
-    expect(await optionsOf(el, 'Save to')).toEqual([
-      'Memory · project',
-      'Memory · team',
-      'Memory · global',
-    ]);
-  });
-
-  it('starts on global when the lesson’s own scope has no place in the thread, and saves there', async () => {
-    const onSave = vi.fn(async () => undefined);
-    const el = await render({
-      lessons: [LESSON_CORRECTION],
-      onSave,
-      places: { project: false, team: true },
-    });
-
-    expect(el.textContent).toContain('→ Memory · global');
-    expect(
-      el.querySelector('[data-menu-trigger][aria-label="Save to"]')
-        ?.textContent,
-    ).toContain('Memory · global');
-
     await press(buttonNamed(el, 'Save'));
 
-    expect(onSave).toHaveBeenCalledWith(LESSON_CORRECTION.id, {
-      target: { kind: 'memory', scope: 'global', type: 'feedback' },
+    expect(onEdit).toHaveBeenCalledWith(LESSON_CORRECTION.id, {
+      title: 'Run tests through pnpm',
+      rule: LESSON_CORRECTION.rule,
     });
+    expect(el.textContent).toContain('Saved to memory · project');
+    expect(el.textContent).not.toContain('Searchable only');
   });
 
-  it('says nothing passed the bar when a reflection proposed no lesson', async () => {
-    const el = await render({ lessons: [] });
-
-    expect(el.textContent).toContain('Lessons from this thread · 0 proposed');
-    expect(el.textContent).toContain(
-      'No lessons from this stretch — nothing passed the bar.',
-    );
-    expect(el.textContent).not.toContain('Lessons: 0 saved');
-  });
-
-  it('never shows $0 for a reflection whose cost is unknown', async () => {
+  it('reads saved by the user as saved, with no searchable note', async () => {
     const el = await render({
       lessons: [LESSON_CORRECTION],
-      reflection: { ...REFLECTION_FOOTER, costUsd: null, tokens: 4200 },
+      outcomes: { [LESSON_CORRECTION.id]: outcome(LESSON_CORRECTION.id) },
     });
 
-    expect(el.textContent).toContain('≈4200 tokens');
+    expect(el.textContent).toContain('Saved to memory · project');
+    expect(el.textContent).not.toContain('Searchable only');
+  });
+});
+
+describe('LessonsCard — a lesson waiting for review', () => {
+  it('reads waiting for review, with Approve and Undo', async () => {
+    const onApprove = vi.fn(async () => undefined);
+    const el = await render({
+      lessons: [LESSON_REFINES],
+      outcomes: {
+        [LESSON_REFINES.id]: outcome(LESSON_REFINES.id, { status: 'pending' }),
+      },
+      onApprove,
+      onUndo: vi.fn(async () => undefined),
+    });
+
+    expect(el.textContent).toContain('Waiting for review');
+    await press(buttonNamed(el, 'Approve'));
+
+    expect(onApprove).toHaveBeenCalledWith(LESSON_REFINES.id);
+  });
+});
+
+describe('LessonsCard — decided lessons with no actions left', () => {
+  it('reads an undone lesson as undone, with no buttons', async () => {
+    const el = await render({
+      lessons: [LESSON_CORRECTION, LESSON_REFINES],
+      outcomes: {
+        [LESSON_CORRECTION.id]: outcome(LESSON_CORRECTION.id, {
+          status: 'undone',
+        }),
+        [LESSON_REFINES.id]: outcome(LESSON_REFINES.id, {
+          status: 'rejected',
+          reason: 'Too broad',
+        }),
+      },
+    });
+
+    await press(buttonContaining(el, 'Lessons:'));
+
+    expect(el.textContent).toContain('Undone');
+    expect(el.textContent).toContain('✗ Rejected — Too broad');
+    expect(el.querySelectorAll('button')).toHaveLength(1);
+  });
+
+  it('reads a duplicate as already in memory under its handle', async () => {
+    const el = await render({
+      lessons: [LESSON_BROKEN_AGAIN],
+      outcomes: {
+        [LESSON_BROKEN_AGAIN.id]: outcome(LESSON_BROKEN_AGAIN.id, {
+          status: 'skipped_duplicate',
+          memoryHandle: 'm7',
+        }),
+      },
+    });
+
+    await press(buttonContaining(el, 'Lessons:'));
+
+    expect(el.textContent).toContain('Already in memory as m7');
+  });
+});
+
+describe('LessonsCard — lessons the check dropped', () => {
+  it('collapses them under one muted line that names the count', async () => {
+    const el = await render({
+      lessons: [LESSON_CORRECTION, LESSON_REFINES],
+      outcomes: {
+        [LESSON_CORRECTION.id]: outcome(LESSON_CORRECTION.id, {
+          status: 'dropped_by_check',
+          reason: 'Only a restatement of the repo docs',
+        }),
+        [LESSON_REFINES.id]: outcome(LESSON_REFINES.id, {
+          status: 'dropped_by_check',
+          reason: 'The user never corrected this',
+        }),
+      },
+    });
+
+    expect(el.textContent).toContain('2 dropped by the check');
+    expect(el.textContent).not.toContain('Only a restatement of the repo docs');
+
+    await press(buttonContaining(el, '2 dropped by the check'));
+
+    expect(el.textContent).toContain('Only a restatement of the repo docs');
+    expect(el.textContent).toContain('The user never corrected this');
+  });
+});
+
+describe('LessonsCard — the footer', () => {
+  it('reads the reflection with its CLI, model, effort, duration and cost', async () => {
+    const el = await render({ lessons: [LESSON_CORRECTION] });
+
+    expect(el.textContent).toContain(
+      `Reflection: Claude · claude-haiku-5-5 · high · ${formatDuration(38_000)} · ${formatUsd(0.02)}`,
+    );
+  });
+
+  it('adds a second line for the check when one ran', async () => {
+    const el = await render({
+      lessons: [LESSON_CORRECTION],
+      check: CHECK_FOOTER,
+    });
+
+    expect(el.textContent).toContain(
+      `Check: Claude · claude-opus-5-5 · high · ${formatDuration(21_000)} · ${formatUsd(0.27)}`,
+    );
+  });
+
+  it('says the cost was not reported where the run reports none, never $0', async () => {
+    const el = await render({
+      lessons: [LESSON_CORRECTION],
+      reflection: {
+        ...REFLECTION_FOOTER,
+        figures: { working: false, durationMs: 1_000, costUsd: null },
+      },
+    });
+
+    expect(el.textContent).toContain('cost not reported');
     expect(el.textContent).not.toContain('$0');
   });
 
-  it('shows the measured cost when the CLI reports one', async () => {
+  it('says it is working while the run is still going', async () => {
     const el = await render({
       lessons: [LESSON_CORRECTION],
-      reflection: { ...REFLECTION_FOOTER, costUsd: 0.02 },
+      reflection: {
+        ...REFLECTION_FOOTER,
+        figures: { working: true, durationMs: null, costUsd: null },
+      },
     });
 
     expect(el.textContent).toContain(
-      'Reflection: Claude · claude-haiku-5-5 · 38s · $0.02',
+      'Reflection: Claude · claude-haiku-5-5 · high · working…',
     );
   });
+});
 
-  it('reads working while the reflection is still running', async () => {
+describe('LessonsCard — header', () => {
+  it('counts undecided lessons as proposed', async () => {
+    const el = await render({ lessons: [LESSON_CORRECTION, LESSON_REFINES] });
+
+    expect(el.textContent).toContain('Lessons from this thread · 2 proposed');
+  });
+
+  it('counts a saved lesson as saved, not proposed', async () => {
     const el = await render({
       lessons: [LESSON_CORRECTION],
-      reflection: { ...REFLECTION_FOOTER, working: true },
+      outcomes: {
+        [LESSON_CORRECTION.id]: outcome(LESSON_CORRECTION.id, { by: 'auto' }),
+      },
+    });
+
+    expect(el.textContent).toContain('Lessons from this thread · 1 saved');
+    expect(el.textContent).not.toContain('proposed');
+  });
+
+  it('counts each state on its own: proposed, saved and waiting for review', async () => {
+    const el = await render({
+      lessons: [LESSON_CORRECTION, LESSON_REFINES],
+      outcomes: {
+        [LESSON_REFINES.id]: outcome(LESSON_REFINES.id, { status: 'pending' }),
+      },
     });
 
     expect(el.textContent).toContain(
-      'Reflection: Claude · claude-haiku-5-5 · working…',
+      'Lessons from this thread · 1 proposed · 1 waiting for review',
     );
   });
+});
 
-  it('disables every action when there is no API to call', async () => {
-    const el = await render({ lessons: [LESSON_CORRECTION] });
+describe('LessonsCard — settled', () => {
+  it('folds into one summary line once nothing is left to decide, and opens on a press', async () => {
+    const el = await render({
+      lessons: [LESSON_CORRECTION, LESSON_REFINES],
+      outcomes: {
+        [LESSON_CORRECTION.id]: outcome(LESSON_CORRECTION.id, {
+          status: 'rejected',
+        }),
+        [LESSON_REFINES.id]: outcome(LESSON_REFINES.id, {
+          status: 'rejected',
+        }),
+      },
+    });
 
-    expect(buttonNamed(el, 'Save').disabled).toBe(true);
-    expect(buttonNamed(el, 'Edit').disabled).toBe(true);
-    expect(buttonNamed(el, 'Reject').disabled).toBe(true);
+    expect(el.textContent).toContain('Lessons: 2 rejected');
+    expect(el.textContent).not.toContain('Reflection:');
+
+    await press(buttonContaining(el, 'Lessons: 2 rejected'));
+
+    expect(el.textContent).toContain('Reflection:');
   });
 
-  it('shows the message of a save the daemon refused, under the lesson', async () => {
-    const onSave = vi.fn(() =>
-      Promise.reject(new Error('Pick a project first')),
-    );
-    const el = await render({ lessons: [LESSON_CORRECTION], onSave });
+  it('stays open while a saved lesson can still be undone or edited', async () => {
+    const el = await render({
+      lessons: [LESSON_CORRECTION],
+      outcomes: {
+        [LESSON_CORRECTION.id]: outcome(LESSON_CORRECTION.id, { by: 'auto' }),
+      },
+    });
 
-    await press(buttonNamed(el, 'Save'));
-
-    expect(el.textContent).toContain('Pick a project first');
-    expect(buttonNamed(el, 'Save').disabled).toBe(false);
-  });
-
-  it('holds the buttons disabled and says Saving while a save is in flight', async () => {
-    const onSave = vi.fn(() => new Promise<void>(() => undefined));
-    const el = await render({ lessons: [LESSON_CORRECTION], onSave });
-
-    await press(buttonNamed(el, 'Save'));
-
-    expect(buttonNamed(el, 'Saving…').disabled).toBe(true);
-    expect(buttonNamed(el, 'Edit').disabled).toBe(true);
-    expect(buttonNamed(el, 'Reject').disabled).toBe(true);
+    expect(el.textContent).toContain('Reflection:');
   });
 });

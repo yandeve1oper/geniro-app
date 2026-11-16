@@ -43,6 +43,7 @@ export function SegmentedControl<T extends string>({
   value,
   onSelect,
   size,
+  disabled = false,
   className,
 }: {
   ariaLabel: string;
@@ -50,6 +51,8 @@ export function SegmentedControl<T extends string>({
   options: readonly { id: T; label: React.ReactNode; icon?: React.ReactNode }[];
   value: T;
   onSelect: (id: T) => void;
+  /** Every option stays drawn with its current value, and none can be picked. */
+  disabled?: boolean;
   className?: string;
 } & Pick<VariantProps<typeof segmentVariants>, 'size'>): React.JSX.Element {
   return (
@@ -73,10 +76,12 @@ export function SegmentedControl<T extends string>({
           key={option.id}
           type="button"
           aria-pressed={option.id === value}
+          disabled={disabled}
           onClick={() => onSelect(option.id)}
           className={cn(
             'shrink-0',
             segmentVariants({ size, selected: option.id === value }),
+            'disabled:cursor-not-allowed disabled:opacity-50',
           )}>
           {option.icon}
           {option.label}

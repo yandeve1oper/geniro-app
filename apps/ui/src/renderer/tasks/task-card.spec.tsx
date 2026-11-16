@@ -17,6 +17,7 @@ const CURSOR_IDENTITY: AgentIdentityCapability = {
   details: [],
   icon: 'terminal',
   callerEscalatesQuestions: false,
+  lightModel: null,
 };
 
 (

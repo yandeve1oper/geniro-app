@@ -9,7 +9,11 @@ import {
 } from '@mikro-orm/decorators/legacy';
 import { TimestampsEntity } from '@packages/mikroorm';
 
-import type { LessonProposalStatus, LessonSignalKind } from '../lessons.types';
+import type {
+  LessonCheckVerdict,
+  LessonProposalStatus,
+  LessonSignalKind,
+} from '../lessons.types';
 
 /**
  * One lesson a reflection proposed, and what the user did with it.
@@ -74,10 +78,21 @@ export class LessonProposal extends TimestampsEntity {
   @Property({ type: 'string' })
   status: LessonProposalStatus = 'proposed';
 
+  /** Why the user rejected it, or why the user undid it. */
   @Property({ type: 'text', nullable: true })
   rejectReason: string | null = null;
 
-  /** The memory entry's handle (`m12`) a save wrote. */
+  /** The second-model check that judged it, when one ran. */
+  @Property({ type: 'string', nullable: true })
+  checkRunId: string | null = null;
+
+  @Property({ type: 'string', nullable: true })
+  checkVerdict: LessonCheckVerdict | null = null;
+
+  @Property({ type: 'text', nullable: true })
+  checkReason: string | null = null;
+
+  /** The memory entry's handle (`m12`) a save wrote, or the near duplicate that kept it from being written. */
   @Property({ type: 'string', nullable: true })
   resultRef: string | null = null;
 

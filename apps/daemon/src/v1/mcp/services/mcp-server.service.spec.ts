@@ -121,6 +121,7 @@ import { MAX_HOST_QUESTION_TITLE_LENGTH } from '../../agents/utils/host-question
 import { RemoteImageError } from '../../agents/utils/remote-image';
 import type { BrowserOp } from '../../browser/browser.types';
 import type { KnowledgeService } from '../../knowledge/services/knowledge.service';
+import type { LessonCheckService } from '../../lessons/services/lesson-check.service';
 import type { LessonFilingService } from '../../lessons/services/lesson-filing.service';
 import { memoryDb } from '../../memory/__tests__/memory-db';
 import type {
@@ -305,6 +306,7 @@ function service(
       knowledge,
       knowledgeItems: {} as KnowledgeItemsService,
       lessons: {} as LessonFilingService,
+      lessonChecks: {} as LessonCheckService,
     }),
     {
       token: 'launch',
@@ -3991,6 +3993,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
       lessons: {} as LessonFilingService,
+      lessonChecks: {} as LessonCheckService,
       monitors: monitorBroker().broker,
       teamNotes: teamNoteBroker(),
     }).find((t) => t.handles(HOST_RECORD_OUTCOME_TOOL))!;
@@ -4616,6 +4619,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
       lessons: {} as LessonFilingService,
+      lessonChecks: {} as LessonCheckService,
       monitors: monitorBroker().broker,
       teamNotes: teamNoteBroker(),
       runOutcomes: runOutcomeBroker(),
@@ -4719,6 +4723,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
       lessons: {} as LessonFilingService,
+      lessonChecks: {} as LessonCheckService,
       monitors: monitorBroker().broker,
       teamNotes: teamNoteBroker(),
       runOutcomes: runOutcomeBroker(),
@@ -5053,6 +5058,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
       lessons: {} as LessonFilingService,
+      lessonChecks: {} as LessonCheckService,
       monitors: monitorBroker().broker,
       teamNotes: teamNoteBroker(),
       runOutcomes: runOutcomeBroker(),
@@ -5171,6 +5177,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
         knowledge: fakeKnowledge(false).service,
         knowledgeItems: {} as KnowledgeItemsService,
         lessons: {} as LessonFilingService,
+        lessonChecks: {} as LessonCheckService,
         monitors: monitorBroker().broker,
         teamNotes: teamNoteBroker(),
         runOutcomes: runOutcomeBroker(),
@@ -5316,6 +5323,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       knowledge: fakeKnowledge(false).service,
       knowledgeItems: {} as KnowledgeItemsService,
       lessons: {} as LessonFilingService,
+      lessonChecks: {} as LessonCheckService,
     } as Parameters<typeof createMcpTools>[0]);
     const tool = tools.find((t) => t.handles(HOST_PROPOSE_TEAM_TOOL))!;
 
@@ -5399,6 +5407,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
         knowledge: fakeKnowledge(false).service,
         knowledgeItems: {} as KnowledgeItemsService,
         lessons: {} as LessonFilingService,
+        lessonChecks: {} as LessonCheckService,
         monitors: monitorBroker().broker,
         teamNotes: teamNoteBroker(),
         runOutcomes: runOutcomeBroker(),

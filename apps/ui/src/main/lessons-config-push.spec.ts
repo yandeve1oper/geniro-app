@@ -20,14 +20,22 @@ function recordingFetch(status = 200) {
   return { calls, fetchImpl };
 }
 
+const CODEX_CHOICE = {
+  agent: 'codex' as const,
+  configDir: null,
+  model: 'gpt-5-mini',
+  effort: 'low',
+  contextWindow: null,
+  modelParameters: {},
+};
+
 describe('LessonsConfigPush', () => {
   it('PUTs the lessons settings to the daemon with the launch token', async () => {
     const http = recordingFetch();
     await new LessonsConfigPush(() => undefined, http.fetchImpl).push(HANDLE, {
       mode: 'off',
-      agentKind: 'codex',
-      model: 'gpt-5-mini',
-      effort: 'low',
+      reflector: CODEX_CHOICE,
+      checker: null,
     });
 
     expect(http.calls).toHaveLength(1);
@@ -39,9 +47,8 @@ describe('LessonsConfigPush', () => {
     });
     expect(JSON.parse(String(call?.init.body))).toEqual({
       mode: 'off',
-      agentKind: 'codex',
-      model: 'gpt-5-mini',
-      effort: 'low',
+      reflector: CODEX_CHOICE,
+      checker: null,
     });
   });
 
@@ -54,10 +61,9 @@ describe('LessonsConfigPush', () => {
     );
 
     const settings = {
-      mode: 'offer' as const,
-      agentKind: null,
-      model: null,
-      effort: null,
+      mode: 'auto' as const,
+      reflector: null,
+      checker: null,
     };
     await push.push(HANDLE, settings);
     await push.pushIfChanged(HANDLE, settings);

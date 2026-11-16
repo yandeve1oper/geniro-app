@@ -77,7 +77,9 @@ export function analysisTurnOf(
       sourceRunId: run.analysisSourceRunId,
       snapshotSeq: run.analysisSourceSeq,
       sourceWorking: run.analysisSourceWorking ?? false,
-      ...(run.analysisPurpose === 'lessons' ? { purpose: 'lessons' } : {}),
+      ...(isHiddenLessonsPurpose(run.analysisPurpose)
+        ? { purpose: run.analysisPurpose }
+        : {}),
     };
   }
   if (run.analysisTeamSlug === null) {
@@ -218,5 +220,12 @@ export function isAnalysisRun(
  * approve is refused at once, since a card raised there would never be seen.
  */
 export function runsReadOnly(run: Pick<Run, 'analysisPurpose'>): boolean {
-  return run.analysisPurpose === 'lessons';
+  return isHiddenLessonsPurpose(run.analysisPurpose);
+}
+
+/** Whether an analysis purpose is one of the hidden lessons chats: a reflection or its check. */
+export function isHiddenLessonsPurpose(
+  purpose: Run['analysisPurpose'],
+): purpose is 'lessons' | 'lessons_check' {
+  return purpose === 'lessons' || purpose === 'lessons_check';
 }

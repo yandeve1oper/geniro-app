@@ -1,4 +1,4 @@
-import { Inject, Logger, type OnModuleDestroy } from '@nestjs/common';
+import { Inject, Logger, type OnModuleDestroy, Optional } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -32,6 +32,7 @@ import { BROWSER_REPLY_MAX_BYTES } from '../../browser/browser.types';
 import { BrowserBridgeService } from '../../browser/services/browser-bridge.service';
 import { DebugLogService } from '../../diagnostics/services/debug-log.service';
 import { KnowledgeEventBus } from '../../knowledge/services/knowledge-events.bus';
+import { LessonsEventBus } from '../../lessons/services/lessons-events.bus';
 import { MemoryEventBus } from '../../memory/services/memory-events.bus';
 import { ProjectEventBus } from '../../projects/services/project-events.bus';
 import { ShareEventBus } from '../../shares/services/share-events.bus';
@@ -154,6 +155,7 @@ export class NotificationsGateway
   private taskSubscription?: Subscription;
   private shareSubscription?: Subscription;
   private memorySubscription?: Subscription;
+  private lessonsSubscription?: Subscription;
   private knowledgeSubscription?: Subscription;
   private threadMessagesSubscription?: Subscription;
   private projectSubscription?: Subscription;
@@ -184,6 +186,7 @@ export class NotificationsGateway
     private readonly knowledge: KnowledgeEventBus,
     private readonly resourceAlerts: ResourceAlertEventBus,
     private readonly browserBridge: BrowserBridgeService,
+    @Optional() private readonly lessons?: LessonsEventBus,
   ) {}
 
   afterInit(server: Server): void {
@@ -328,6 +331,21 @@ export class NotificationsGateway
       },
       error: (err: unknown) =>
         this.logger.error(`memory event bus errored: ${String(err)}`),
+    });
+    // A lessons change goes to every client on the same terms: offers and
+    // "Not reflected yet" are acted on from the phone too. It names the thread only.
+    this.lessonsSubscription = this.lessons?.allChanges().subscribe({
+      next: (change) => {
+        try {
+          server.emit('lessons_changed', change);
+        } catch (err) {
+          this.logger.error(
+            `failed to broadcast lessons_changed (${change.runId ?? 'many'}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      },
+      error: (err: unknown) =>
+        this.logger.error(`lessons event bus errored: ${String(err)}`),
     });
     // A knowledge write goes to EVERY client, as a memory write does; the
     // event names the document and its place, never its text.
@@ -482,6 +500,7 @@ export class NotificationsGateway
     this.taskSubscription?.unsubscribe();
     this.shareSubscription?.unsubscribe();
     this.memorySubscription?.unsubscribe();
+    this.lessonsSubscription?.unsubscribe();
     this.knowledgeSubscription?.unsubscribe();
     this.threadMessagesSubscription?.unsubscribe();
     this.projectSubscription?.unsubscribe();

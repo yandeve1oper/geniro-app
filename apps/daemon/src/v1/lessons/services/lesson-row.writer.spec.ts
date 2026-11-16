@@ -22,6 +22,7 @@ import { Item } from '../../runs/entity/item.entity';
 import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
 import { LessonRowWriter } from './lesson-row.writer';
+import { LessonsEventBus } from './lessons-events.bus';
 
 function bus(published: unknown[]): AgentEventBus {
   return {
@@ -99,6 +100,7 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
         model: 'opus',
         proposals: [],
         places: { project: false, team: false },
+        check: null,
       },
     });
     await writer.write('archived', {
@@ -111,6 +113,7 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
         target: { kind: 'memory', scope: 'global', type: 'feedback' },
         memoryHandle: null,
         reason: 'Too narrow.',
+        by: 'user',
       },
     });
 
@@ -157,11 +160,59 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
         model: 'opus',
         proposals: [],
         places: { project: false, team: false },
+        check: null,
       },
     });
 
     expect(reserve).not.toHaveBeenCalled();
     expect(await itemDao.getByRun('missing')).toEqual([]);
     expect(published).toEqual([]);
+  });
+
+  it('announces lessons_changed for the thread it wrote into, and for a thread that is gone', async () => {
+    const events = new LessonsEventBus();
+    const announced: (string | null)[] = [];
+    events.allChanges().subscribe((event) => announced.push(event.runId));
+    writer = new LessonRowWriter(
+      orm.em.fork(),
+      runDao,
+      itemDao,
+      bus(published),
+      calls(),
+      seqs(42),
+      events,
+    );
+    await runDao.create({ id: 'live', archivedAt: null });
+
+    await writer.write('live', {
+      kind: 'lessons',
+      payload: {
+        reflectionRunId: 'refl',
+        segmentId: 'seg',
+        fromSeq: -1,
+        toSeq: 4,
+        agentKind: 'claude',
+        model: 'opus',
+        proposals: [],
+        places: { project: false, team: false },
+        check: null,
+      },
+    });
+    await writer.write('missing', {
+      kind: 'lessons',
+      payload: {
+        reflectionRunId: 'refl',
+        segmentId: 'seg',
+        fromSeq: -1,
+        toSeq: 4,
+        agentKind: 'claude',
+        model: 'opus',
+        proposals: [],
+        places: { project: false, team: false },
+        check: null,
+      },
+    });
+
+    expect(announced).toEqual(['live', 'missing']);
   });
 });

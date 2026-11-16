@@ -2616,4 +2616,56 @@ describe('ItemDao (in-memory sqlite)', () => {
       );
     });
   });
+
+  describe('payloadCharsBetween', () => {
+    it('sums the stored payload characters strictly after afterSeq, up to and including maxSeq', async () => {
+      await insert('run-a', 0, 'message', 'a'.repeat(10));
+      await insert('run-a', 1, 'message', 'b'.repeat(20));
+      await insert('run-a', 2, 'message', 'c'.repeat(30));
+      await insert('run-a', 3, 'message', 'd'.repeat(40));
+
+      expect(await dao.payloadCharsBetween('run-a', 0, 2)).toBe(50);
+      expect(await dao.payloadCharsBetween('run-a', 1, 3)).toBe(70);
+      expect(await dao.payloadCharsBetween('run-a', -1, 3)).toBe(100);
+    });
+
+    it('counts characters of the stored text, not its bytes', async () => {
+      const payload = JSON.stringify({ text: 'привет, мир' });
+      await insert('run-a', 0, 'message', payload);
+
+      expect(await dao.payloadCharsBetween('run-a', -1, 0)).toBe(
+        payload.length,
+      );
+      expect(Buffer.byteLength(payload)).toBeGreaterThan(payload.length);
+    });
+
+    it('counts only the run it is asked about', async () => {
+      await insert('run-a', 0, 'message', 'a'.repeat(10));
+      await insert('run-b', 0, 'message', 'b'.repeat(500));
+
+      expect(await dao.payloadCharsBetween('run-a', -1, 9)).toBe(10);
+    });
+
+    it('leaves a soft-deleted row out of the sum', async () => {
+      await insert('run-a', 0, 'message', 'a'.repeat(10));
+      const deleted = await insert('run-a', 1, 'message', 'b'.repeat(20));
+      await insert('run-a', 2, 'message', 'c'.repeat(40));
+      await orm.em
+        .fork()
+        .createQueryBuilder(Item)
+        .update({ deletedAt: new Date() })
+        .where({ id: deleted.id })
+        .execute();
+
+      expect(await dao.payloadCharsBetween('run-a', -1, 2)).toBe(50);
+    });
+
+    it('answers 0 for an empty range, and for a run with no rows', async () => {
+      await insert('run-a', 0, 'message', 'a'.repeat(10));
+
+      expect(await dao.payloadCharsBetween('run-a', 0, 0)).toBe(0);
+      expect(await dao.payloadCharsBetween('run-a', 5, 3)).toBe(0);
+      expect(await dao.payloadCharsBetween('no-such-run', -1, 9)).toBe(0);
+    });
+  });
 });

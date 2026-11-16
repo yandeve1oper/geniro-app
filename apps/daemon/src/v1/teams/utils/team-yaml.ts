@@ -204,7 +204,7 @@ function patchById<T extends { id: string }>(
 type TopLevelPatch = (doc: Document, root: YAMLMap, team: Team) => void;
 
 function patchScalar(
-  key: 'name' | 'description' | 'maxActiveTurns' | 'mode',
+  key: 'name' | 'description' | 'maxActiveTurns' | 'mode' | 'lessons',
 ): TopLevelPatch {
   return (_doc, root, team) => setOrDelete(root, key, team[key]);
 }
@@ -214,6 +214,7 @@ const MERGED_TOP_LEVEL_PATCHES = {
   description: patchScalar('description'),
   maxActiveTurns: patchScalar('maxActiveTurns'),
   mode: patchScalar('mode'),
+  lessons: patchScalar('lessons'),
   members: (doc, root, team) =>
     patchById(doc, root, 'members', team.members, MEMBER_FIELDS),
   triggers: (doc, root, team) =>

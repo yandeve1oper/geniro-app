@@ -3157,6 +3157,28 @@ export class ItemDao extends BaseDao<Item> {
     return last ? last.seq : -1;
   }
 
+  /** The characters of stored payload a run holds after `afterSeq`, up to and including `maxSeq`. */
+  async payloadCharsBetween(
+    runId: string,
+    afterSeq: number,
+    maxSeq: number,
+    txEm?: EntityManager,
+  ): Promise<number> {
+    const em = txEm ?? this.em.fork();
+    const row = await em
+      .getKysely<ChatTextDatabase>({ convertValues: false })
+      .selectFrom('items')
+      .select((eb) =>
+        eb.fn.sum<number | null>(eb.fn('length', ['payload'])).as('chars'),
+      )
+      .where('run_id', '=', runId)
+      .where('seq', '>', afterSeq)
+      .where('seq', '<=', maxSeq)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+    return Number(row?.chars ?? 0);
+  }
+
   /**
    * The base contract — every matching row gone, soft-deleted ones included,
    * and how many — WITHOUT reading any of them. What the run teardown purges a

@@ -368,7 +368,10 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
       return false;
     }
     const run = await this.runs.getById(actor.runId, this.em.fork());
-    return run?.analysisPurpose === 'lessons';
+    return (
+      run?.analysisPurpose === 'lessons' ||
+      run?.analysisPurpose === 'lessons_check'
+    );
   }
 
   /** The best active entries a run in `place` may see, best first. */
@@ -660,6 +663,35 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
       return (
         unknown ??
         this.writeRow(USER, input, placeOfInput(input), null, em, true, lesson)
+      );
+    });
+  }
+
+  /**
+   * A lesson a reflection filed with no human press, written into `place` as
+   * an agent write: searchable at once, kept out of the memory index until
+   * the user approves it, and pending while the user reviews agent writes. A
+   * near duplicate of an active entry writes nothing.
+   */
+  fileLesson(
+    actor: Extract<MemoryActor, { kind: 'lesson' }>,
+    input: MemoryText & { type: NonNullable<MemoryText['type']> },
+    place: RunPlace,
+    lesson: MemoryLessonSource,
+  ): Promise<MemorySaveOutcome> {
+    return this.serialize(async () => {
+      const invalid = this.refuseInvalid(actor, input);
+      if (invalid) {
+        return invalid;
+      }
+      return this.writeRow(
+        actor,
+        input,
+        place,
+        null,
+        this.em.fork(),
+        true,
+        lesson,
       );
     });
   }
@@ -1449,7 +1481,11 @@ function applyStatus(
 }
 
 function isAgent(actor: MemoryActor): boolean {
-  return actor.kind === 'agent' || actor.kind === 'analysis';
+  return (
+    actor.kind === 'agent' ||
+    actor.kind === 'analysis' ||
+    actor.kind === 'lesson'
+  );
 }
 
 function placeRank(row: Memory, place: RunPlace): number {

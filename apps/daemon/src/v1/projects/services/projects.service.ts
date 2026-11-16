@@ -62,6 +62,7 @@ type ProjectPatch = {
   approval?: Project['approval'];
   configDir?: string | null;
   teamSlug?: string | null;
+  lessons?: Project['lessons'];
   autopilotEnabled?: boolean;
   autopilotIntakeStatus?: Project['autopilotIntakeStatus'];
   autopilotMaxConcurrent?: number;
@@ -340,6 +341,9 @@ export class ProjectsService {
     }
     if (patch.teamSlug !== undefined) {
       project.teamSlug = patch.teamSlug;
+    }
+    if (patch.lessons !== undefined) {
+      project.lessons = patch.lessons;
     }
     if (patch.autopilotEnabled !== undefined) {
       project.autopilotEnabled = patch.autopilotEnabled;
@@ -665,6 +669,7 @@ function toWire(project: Project): ProjectWire {
     autopilotFailureStreak: project.autopilotFailureStreak,
     autopilotLimitUntil: limitHoldUntil(project)?.toISOString() ?? null,
     provider: project.provider,
+    lessons: project.lessons,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
   };

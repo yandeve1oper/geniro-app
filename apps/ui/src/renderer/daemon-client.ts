@@ -1214,6 +1214,28 @@ export function parseMemoryChanged(data: unknown): MemoryChangedEvent | null {
   };
 }
 
+/** A `lessons_changed` broadcast: the thread whose lesson offers or proposals changed. */
+export interface LessonsChangedEvent {
+  runId: string | null;
+}
+
+/**
+ * Read a `lessons_changed` payload, or null when it is not one.
+ *
+ * TWIN PARSER: mirrors the daemon's `LessonsChangedEvent`
+ * (`apps/daemon/src/v1/lessons/lessons.types.ts`).
+ */
+export function parseLessonsChanged(data: unknown): LessonsChangedEvent | null {
+  if (typeof data !== 'object' || data === null) {
+    return null;
+  }
+  const { runId } = data as Record<string, unknown>;
+  if (runId !== null && typeof runId !== 'string') {
+    return null;
+  }
+  return { runId };
+}
+
 /** One share row written or removed — never its link. */
 export interface SharesChangedEvent {
   runId: string;
@@ -1334,6 +1356,9 @@ export class DaemonClient {
   >();
   private readonly memoryChangedListeners = new Set<
     (event: MemoryChangedEvent) => void
+  >();
+  private readonly lessonsChangedListeners = new Set<
+    (event: LessonsChangedEvent) => void
   >();
   private readonly knowledgeChangedListeners = new Set<
     (event: KnowledgeChangedEvent) => void
@@ -1557,6 +1582,14 @@ export class DaemonClient {
           }
         }
       }
+      if (event === 'lessons_changed') {
+        const lessons = parseLessonsChanged(data);
+        if (lessons) {
+          for (const listener of this.lessonsChangedListeners) {
+            listener(lessons);
+          }
+        }
+      }
       if (event === 'resource_alerts_changed') {
         for (const listener of this.resourceAlertsChangedListeners) {
           listener();
@@ -1766,6 +1799,14 @@ export class DaemonClient {
     this.memoryChangedListeners.add(listener);
     return () => {
       this.memoryChangedListeners.delete(listener);
+    };
+  }
+
+  /** Subscribe to every change to a thread's lesson offers, reflections and proposals, client-wide. */
+  onLessonsChanged(listener: (event: LessonsChangedEvent) => void): () => void {
+    this.lessonsChangedListeners.add(listener);
+    return () => {
+      this.lessonsChangedListeners.delete(listener);
     };
   }
 

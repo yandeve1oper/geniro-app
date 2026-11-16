@@ -1,5 +1,6 @@
 import {
   HOST_ANALYZED_THREAD_TOOL,
+  HOST_CHECK_LESSONS_TOOL,
   HOST_LESSONS_TOOL,
   HOST_RECOMMENDATION_MARKS_TOOL,
   HOST_RECOMMENDATIONS_TOOL,
@@ -45,13 +46,16 @@ export function isHostRecommendationsCall(
 }
 
 /**
- * Whether a permission request names `propose_lessons`: installed only on a
- * lessons reflection, it files proposals the user then saves or rejects, and
- * changes nothing an agent reads.
+ * Whether a permission request names `propose_lessons` or `check_lessons`:
+ * listed only on a hidden lessons chat, a reflection or its check, whose
+ * answers the daemon checks before anything reaches memory.
  */
 export function isHostLessonsCall(
   serverName: string | null,
   toolName: string,
 ): boolean {
-  return isHostToolCall(serverName, toolName, HOST_LESSONS_TOOL);
+  return (
+    isHostToolCall(serverName, toolName, HOST_LESSONS_TOOL) ||
+    isHostToolCall(serverName, toolName, HOST_CHECK_LESSONS_TOOL)
+  );
 }

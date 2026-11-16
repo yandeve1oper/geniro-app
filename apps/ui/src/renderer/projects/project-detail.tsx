@@ -24,6 +24,7 @@ import { SettingRow } from '../components/setting-row';
 import { StatusDot } from '../components/status-dot';
 import { Button } from '../components/ui/button';
 import { cn } from '../components/ui/utils';
+import { useAppLessonsMode } from '../components/use-app-lessons-mode';
 import { useLatestCallback } from '../components/use-latest-callback';
 import { type DaemonApis, describeDaemonError } from '../daemon-api';
 import type { DaemonClient } from '../daemon-client';
@@ -42,6 +43,7 @@ import { AutopilotPill, ProjectMonogram, RunsAs } from './project-card';
 import { ProjectChatPanel } from './project-chat-panel';
 import { ProjectInstructionSizes } from './project-instruction-sizes';
 import { ProjectInstructionsForm } from './project-instructions-form';
+import { ProjectLessonsCard } from './project-lessons-card';
 import { ProjectPageSlotsContext } from './project-page-slots';
 import { ProjectRunConfigs } from './project-run-configs';
 import { ProjectSection } from './project-section';
@@ -135,6 +137,7 @@ export function ProjectDetail({
   onOpenKnowledge: (projectId: string) => void;
   onDeleted: (projectId: string) => void;
 }): React.JSX.Element {
+  const appLessonsMode = useAppLessonsMode();
   const [savedFlash, setSavedFlash] = useState(false);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
@@ -499,6 +502,12 @@ export function ProjectDetail({
               </SettingRow>
             </div>
           </ProjectSection>
+
+          <ProjectLessonsCard
+            project={project}
+            appMode={appLessonsMode}
+            onUpdate={(patch) => void patchProject(patch)}
+          />
 
           <ProjectInstructionSizes
             agents={instructionSizes.agents}

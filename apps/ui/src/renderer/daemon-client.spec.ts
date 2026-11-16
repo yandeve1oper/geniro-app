@@ -7,6 +7,7 @@ import {
   parseChangedRuns,
   parseDeletedRunId,
   parseKnowledgeChanged,
+  parseLessonsChanged,
   parseMemoryChanged,
   parseProjectsChanged,
   parseRunStatus,
@@ -1080,6 +1081,18 @@ describe('parseProjectsChanged — the projects_changed twin', () => {
 
     expect(seen).toEqual(['r-otter']);
   });
+
+  it('hands a lessons_changed event to every lessons listener, and drops a malformed one', () => {
+    const client = new DaemonClient(handle, {});
+    const seen: (string | null)[] = [];
+    client.onLessonsChanged((event) => seen.push(event.runId));
+    client.connect();
+
+    mocks.ref.any?.('lessons_changed', { runId: 'r-otter' });
+    mocks.ref.any?.('lessons_changed', { runId: 5 });
+
+    expect(seen).toEqual(['r-otter']);
+  });
 });
 
 describe('parseThreadMessagesChanged — the thread_messages_changed twin', () => {
@@ -1087,6 +1100,19 @@ describe('parseThreadMessagesChanged — the thread_messages_changed twin', () =
     expect(parseThreadMessagesChanged(null)).toBeNull();
     expect(parseThreadMessagesChanged({})).toBeNull();
     expect(parseThreadMessagesChanged({ runId: 4 })).toBeNull();
+  });
+});
+
+describe('parseLessonsChanged — the lessons_changed twin', () => {
+  it('reads the thread whose lessons changed, and a change that names none', () => {
+    expect(parseLessonsChanged({ runId: 'x' })).toEqual({ runId: 'x' });
+    expect(parseLessonsChanged({ runId: null })).toEqual({ runId: null });
+  });
+
+  it('refuses anything else', () => {
+    expect(parseLessonsChanged(null)).toBeNull();
+    expect(parseLessonsChanged({})).toBeNull();
+    expect(parseLessonsChanged({ runId: 5 })).toBeNull();
   });
 });
 

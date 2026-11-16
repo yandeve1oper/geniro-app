@@ -113,7 +113,7 @@ export class AnalysisReportsService {
     return {
       turn,
       report: async (call, versionIndex, population) => {
-        if (turn.purpose === 'lessons') {
+        if (turn.purpose === 'lessons' || turn.purpose === 'lessons_check') {
           return refused(LESSONS_REFLECTION_REFUSAL);
         }
         let card: Record<string, unknown>;
@@ -145,7 +145,7 @@ export class AnalysisReportsService {
         return filed;
       },
       mark: (marks) =>
-        turn.purpose === 'lessons'
+        turn.purpose === 'lessons' || turn.purpose === 'lessons_check'
           ? Promise.resolve(refused(LESSONS_REFLECTION_REFUSAL))
           : this.mark(turn, marks, write),
     };

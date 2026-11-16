@@ -111,6 +111,7 @@ export interface ChatsApiCreateChatRequest {
 
 export interface ChatsApiDeleteChatRequest {
     runId: string;
+    extractLessons?: DeleteChatExtractLessonsEnum;
 }
 
 export interface ChatsApiDeliverWaitingMessageRequest {
@@ -728,6 +729,10 @@ export class ChatsApi extends runtime.BaseAPI {
         }
 
         const queryParameters: any = {};
+
+        if (requestParameters['extractLessons'] != null) {
+            queryParameters['extractLessons'] = requestParameters['extractLessons'];
+        }
 
         const headerParameters: runtime.HTTPHeaders = {};
 
@@ -3315,6 +3320,14 @@ export class ChatsApi extends runtime.BaseAPI {
 
 }
 
+/**
+ * @export
+ */
+export const DeleteChatExtractLessonsEnum = {
+    True: 'true',
+    False: 'false'
+} as const;
+export type DeleteChatExtractLessonsEnum = typeof DeleteChatExtractLessonsEnum[keyof typeof DeleteChatExtractLessonsEnum];
 /**
  * @export
  */

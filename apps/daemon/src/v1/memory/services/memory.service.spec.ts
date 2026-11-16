@@ -3182,3 +3182,105 @@ describe('MemoryService', () => {
     });
   });
 });
+
+describe('MemoryService.fileLesson', () => {
+  let db: Awaited<ReturnType<typeof memoryDb>>;
+
+  const LESSON: Extract<MemoryActor, { kind: 'lesson' }> = {
+    kind: 'lesson',
+    runId: 'refl-1',
+    agentKind: 'claude',
+    model: 'opus',
+  };
+  const SOURCE = { sourceRunId: 'src-1', proposalId: 'lp-1' };
+  const FACTS = { taskId: null, cwd: '/repo/app' };
+
+  beforeEach(async () => {
+    db = await memoryDb();
+    db.service.setConfig(DEFAULT_MEMORY_CONFIG);
+  });
+
+  afterEach(async () => {
+    await db.orm.close();
+  });
+
+  it('writes an active entry stamped as a lesson, naming its thread and proposal', async () => {
+    const entry = created(
+      await db.service.fileLesson(
+        LESSON,
+        {
+          title: 'Check before retrying',
+          body: 'Change the input first.',
+          type: 'feedback',
+        },
+        NONE,
+        SOURCE,
+      ),
+    );
+
+    expect(entry).toMatchObject({
+      status: 'active',
+      type: 'feedback',
+      approvedAt: null,
+      source: {
+        actor: 'lesson',
+        agentKind: 'claude',
+        model: 'opus',
+        runId: 'src-1',
+        importedFrom: null,
+      },
+    });
+    const row = await db.em.fork().findOneOrFail(Memory, { id: entry.id });
+    expect(row.lessonProposalId).toBe('lp-1');
+  });
+
+  it('keeps the entry out of the next run’s index but finds it by search', async () => {
+    await db.service.fileLesson(
+      LESSON,
+      { title: 'Check before retrying', body: 'zebra rule', type: 'feedback' },
+      NONE,
+      SOURCE,
+    );
+
+    const snapshot = await db.service.runSnapshot(FACTS);
+    const hits = await db.service.search('zebra', NONE, 10);
+
+    expect(snapshot.indexIds).toEqual([]);
+    expect(snapshot.memoryIndex ?? '').not.toContain('Check before retrying');
+    expect(hits.map((hit) => hit.title)).toEqual(['Check before retrying']);
+  });
+
+  it('lands the entry pending while the user reviews agent writes', async () => {
+    db.service.setConfig({ ...DEFAULT_MEMORY_CONFIG, agentWrites: 'pending' });
+
+    const entry = created(
+      await db.service.fileLesson(
+        LESSON,
+        { title: 'Check before retrying', body: 'x', type: 'feedback' },
+        NONE,
+        SOURCE,
+      ),
+    );
+
+    expect(entry.status).toBe('pending');
+    expect(entry.source.actor).toBe('lesson');
+  });
+
+  it('writes nothing for a near duplicate of an active entry', async () => {
+    await db.service.save(
+      USER,
+      { title: 'Always run pnpm full-check', body: 'before finishing' },
+      NONE,
+    );
+
+    const outcome = await db.service.fileLesson(
+      LESSON,
+      { title: 'Run pnpm full-check always', body: 'again', type: 'feedback' },
+      NONE,
+      SOURCE,
+    );
+
+    expect(outcome.kind).toBe('near_duplicate');
+    expect(await db.em.fork().count(Memory, {})).toBe(1);
+  });
+});

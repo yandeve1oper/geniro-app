@@ -88,6 +88,7 @@ import { ContextWindowStore } from './services/context-window.store';
 import { ContextWindowsService } from './services/context-windows.service';
 import { DelegateSpendStore } from './services/delegate-spend.store';
 import { EffortsService } from './services/efforts.service';
+import { ExtractLessonsOnDeleteRegistry } from './services/extract-lessons-on-delete.registry';
 import { FindingsReportBroker } from './services/findings-report.broker';
 import { GalleryBroker } from './services/gallery.broker';
 import { GalleryImageService } from './services/gallery-image.service';
@@ -209,6 +210,7 @@ import { defaultSpawn } from './utils/spawn-cli';
   ],
   providers: [
     DesktopOnlyGuard,
+    ExtractLessonsOnDeleteRegistry,
     ChatShellsService,
     ChatHistoryService,
     RunStateService,
@@ -788,6 +790,8 @@ import { defaultSpawn } from './utils/spawn-cli';
     // The service alone, and the import runs one way — `TasksModule` imports
     // this module, never the reverse, as `TeamsModule` already does.
     ChatService,
+    // For the lessons module, which takes a delete with "Extract lessons first".
+    ExtractLessonsOnDeleteRegistry,
   ],
 })
 export class AgentsModule {}

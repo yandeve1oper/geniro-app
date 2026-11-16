@@ -72,6 +72,7 @@ import {
   CODEX_EXEC_ONCE_EFFORT,
   CODEX_GENIRO_MCP_TOOL_TIMEOUT_SEC,
   CODEX_HOME_ENV,
+  CODEX_LIGHT_MODEL,
   CODEX_MCP_ADD_ARGS,
   CODEX_MCP_ADD_ENV_FLAG,
   CODEX_MCP_ADD_TIMEOUT_MS,
@@ -212,6 +213,7 @@ export class CodexAdapter extends AgentAdapter {
         ],
         icon: 'code',
       },
+      lightModel: CODEX_LIGHT_MODEL,
       autoCompact: {
         kind: 'config-override',
         flag: CODEX_CONFIG_FLAG,

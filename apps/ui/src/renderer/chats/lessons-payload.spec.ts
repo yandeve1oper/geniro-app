@@ -41,6 +41,20 @@ const LESSONS_PAYLOAD = {
   model: 'claude-haiku-5-5',
   proposals: [PROPOSAL],
   places: { project: true, team: false },
+  check: null,
+};
+
+const CHECK = { runId: 'chk-1', agentKind: 'claude', model: 'claude-opus-5-5' };
+
+const OUTCOME = {
+  proposalId: 'p-correction',
+  status: 'saved',
+  by: 'user',
+  title: LESSON_CORRECTION.title,
+  rule: LESSON_CORRECTION.rule,
+  target: { kind: 'memory', scope: 'team', type: 'feedback' },
+  memoryHandle: 'm40',
+  reason: null,
 };
 
 describe('readLessons', () => {
@@ -63,7 +77,21 @@ describe('readLessons', () => {
         },
       ],
       places: { project: true, team: false },
+      check: null,
     });
+  });
+
+  it('reads the check that re-read the lessons, when one ran', () => {
+    expect(
+      readLessons(row(50, 'lessons', { ...LESSONS_PAYLOAD, check: CHECK }))
+        ?.check,
+    ).toEqual(CHECK);
+  });
+
+  it('reads no check for a row written before the check existed', () => {
+    const { check: _check, ...older } = LESSONS_PAYLOAD;
+
+    expect(readLessons(row(50, 'lessons', older))?.check).toBeNull();
   });
 
   it('reads the places the thread has as the daemon wrote them', () => {
@@ -141,100 +169,100 @@ describe('readLessons', () => {
 });
 
 describe('readLessonOutcome', () => {
-  it('reads a saved and a rejected outcome', () => {
-    expect(
-      readLessonOutcome(
-        row(60, 'lesson_outcome', {
-          proposalId: 'p-correction',
-          status: 'saved',
-          title: LESSON_CORRECTION.title,
-          rule: LESSON_CORRECTION.rule,
-          target: { kind: 'memory', scope: 'team', type: 'feedback' },
-          memoryHandle: 'm40',
-          reason: null,
-        }),
-      ),
-    ).toEqual({
+  it('reads a saved outcome and the user as its author', () => {
+    expect(readLessonOutcome(row(60, 'lesson_outcome', OUTCOME))).toEqual({
       proposalId: 'p-correction',
       status: 'saved',
+      by: 'user',
       title: LESSON_CORRECTION.title,
+      rule: LESSON_CORRECTION.rule,
       target: { kind: 'memory', scope: 'team', type: 'feedback' },
       memoryHandle: 'm40',
       reason: null,
     });
+  });
+
+  it('reads an automatic outcome as written by the run', () => {
+    expect(
+      readLessonOutcome(row(60, 'lesson_outcome', { ...OUTCOME, by: 'auto' }))
+        ?.by,
+    ).toBe('auto');
+  });
+
+  it('reads the user as the author of an outcome written before the author was named', () => {
+    const { by: _by, ...older } = OUTCOME;
+
+    expect(readLessonOutcome(row(60, 'lesson_outcome', older))?.by).toBe(
+      'user',
+    );
+  });
+
+  it.each([
+    'saved',
+    'pending',
+    'rejected',
+    'undone',
+    'skipped_duplicate',
+    'dropped_by_check',
+  ])('reads the %s status', (status) => {
+    expect(
+      readLessonOutcome(row(60, 'lesson_outcome', { ...OUTCOME, status }))
+        ?.status,
+    ).toBe(status);
+  });
+
+  it('reads the reason a check gave for dropping a lesson', () => {
     expect(
       readLessonOutcome(
         row(61, 'lesson_outcome', {
-          proposalId: 'p-correction',
-          status: 'rejected',
-          title: LESSON_CORRECTION.title,
-          rule: LESSON_CORRECTION.rule,
-          target: { kind: 'memory', scope: 'team', type: 'feedback' },
-          memoryHandle: null,
-          reason: 'too narrow',
+          ...OUTCOME,
+          status: 'dropped_by_check',
+          reason: 'the user never corrected this',
         }),
       )?.reason,
-    ).toBe('too narrow');
+    ).toBe('the user never corrected this');
   });
 
   it('answers null for a status it does not know', () => {
     expect(
       readLessonOutcome(
-        row(60, 'lesson_outcome', {
-          proposalId: 'p-correction',
-          status: 'maybe',
-          title: LESSON_CORRECTION.title,
-          target: { kind: 'memory', scope: 'team', type: 'feedback' },
-        }),
+        row(60, 'lesson_outcome', { ...OUTCOME, status: 'maybe' }),
       ),
     ).toBeNull();
   });
 
   it('answers null for an outcome that names no lesson', () => {
-    expect(
-      readLessonOutcome(
-        row(60, 'lesson_outcome', {
-          proposalId: 'p-correction',
-          status: 'saved',
-          target: { kind: 'memory', scope: 'team', type: 'feedback' },
-          memoryHandle: 'm40',
-          reason: null,
-        }),
-      ),
-    ).toBeNull();
+    const { title: _title, ...nameless } = OUTCOME;
+
+    expect(readLessonOutcome(row(60, 'lesson_outcome', nameless))).toBeNull();
   });
 });
 
 describe('foldLessonOutcomes', () => {
-  const outcome = (seq: number, status: 'saved' | 'rejected'): ChatItem =>
-    row(seq, 'lesson_outcome', {
-      proposalId: 'p-correction',
-      status,
-      title: LESSON_CORRECTION.title,
-      target: { kind: 'memory', scope: 'project', type: 'feedback' },
-      memoryHandle: status === 'saved' ? 'm40' : null,
-      reason: null,
-    });
-
-  it('keeps the newest outcome per proposal, whatever order the rows come in', () => {
+  it('keys each lesson’s decision by its proposal', () => {
     const folded = foldLessonOutcomes([
-      outcome(62, 'rejected'),
-      outcome(60, 'saved'),
+      row(60, 'lesson_outcome', OUTCOME),
+      row(61, 'lesson_outcome', {
+        ...OUTCOME,
+        proposalId: 'p-other',
+        status: 'rejected',
+      }),
     ]);
 
-    expect(folded['p-correction']?.status).toBe('rejected');
+    expect(Object.keys(folded).sort()).toEqual(['p-correction', 'p-other']);
+    expect(folded['p-other']?.status).toBe('rejected');
   });
 
-  it('keeps the newest of several outcomes in row order too', () => {
+  it('keeps the newest outcome where a proposal has several', () => {
     const folded = foldLessonOutcomes([
-      outcome(60, 'saved'),
-      outcome(62, 'rejected'),
+      row(70, 'lesson_outcome', { ...OUTCOME, status: 'saved', by: 'auto' }),
+      row(80, 'lesson_outcome', { ...OUTCOME, status: 'undone' }),
     ]);
 
-    expect(folded['p-correction']?.status).toBe('rejected');
+    expect(folded['p-correction']?.status).toBe('undone');
   });
 
-  it('ignores rows that are not outcomes', () => {
+  it('ignores rows of other kinds', () => {
     expect(foldLessonOutcomes([row(50, 'lessons', LESSONS_PAYLOAD)])).toEqual(
       {},
     );

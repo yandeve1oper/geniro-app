@@ -1,4 +1,7 @@
-import type { LessonView } from '../components/lessons-card';
+import type {
+  LessonsReflectionView,
+  LessonView,
+} from '../components/lessons-card';
 
 export const LESSON_CORRECTION: LessonView = {
   id: 'p-correction',
@@ -40,11 +43,18 @@ export const LESSON_BROKEN_AGAIN: LessonView = {
   dedup: { verdict: 'broken_again', handle: 'm7' },
 };
 
-export const REFLECTION_FOOTER = {
+export const REFLECTION_FOOTER: LessonsReflectionView = {
+  label: 'Reflection',
   agent: 'Claude',
   model: 'claude-haiku-5-5',
-  working: false,
-  durationMs: 38_000,
-  costUsd: 0.02,
-  tokens: 4200,
+  effort: 'high',
+  figures: { working: false, durationMs: 38_000, costUsd: 0.02 },
+};
+
+export const CHECK_FOOTER: LessonsReflectionView = {
+  label: 'Check',
+  agent: 'Claude',
+  model: 'claude-opus-5-5',
+  effort: 'high',
+  figures: { working: false, durationMs: 21_000, costUsd: 0.27 },
 };

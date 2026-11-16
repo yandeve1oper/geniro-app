@@ -7,7 +7,10 @@ import { TimestampsEntity } from '@packages/mikroorm';
 import type { ChatApprovalMode } from '../../agents/chat.types';
 import type { AgentKind } from '../../runs/runs.types';
 import type { TaskSource, TaskStatus } from '../../tasks/tasks.types';
-import { PROJECT_DEFAULT_MAX_CONCURRENT } from '../projects.types';
+import {
+  type LessonOverride,
+  PROJECT_DEFAULT_MAX_CONCURRENT,
+} from '../projects.types';
 
 /**
  * A folder, and the standing answers for every task worked inside it.
@@ -173,4 +176,8 @@ export class Project extends TimestampsEntity {
    */
   @Property({ type: 'string' })
   provider: TaskSource = 'geniro';
+
+  /** Whether this project's threads are offered lessons reflections; null inherits. */
+  @Property({ type: 'string', nullable: true })
+  lessons: LessonOverride | null = null;
 }

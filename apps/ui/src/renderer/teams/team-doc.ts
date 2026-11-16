@@ -34,6 +34,7 @@ export function normalizedTeam(team: Team): Team {
     ...(team.stages !== undefined && team.stages.length > 0
       ? { stages: team.stages }
       : {}),
+    ...(team.lessons !== undefined ? { lessons: team.lessons } : {}),
   };
 }
 

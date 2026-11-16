@@ -1200,4 +1200,57 @@ describe('RunDao (in-memory sqlite)', () => {
       await expect(dao.readWork('missing-run')).resolves.toBeNull();
     });
   });
+
+  describe('a run being deleted with lessons extracted first', () => {
+    it('leaves a chat being deleted out of the chat listings, the thread listing and the shelf counts', async () => {
+      const kept = await dao.create({
+        title: 'kept',
+        createdAt: new Date(1_000),
+      });
+      await dao.create({
+        title: 'deleting',
+        createdAt: new Date(2_000),
+        pendingDeleteAt: new Date(9_000),
+      });
+
+      expect((await dao.listChats('active')).map((r) => r.id)).toEqual([
+        kept.id,
+      ]);
+      expect((await dao.listThreads(null, 50)).map((r) => r.id)).toEqual([
+        kept.id,
+      ]);
+      expect(await dao.countByShelf()).toEqual({ active: 1, archived: 0 });
+    });
+
+    it('leaves a team run being deleted out of the team listing and the shelf counts', async () => {
+      const kept = await dao.create({
+        teamId: 'wf-1',
+        createdAt: new Date(1_000),
+      });
+      await dao.create({
+        teamId: 'wf-1',
+        createdAt: new Date(2_000),
+        archivedAt: new Date(9_000),
+        pendingDeleteAt: new Date(9_000),
+      });
+
+      expect((await dao.listTeamRuns('all')).map((r) => r.id)).toEqual([
+        kept.id,
+      ]);
+      expect(await dao.countByShelf()).toEqual({ active: 1, archived: 0 });
+    });
+
+    it('lists only the runs pending delete, for the start-up delete', async () => {
+      await dao.create({ createdAt: new Date(1_000) });
+      const pending = await dao.create({
+        teamId: 'wf-1',
+        createdAt: new Date(2_000),
+        pendingDeleteAt: new Date(9_000),
+      });
+
+      expect((await dao.listPendingDeletes()).map((r) => r.id)).toEqual([
+        pending.id,
+      ]);
+    });
+  });
 });

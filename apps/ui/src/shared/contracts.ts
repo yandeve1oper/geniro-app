@@ -387,26 +387,27 @@ export const DEFAULT_MEMORY: MemorySettings = {
   nativeMemoryOff: false,
 };
 
-/** Whether a thread may be offered a lessons reflection: never, or on the user's press. */
-export type LessonsMode = 'off' | 'offer';
+/** Whether a thread is reflected on when it is archived: never, or automatically. */
+export type LessonsMode = 'off' | 'auto';
 
 /**
- * What a lessons reflection runs as. A null agent reflects with the thread's own
- * CLI; a null model or effort with that CLI's default. `agentKind` is the
- * daemon's vocabulary, kept an opaque string here.
+ * What a lessons reflection and its optional check run as. A null `reflector`
+ * reflects as the thread did — its CLI and profile — on that CLI's light model;
+ * a null `checker` runs no check.
+ *
+ * TWIN PARSER: `LessonsConfigSchema` in `apps/daemon/src/v1/lessons/lessons.types.ts`,
+ * which `main/lessons-config-push.ts` pushes this to.
  */
 export interface LessonsSettings {
   mode: LessonsMode;
-  agentKind: string | null;
-  model: string | null;
-  effort: string | null;
+  reflector: MemoryTriageConfig | null;
+  checker: MemoryTriageConfig | null;
 }
 
 export const DEFAULT_LESSONS: LessonsSettings = {
-  mode: 'offer',
-  agentKind: null,
-  model: null,
-  effort: null,
+  mode: 'auto',
+  reflector: null,
+  checker: null,
 };
 
 /** What an agent's document save does: used at once, held for the user's review, or refused. */

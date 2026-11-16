@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ZodResponse } from 'nestjs-zod';
 
 import {
+  EditLessonDto,
   LessonProposalDto,
   LessonProposalListDto,
   LessonProposalListQueryDto,
@@ -17,8 +18,9 @@ import type {
 import { LessonProposalService } from '../services/lesson-proposal.service';
 
 /**
- * The user's lessons: what reflections proposed, and Save or Reject on each.
- * Open to paired devices — deciding on a lesson spends nothing.
+ * The user's lessons: what reflections found, Save or Reject on a lesson that
+ * waits, and Undo, Edit or Approve on one filed on its own. Open to paired
+ * devices — deciding on a lesson spends nothing.
  */
 @Controller('v1/lessons')
 @ApiTags('lessons')
@@ -58,6 +60,35 @@ export class LessonsController {
     @Body() dto: RejectLessonDto,
   ): Promise<LessonProposalWire> {
     return this.proposals.reject(proposalId, dto);
+  }
+
+  /** "Undo" on a lesson filed on its own: its memory entry is forgotten, restorable. 409 `LESSON_NOT_FILED`. */
+  @Post('proposals/:proposalId/undo')
+  @ApiOperation({ operationId: 'undoLesson' })
+  @ZodResponse({ status: 201, type: LessonProposalDto })
+  undo(@Param('proposalId') proposalId: string): Promise<LessonProposalWire> {
+    return this.proposals.undo(proposalId);
+  }
+
+  /** "Edit" on a lesson filed on its own: the entry takes the text and becomes the user's own. 409 `LESSON_NOT_FILED` or `LESSON_ENTRY_GONE`. */
+  @Post('proposals/:proposalId/edit')
+  @ApiOperation({ operationId: 'editLesson' })
+  @ZodResponse({ status: 201, type: LessonProposalDto })
+  edit(
+    @Param('proposalId') proposalId: string,
+    @Body() dto: EditLessonDto,
+  ): Promise<LessonProposalWire> {
+    return this.proposals.edit(proposalId, dto);
+  }
+
+  /** "Approve" on a lesson filed on its own: the entry joins the memory index. 409 `LESSON_NOT_FILED` or `LESSON_ENTRY_GONE`. */
+  @Post('proposals/:proposalId/approve')
+  @ApiOperation({ operationId: 'approveLesson' })
+  @ZodResponse({ status: 201, type: LessonProposalDto })
+  approve(
+    @Param('proposalId') proposalId: string,
+  ): Promise<LessonProposalWire> {
+    return this.proposals.approve(proposalId);
   }
 
   @Get('reflections/:reflectionRunId')

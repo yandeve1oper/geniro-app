@@ -807,6 +807,28 @@ describe('ProjectsService (in-memory sqlite)', () => {
     expect(updated.teamSlug).toBe('ship-it');
   });
 
+  it('writes the lessons setting on update, returns it on the wire, and null hands it back to inherit', async () => {
+    const project = await service.create({ name: 'Board', folder });
+    const storedLessons = async (): Promise<unknown> =>
+      (await new ProjectDao(orm.em.fork() as EntityManager).getById(project.id))
+        ?.lessons;
+
+    const off = await service.update(project.id, { lessons: 'off' });
+    expect(off.lessons).toBe('off');
+    expect(await storedLessons()).toBe('off');
+
+    const kept = await service.update(project.id, { model: 'sonnet' });
+    expect(kept.lessons).toBe('off');
+
+    const on = await service.update(project.id, { lessons: 'on' });
+    expect(on.lessons).toBe('on');
+    expect(await storedLessons()).toBe('on');
+
+    const inherited = await service.update(project.id, { lessons: null });
+    expect(inherited.lessons).toBeNull();
+    expect(await storedLessons()).toBeNull();
+  });
+
   it('stores a trimmed description and instructions, and returns them on the wire', async () => {
     const created = await service.create({
       name: 'Board',

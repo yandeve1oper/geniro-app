@@ -329,6 +329,7 @@ export class ClaudeAdapter extends AgentAdapter {
         ],
         icon: 'bot',
       },
+      lightModel: CLAUDE_TITLE_MODEL,
       /**
        * This CLI compacts ITSELF, inside the agent loop — which is the only
        * place a threshold can be held, and it was already visible in geniro's

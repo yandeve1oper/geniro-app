@@ -230,8 +230,42 @@ describe('Stats', () => {
     const el = await render(<Stats handle={HANDLE} />);
 
     const line = el.querySelector('[data-slot="lessons-spend"]');
-    expect(line?.textContent).toContain('$0.31');
+    expect(line?.textContent).toContain('reflections spent $0.31');
     expect(line?.textContent).toContain('14 turns');
+    expect(line?.textContent).not.toContain('check');
+  });
+
+  it('splits the lessons spend into the reflections and the check, when the check ran', async () => {
+    mocks.readUsageStats.mockResolvedValue(
+      stats({
+        byPurpose: [
+          {
+            key: 'lessons',
+            totals: {
+              ...totals(),
+              costUsd: 1.02,
+              estimatedCostUsd: null,
+              turns: 22,
+            },
+          },
+          {
+            key: 'lessons_check',
+            totals: {
+              ...totals(),
+              costUsd: 3.1,
+              estimatedCostUsd: null,
+              turns: 6,
+            },
+          },
+        ],
+      }),
+    );
+    const el = await render(<Stats handle={HANDLE} />);
+
+    const line = el.querySelector('[data-slot="lessons-spend"]');
+    expect(line?.textContent).toContain('reflections spent $1.02');
+    expect(line?.textContent).toContain('check $3.10');
+    expect(line?.textContent).toContain('6 turns');
   });
 
   it('shows the goals of the period’s threads and every tool and MCP server called', async () => {

@@ -4389,6 +4389,12 @@ export interface AdapterConfig {
      */
     readonly icon: AgentIconName;
   };
+  /**
+   * The model this CLI offers for light background work — a lessons
+   * reflection by default — or null when none is known, which runs the CLI's
+   * own default model. Served on `GET /v1/capabilities`.
+   */
+  readonly lightModel: string | null;
 
   // ── Asking the user ─────────────────────────────────────────────────────
   /**

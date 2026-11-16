@@ -334,6 +334,47 @@ describe('serializeTeamYaml', () => {
     expect(parseTeamYaml(back).maxActiveTurns).toBeUndefined();
   });
 
+  it.each(['on', 'off'] as const)(
+    'round-trips a team whose lessons setting is %s',
+    (lessons) => {
+      const team: Team = teamOf([member('a')], { lessons });
+
+      expect(parseTeamYaml(serializeTeamYaml(team)).lessons).toBe(lessons);
+      expect(parseTeamYaml(serializeTeamYaml(team))).toEqual(team);
+    },
+  );
+
+  it('writes lessons: off into an existing file, and reads it back', () => {
+    const team = parseTeamYaml(VALID_SOURCE);
+    team.lessons = 'off';
+    const out = serializeTeamYaml(team, VALID_SOURCE);
+
+    expect(out).toContain('lessons: off');
+    expect(parseTeamYaml(out).lessons).toBe('off');
+    expect(out).toContain('# the coder writes the change');
+  });
+
+  it('removes lessons from the file once the team drops it, so it inherits again', () => {
+    const team = parseTeamYaml(VALID_SOURCE);
+    team.lessons = 'off';
+    const withOff = serializeTeamYaml(team, VALID_SOURCE);
+
+    const inherited = parseTeamYaml(withOff);
+    delete inherited.lessons;
+    const back = serializeTeamYaml(inherited, withOff);
+
+    expect(back).not.toContain('lessons');
+    expect(parseTeamYaml(back).lessons).toBeUndefined();
+  });
+
+  it('refuses a lessons value that is neither on nor off, naming the path', () => {
+    const exception = rejection(
+      'name: x\nlessons: maybe\nmembers:\n  - id: a\n    name: A\n',
+    );
+    expect(exception.errorCode).toBe('TEAM_YAML_INVALID');
+    expect(exception.getMessage()).toContain('lessons');
+  });
+
   it('writes a moved trigger into an existing file', () => {
     const team = parseTeamYaml(VALID_SOURCE);
     team.triggers = [{ kind: 'first-message', member: 'reviewer' }];

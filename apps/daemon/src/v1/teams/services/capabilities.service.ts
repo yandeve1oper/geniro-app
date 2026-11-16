@@ -83,6 +83,7 @@ export class CapabilitiesService {
         agent,
         ...config.identity,
         details: [...config.identity.details],
+        lightModel: config.lightModel,
         callerEscalatesQuestions:
           config.questionToolName !== null &&
           config.hostQuestionToolReason === null,

@@ -1,5 +1,5 @@
 import { EntityManager } from '@mikro-orm/sqlite';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 
 import { ItemDao } from '../../agents/dao/item.dao';
 import { RunDao } from '../../agents/dao/run.dao';
@@ -8,6 +8,7 @@ import { ItemCallIndexService } from '../../agents/services/item-call-index.serv
 import { ItemSeqAllocator } from '../../agents/services/item-seq.allocator';
 import { persistItemAndEmit } from '../../agents/utils/persist-item';
 import type { LessonOutcomePayload, LessonsPayload } from '../lessons.types';
+import { LessonsEventBus } from './lessons-events.bus';
 
 /**
  * Writes the lessons rows into the thread they are about — a passive row,
@@ -23,11 +24,13 @@ export class LessonRowWriter {
     private readonly bus: AgentEventBus,
     private readonly calls: ItemCallIndexService,
     private readonly seqs: ItemSeqAllocator,
+    @Optional() private readonly events?: LessonsEventBus,
   ) {}
 
   async write(runId: string, row: LessonRow): Promise<void> {
     const em = this.em.fork();
     if ((await this.runDao.getById(runId, em)) === null) {
+      this.events?.publishChanged(runId);
       return;
     }
     await persistItemAndEmit(
@@ -47,6 +50,7 @@ export class LessonRowWriter {
         payload: row.payload,
       },
     );
+    this.events?.publishChanged(runId);
   }
 }
 

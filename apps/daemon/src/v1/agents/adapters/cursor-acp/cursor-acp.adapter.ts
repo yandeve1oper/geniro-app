@@ -360,6 +360,7 @@ export class CursorAcpAdapter extends AgentAdapter {
         ],
         icon: 'terminal',
       },
+      lightModel: null,
       /**
        * MEASURED on 2026-09-22: `cursor-agent --help` names no compaction or
        * context-window control of any kind (its whole flag set is api-key,
