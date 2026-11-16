@@ -102,6 +102,7 @@ import {
   CODEX_TITLE_MODEL_FLAG,
   CODEX_TITLE_TIMEOUT_MS,
   CODEX_UNSAFE_SERVER_NAME,
+  CODEX_USER_INPUT_TOOLS_KEY,
 } from './codex.const';
 import type { CodexThreadFacts } from './codex.types';
 import { CodexSession } from './codex-session';
@@ -234,7 +235,7 @@ export class CodexAdapter extends AgentAdapter {
       // A question arrives as a server request whatever the approval policy.
       questionsCostAskPosture: false,
       hostQuestionToolReason:
-        'codex gives its model a question tool (request_user_input) only in plan mode — outside it the feature flag default_mode_request_user_input is off (measured on 0.157.1)',
+        'geniro switches codex’s own question tools off in every thread (CODEX_USER_INPUT_TOOLS_KEY): request_user_input exists only in plan mode, and request_user_input_async (0.169.0) takes no answer but a later user message (measured on 0.169.0)',
       // geniro sets the tool timeout on its own server entry to a day, so a
       // question can wait on screen until it is answered.
       hostQuestionDeferredReason: null,
@@ -662,11 +663,12 @@ export class CodexAdapter extends AgentAdapter {
       ...(input.readOnly === true
         ? { [CODEX_SHELL_TOOL_FEATURE_KEY]: false }
         : {}),
+      [CODEX_USER_INPUT_TOOLS_KEY]: false,
     };
     return {
       input,
       developerInstructions: this.composeSystemPrompt(input, endpoint !== null),
-      config: Object.keys(config).length > 0 ? config : null,
+      config,
       policy:
         input.readOnly === true
           ? CODEX_READ_ONLY_TURN_POLICY

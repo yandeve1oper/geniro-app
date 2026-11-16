@@ -354,6 +354,7 @@ describe('the turn', () => {
         http_headers: { Authorization: 'Bearer call-token' },
         tool_timeout_sec: 86_400,
       },
+      'tools.experimental_request_user_input.enabled': false,
     });
   });
 
@@ -385,10 +386,12 @@ describe('the turn', () => {
       serverName: 'geniro-0123abcd',
     };
 
-    expect(threadConfig({ prompt: 'x', cwd: '/repo' })).toBeUndefined();
+    expect(threadConfig({ prompt: 'x', cwd: '/repo' })).not.toHaveProperty(
+      'features.memories',
+    );
     expect(
       threadConfig({ prompt: 'x', cwd: '/repo', nativeMemoryOff: true }),
-    ).toEqual({ 'features.memories': false });
+    ).toMatchObject({ 'features.memories': false });
     expect(
       threadConfig({
         prompt: 'x',
@@ -400,6 +403,52 @@ describe('the turn', () => {
       'features.memories': false,
       'mcp_servers.geniro-0123abcd': { url: endpoint.url },
     });
+  });
+
+  it('switches codex’s own question tools off in every thread it opens or resumes, so a question goes through geniro’s card', () => {
+    const threadFrames = (input: AgentTurnInput): Record<string, unknown>[] => {
+      const written: string[] = [];
+      adapterWith()
+        .driver(input)
+        .onStdinReady?.({
+          write: (payload) => {
+            written.push(payload);
+            return true;
+          },
+          emit: () => undefined,
+        });
+      return written
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              method?: string;
+              params?: Record<string, unknown>;
+            },
+        )
+        .filter(
+          (frame) =>
+            frame.method === 'thread/start' || frame.method === 'thread/resume',
+        )
+        .map((frame) => frame.params ?? {});
+    };
+    const endpoint = {
+      url: 'http://127.0.0.1:47615/v1/mcp/run/node',
+      token: 'call-token',
+      serverName: 'geniro-0123abcd',
+    };
+
+    for (const input of [
+      { prompt: 'x', cwd: '/repo' },
+      { prompt: 'x', cwd: '/repo', mcpEndpoint: endpoint },
+      { prompt: 'x', cwd: '/repo', readOnly: true },
+      { prompt: 'x', cwd: '/repo', resumeSessionId: 'thread-1' },
+    ]) {
+      const frames = threadFrames(input);
+      expect(frames).toHaveLength(1);
+      expect(frames[0]?.config).toMatchObject({
+        'tools.experimental_request_user_input.enabled': false,
+      });
+    }
   });
 
   it('takes the shell away and runs read-only, outside plan mode, for a read-only turn', () => {
@@ -428,14 +477,14 @@ describe('the turn', () => {
     };
 
     const reading = startFrame({ prompt: 'x', cwd: '/repo', readOnly: true });
-    expect(reading?.config).toEqual({ 'features.shell_tool': false });
+    expect(reading?.config).toMatchObject({ 'features.shell_tool': false });
     expect(reading).toMatchObject({
       approvalPolicy: 'untrusted',
       sandbox: 'read-only',
     });
 
     const open = startFrame({ prompt: 'x', cwd: '/repo' });
-    expect(open?.config).toBeUndefined();
+    expect(open?.config).not.toHaveProperty('features.shell_tool');
     expect(open).toMatchObject({ approvalPolicy: 'never' });
   });
 

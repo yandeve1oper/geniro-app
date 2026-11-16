@@ -516,6 +516,30 @@ export const CODEX_MEMORIES_FEATURE_KEY = 'features.memories';
 export const CODEX_SHELL_TOOL_FEATURE_KEY = 'features.shell_tool';
 
 /**
+ * Takes codex's own question tools away from every geniro thread, so the model
+ * asks through geniro's `ask_user_question`, whose card is answered as its
+ * tool result.
+ *
+ * From 0.169.0 a model whose catalog entry lists `send_user_message_async`
+ * (gpt-6-luna) is also given `request_user_input_async` outside plan mode. It
+ * answers `{"accepted":true}` at once, shows the question only as an
+ * `agentMessage` item with `delivery: "async"`, raises no server request, and
+ * expects the answer as a later user message, so the model waits in
+ * `clock.sleep` for a reply nothing sends (measured on 0.169.0: a team callee's
+ * question reached no card). The same key gates the plan-mode
+ * `request_user_input` (codex-rs `spec_plan.rs` `add_core_utility_tools`), and
+ * `features.*` toggles do not reach either.
+ *
+ * MEASURED on 0.169.0 through `codex app-server`: a `thread/start` carrying
+ * `tools.experimental_request_user_input.enabled = false` in its config gave
+ * gpt-6-luna neither tool (its rollout's `additional_tools`), and the model
+ * replied it had no question tool; the same thread without the key listed both
+ * and asked through the async one. The key exists in `ToolsToml` since 0.157.1.
+ */
+export const CODEX_USER_INPUT_TOOLS_KEY =
+  'tools.experimental_request_user_input.enabled';
+
+/**
  * Switches off, in one thread, each of the user's own hooks that runs when
  * codex asks for a permission (`hooks/list` names them by `key` and
  * `eventName`). geniro's card is the approval, and codex runs those hooks
