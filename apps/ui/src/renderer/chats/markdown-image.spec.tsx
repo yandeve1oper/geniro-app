@@ -204,3 +204,68 @@ describe('an image an agent referenced from its own markdown', () => {
     expect(document.body.textContent).toContain('/tmp/shots/02-transcript.png');
   });
 });
+
+describe('a chat image takes a line of its own', () => {
+  // jsdom computes no layout, so the classes that decide whether a box sits in
+  // the text line or on its own line are the fact pinned here.
+  const classTokens = (selector: string): string[] =>
+    (container.querySelector(selector)?.getAttribute('class') ?? '').split(
+      /\s+/,
+    );
+
+  it('draws a loaded image as a block box, never an inline one', async () => {
+    const load = vi.fn(async () => 'data:image/png;base64,AAA');
+
+    await render('![shot](/tmp/shots/02-transcript.png)', load);
+
+    const box = classTokens('[data-slot="zoomable-image"]');
+    expect(box).toContain('block');
+    expect(box).not.toContain('inline-block');
+    expect(box).not.toContain('align-middle');
+  });
+
+  it('keeps the loading placeholder a block box, so nothing jumps when the bytes land', async () => {
+    const load = vi.fn(() => new Promise<string>(() => {}));
+
+    await render('![shot](/tmp/shots/02-transcript.png)', load);
+
+    const placeholder = classTokens('[data-slot="markdown-image-loading"]');
+    expect(placeholder).toContain('block');
+    expect(placeholder).not.toContain('inline-block');
+  });
+
+  it('keeps a refused reference a block box', async () => {
+    await render('![tracker](https://example.com/pixel.png)', null);
+
+    const notice = classTokens('[data-slot="markdown-image-unavailable"]');
+    expect(notice).toContain('block');
+    expect(notice).not.toContain('inline-block');
+  });
+
+  it('keeps a read that failed a block box', async () => {
+    const load = vi.fn(async () => {
+      throw new Error('no file at /tmp/shots/gone.png');
+    });
+
+    await render('![gone](/tmp/shots/gone.png)', load);
+
+    const notice = classTokens('[data-slot="markdown-image-unavailable"]');
+    expect(notice).toContain('block');
+    expect(notice).not.toContain('inline-block');
+  });
+
+  it('keeps a lone image at its size caps', async () => {
+    const load = vi.fn(async () => 'data:image/png;base64,AAA');
+
+    await render('![shot](/tmp/shots/02-transcript.png)', load);
+
+    expect(classTokens('[data-slot="markdown-image"]')).toEqual(
+      expect.arrayContaining([
+        'max-h-96',
+        'max-w-full',
+        'object-contain',
+        'rounded-lg',
+      ]),
+    );
+  });
+});

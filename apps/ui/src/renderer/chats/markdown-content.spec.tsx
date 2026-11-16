@@ -441,3 +441,65 @@ describe('MarkdownContent — links and the chat browser', () => {
     expect(openUrl).not.toHaveBeenCalled();
   });
 });
+
+describe('MarkdownContent — an image sits on a line of its own', () => {
+  const PIXEL = '![a](data:image/png;base64,iVBORw0KGgo=)';
+  const boxOf = (el: HTMLElement): Element => {
+    const box = el.querySelector('[data-slot="zoomable-image"]');
+    expect(box).not.toBeNull();
+    return box!;
+  };
+
+  it('takes the whitespace off the text on either side of an image mid-sentence', () => {
+    const el = render(
+      <MarkdownContent
+        content={`Подписано «Максимум». ${PIXEL} Next sentence.`}
+      />,
+    );
+    const box = boxOf(el);
+    expect(box.previousSibling?.textContent).toBe('Подписано «Максимум».');
+    expect(box.nextSibling?.textContent).toBe('Next sentence.');
+  });
+
+  it('takes the line breaks off a soft break on either side of an image', () => {
+    const el = render(<MarkdownContent content={`Text\n${PIXEL}\nMore`} />);
+    const box = boxOf(el);
+    expect(box.previousSibling?.textContent).toBe('Text');
+    expect(box.nextSibling?.textContent).toBe('More');
+  });
+
+  it('keeps an image inside a tight list item, with its neighbours trimmed', () => {
+    const el = render(
+      <MarkdownContent content={`1. **Bold** text ${PIXEL} more`} />,
+    );
+    const box = boxOf(el);
+    expect(box.closest('li')).not.toBeNull();
+    expect(box.previousSibling?.textContent).toBe(' text');
+    expect(box.nextSibling?.textContent).toBe('more');
+  });
+
+  it('keeps an image inside a loose list item, with its neighbours trimmed', () => {
+    const el = render(
+      <MarkdownContent
+        content={`1. **Bold** text ${PIXEL} more\n\n2. second`}
+      />,
+    );
+    const box = boxOf(el);
+    expect(box.closest('li')).not.toBeNull();
+    expect(box.nextSibling?.textContent).toBe('more');
+  });
+
+  it('leaves an image inside inline code as the literal text it is', () => {
+    const el = render(<MarkdownContent content={'`![a](x.png)`'} />);
+    expect(el.querySelector('[data-slot="zoomable-image"]')).toBeNull();
+    expect(el.querySelector('code')?.textContent).toBe('![a](x.png)');
+  });
+
+  it('leaves an image inside a fenced block as the literal text it is', () => {
+    const el = render(
+      <MarkdownContent content={['```', '![a](x.png)', '```'].join('\n')} />,
+    );
+    expect(el.querySelector('[data-slot="zoomable-image"]')).toBeNull();
+    expect(el.textContent).toContain('![a](x.png)');
+  });
+});

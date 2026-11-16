@@ -62,7 +62,7 @@ export function MarkdownImage({
     return (
       <span
         data-slot="markdown-image-unavailable"
-        className="my-1 inline-block rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+        className="my-1 block w-fit rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
         {alt ? `${alt} — ` : ''}
         {refusal}
         {reference && !reference.startsWith('data:') ? ` (${reference})` : ''}
@@ -73,7 +73,7 @@ export function MarkdownImage({
     return (
       <span
         data-slot="markdown-image-unavailable"
-        className="my-1 inline-block rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+        className="my-1 block w-fit rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
         could not read {reference}
       </span>
     );
@@ -85,7 +85,7 @@ export function MarkdownImage({
     return (
       <span
         data-slot="markdown-image-loading"
-        className="my-1 inline-block text-xs text-muted-foreground">
+        className="my-1 block w-fit text-xs text-muted-foreground">
         {alt || reference}
       </span>
     );
@@ -99,7 +99,7 @@ export function MarkdownImage({
       // 200KB base64 string is not a caption. `alt` is preferred where the
       // agent supplied one, and the inline case has no path to fall back on.
       title={alt || (inline ? undefined : reference)}
-      className="my-1 inline-block max-w-full align-middle"
+      className="my-1 block w-fit max-w-full"
       imgClassName="max-h-96 max-w-full rounded-lg border border-border object-contain"
     />
   );

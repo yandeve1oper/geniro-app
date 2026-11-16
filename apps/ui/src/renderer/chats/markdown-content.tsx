@@ -10,16 +10,8 @@ import { languageForFence } from '../components/ui/code-language';
 import { cn } from '../components/ui/utils';
 import { ChatLink } from './browser/chat-link';
 import { MarkdownImage } from './markdown-image';
+import { type HastNode, markdownImageBlocks } from './markdown-image-blocks';
 import { wrapSpacedImagePaths } from './markdown-paths';
-
-/** The shape of a hast element, as far as the fence reader needs it. */
-interface HastNode {
-  type?: string;
-  tagName?: string;
-  value?: string;
-  properties?: Record<string, unknown>;
-  children?: HastNode[];
-}
 
 /**
  * A fenced code block's source and language, read off the `pre`'s hast node.
@@ -349,6 +341,7 @@ export const MarkdownContent = memo(function MarkdownContent({
       className={cn('min-w-0 text-sm leading-relaxed break-words', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[markdownImageBlocks]}
         components={COMPONENTS}
         urlTransform={urlTransform}>
         {wrapSpacedImagePaths(content)}
