@@ -1201,6 +1201,15 @@ function sameContextReading(
   );
 }
 
+function announceTurnModel(
+  events: AgentEvent[],
+  model: string | null | undefined,
+): void {
+  if (model) {
+    events.push({ type: 'turn_model', model });
+  }
+}
+
 const PROMPT_PROBE_CHARS = 400;
 
 function collapseWhitespace(text: string): string {
@@ -1779,13 +1788,14 @@ export class AcpTurnDriver {
       // was refused, and setting them on whichever model the agent stayed on
       // would apply half of a selection the user never made.
       this.configSteps.length = 0;
-      return [
+      const events: AgentEvent[] = [
         {
           type: 'notice',
           message: `agent declined model '${this.requestedModelId ?? ''}': ${message} — this turn runs on the agent's current model`,
         },
-        ...this.onConfigAnswered(id),
       ];
+      announceTurnModel(events, this.session.currentModelId);
+      return [...events, ...this.onConfigAnswered(id)];
     }
     if (kind === 'set_model_parameter') {
       // A degrade, like the two above: the turn runs, on the parameter value the
@@ -2780,23 +2790,21 @@ export class AcpTurnDriver {
     ) {
       this.session.currentModelId = announced;
     }
-    // The requested model is ANNOUNCED, never RECORDED. `currentModelId` holds
-    // what the agent CONFIRMED — the `set_model` acceptance arm in `onReply` is
-    // what moves it — while `turn_model` reports what this turn asked to run
-    // as. The two differ exactly while a switch is unconfirmed, and that
-    // difference is load-bearing downstream: it is what
+    // A switch the agent may still refuse is ANNOUNCED, never RECORDED.
+    // `currentModelId` holds what the agent CONFIRMED — the `set_model`
+    // acceptance arm in `onReply` is what moves it — while `turn_model` reports
+    // what this turn runs as. The two differ exactly while a switch is
+    // unconfirmed, and that difference is load-bearing downstream: it is what
     // `PartialStreamService.rememberWindow`'s anti-poisoning guard compares —
     // a settle reading labelled with the unconfirmed model is refused, and the
-    // owner keeps the window it already had.
-    // Writing `wanted` here would collapse both of that guard's operands onto
-    // this one field — cursor's context reading names no model, so a window's
-    // own label falls back to it too — leaving the guard comparing a value
-    // against itself, unable to fire, and filing a refused model's window under
-    // the requested one.
-    const runningAs = wanted ? wanted : this.session.currentModelId;
-    if (runningAs !== null && runningAs !== '') {
-      events.push({ type: 'turn_model', model: runningAs });
-    }
+    // owner keeps the window it already had. A refusal, local below or the
+    // agent's own in `onErrorReply`, announces `currentModelId` instead: the
+    // turn runs on it, and its window is labelled with it.
+    // Writing `wanted` into `currentModelId` would collapse both of that
+    // guard's operands onto one field — cursor's context reading names no
+    // model, so a window's own label falls back to it too — leaving the guard
+    // comparing a value against itself, unable to fire, and filing a refused
+    // model's window under the requested one.
     // Parameters are applied EVEN WHEN the model needs no change — they are a
     // separate axis, and a run that keeps the agent's current model while
     // choosing a different effort is the ordinary case for a chat left on
@@ -2805,6 +2813,7 @@ export class AcpTurnDriver {
     // turn but the first describes a model an earlier turn may have switched
     // away from, so comparing with it re-sends the frame every turn.
     if (!wanted || this.session.currentModelId === wanted) {
+      announceTurnModel(events, this.session.currentModelId);
       // The one path where the reply on hand DESCRIBES the model this turn will
       // run on — nothing is switching — so a parameter it does not offer can be
       // answered here instead of by a refusal from the agent.
@@ -2835,6 +2844,7 @@ export class AcpTurnDriver {
     // session store was being deleted with the turn's config directory.
     const offered = readAcpModels(sessionResult);
     if (offered.length > 0 && !acpOffersModel(sessionResult, wanted)) {
+      announceTurnModel(events, this.session.currentModelId);
       // Never silent, for the reason the mode degrade above is not: a member the
       // user pointed at one model quietly running on another is a wrong turn
       // that reports success.
@@ -2847,6 +2857,7 @@ export class AcpTurnDriver {
       // would apply half of a selection the user never made.
       return;
     }
+    announceTurnModel(events, wanted);
     this.requestedModelId = wanted;
     // ACP 1.0 stabilized `session/set_config_option`, the general form that
     // replaces `session/set_model`. Which one this agent gets is decided by

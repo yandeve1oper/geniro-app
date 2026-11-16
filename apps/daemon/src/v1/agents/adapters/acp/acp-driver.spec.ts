@@ -1070,6 +1070,33 @@ describe('AcpSession model selection', () => {
     });
   });
 
+  it('names the model the turn stays on when a FRESH session does not offer it', () => {
+    const h = harness(wanting);
+    h.feed(initializeReply(1));
+    const events = h.feed({
+      id: 2,
+      result: sessionWithModels('composer-2.5', ['composer-2.5']),
+    });
+
+    const announced = events.filter((event) => event.type === 'turn_model');
+    expect(announced).toEqual([{ type: 'turn_model', model: 'composer-2.5' }]);
+  });
+
+  it('announces no model when a refused session never named its own', () => {
+    const h = harness(wanting);
+    h.feed(initializeReply(1));
+    const events = h.feed({
+      id: 2,
+      result: {
+        sessionId: 's-1',
+        models: { availableModels: [{ modelId: 'gpt-5.2', name: 'gpt-5.2' }] },
+      },
+    });
+
+    expect(noticesIn(events)).toHaveLength(1);
+    expect(events.some((event) => event.type === 'turn_model')).toBe(false);
+  });
+
   it('still asks on a RESUMED session, whose reply lists no models', () => {
     // The regression this pins: gating a resumed turn on the offers check
     // refuses locally on EVERY turn after a chat's first — cursor cannot keep
@@ -1196,11 +1223,11 @@ describe('AcpSession model selection', () => {
     it('labels it with the AGENT’s model when the switch was refused', () => {
       const { h, opened, setModelId } = switching();
 
-      // The turn announces what it ASKED to run as — the offers check passed,
-      // so nothing local knows yet that this will be refused.
+      // The offers check passed, so nothing local knows yet that this will be
+      // refused: the turn announces what it asked to run as.
       expect(opened).toContainEqual({ type: 'turn_model', model: WANTED });
 
-      h.feed({
+      const refused = h.feed({
         id: setModelId,
         error: { code: -32602, message: 'Invalid model value' },
       });
@@ -1208,6 +1235,24 @@ describe('AcpSession model selection', () => {
       const complete = settle(h);
       expect(complete?.usage?.contextWindowTokens).toBe(200_000);
       expect(complete?.usage?.contextModel).toBe('agents-own-model');
+      expect(refused.filter((event) => event.type === 'turn_model')).toEqual([
+        { type: 'turn_model', model: 'agents-own-model' },
+      ]);
+    });
+
+    it('labels it with the model it announced when the offers check refused', () => {
+      const h = harness({ ...wanting, readContext: () => NAMELESS_READING });
+      h.feed(initializeReply(1));
+      const opened = h.feed({
+        id: 2,
+        result: sessionWithModels('agents-own-model', ['agents-own-model']),
+      });
+
+      const complete = settle(h);
+      expect(complete?.usage?.contextModel).toBe('agents-own-model');
+      expect(opened.filter((event) => event.type === 'turn_model')).toEqual([
+        { type: 'turn_model', model: 'agents-own-model' },
+      ]);
     });
 
     it('labels it with the REQUESTED model once the agent accepts it', () => {
@@ -1832,6 +1877,7 @@ describe('AcpSession model selection', () => {
           type: 'notice',
           message: `agent declined model '${WANTED}': Invalid model value — this turn runs on the agent's current model`,
         },
+        { type: 'turn_model', model: 'composer-2.5' },
       ]);
     });
   });
