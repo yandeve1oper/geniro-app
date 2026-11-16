@@ -11,7 +11,8 @@ import {
 /**
  * A scroller whose rows sit at fixed CONTENT offsets, so the spec can move a
  * row (something above it grew) or scroll the viewport, and read back where the
- * hold put `scrollTop`. jsdom computes no layout, so both rects are derived.
+ * hold put `scrollTop`. jsdom computes no layout, so both rects are derived,
+ * a negative top margin on the first child lifting every row as layout would.
  */
 function makeScroller(rowOffsets: number[]): {
   scroller: HTMLElement;
@@ -24,7 +25,12 @@ function makeScroller(rowOffsets: number[]): {
   const rows = offsets.map((_, index) => {
     const row = document.createElement('div');
     row.getBoundingClientRect = () => {
-      const top = offsets[index]! - scroller.scrollTop;
+      const first = scroller.firstElementChild;
+      const lift =
+        first instanceof HTMLElement
+          ? parseFloat(first.style.marginTop) || 0
+          : 0;
+      const top = offsets[index]! + lift - scroller.scrollTop;
       return { top, bottom: top + 100 } as DOMRect;
     };
     scroller.append(row);
@@ -82,6 +88,68 @@ describe('holdReadingPlace', () => {
     setOffset(2, 6_120);
     clock.step();
     expect(scroller.scrollTop).toBe(5_470);
+  });
+
+  it('writes nothing while a gesture owns the scroll, then pays the whole shift back once it lets go', () => {
+    const { scroller, setOffset } = makeScroller([0, 300, 1_000]);
+    scroller.scrollTop = 350;
+    const clock = manualClock();
+    let gesture = true;
+    const hold = holdReadingPlace(scroller, clock, () => gesture);
+
+    setOffset(1, 5_300);
+    setOffset(2, 6_000);
+    clock.step();
+    expect(scroller.scrollTop).toBe(350);
+
+    // The finger keeps dragging while the shift is owed, and the hold outlives
+    // its settle and its cap rather than drop what it owes.
+    scroller.scrollTop = 300;
+    hold.release();
+    clock.step(READING_ANCHOR_SETTLE_MS);
+    expect(clock.pending()).toBe(1);
+    clock.step(READING_ANCHOR_MAX_MS);
+    expect(scroller.scrollTop).toBe(300);
+    expect(clock.pending()).toBe(1);
+
+    gesture = false;
+    clock.step();
+    expect(scroller.scrollTop).toBe(5_300);
+    expect(clock.pending()).toBe(0);
+  });
+
+  it('lifts the content while a gesture owns the scroll, so the reader sees nothing move, then trades the lift for one scroll write', () => {
+    const { scroller, rows, setOffset } = makeScroller([0, 300, 1_000]);
+    scroller.scrollTop = 350;
+    const clock = manualClock();
+    let gesture = true;
+    holdReadingPlace(scroller, clock, () => gesture).release();
+    const onScreen = (): number => rows[1]!.getBoundingClientRect().top;
+    expect(onScreen()).toBe(-50);
+
+    setOffset(1, 5_300);
+    setOffset(2, 6_000);
+    clock.step();
+    expect(scroller.scrollTop).toBe(350);
+    expect(rows[0]!.style.marginTop).toBe('-5000px');
+    expect(onScreen()).toBe(-50);
+
+    // A second page lands in front while the finger is still down: the lift
+    // moves onto the new first child and grows by what it brought.
+    const arrived = document.createElement('div');
+    scroller.prepend(arrived);
+    setOffset(1, 9_300);
+    setOffset(2, 10_000);
+    clock.step();
+    expect(rows[0]!.style.marginTop).toBe('');
+    expect(arrived.style.marginTop).toBe('-9000px');
+    expect(onScreen()).toBe(-50);
+
+    gesture = false;
+    clock.step();
+    expect(arrived.style.marginTop).toBe('');
+    expect(scroller.scrollTop).toBe(9_350);
+    expect(onScreen()).toBe(-50);
   });
 
   it('ignores growth BELOW the reader, which a height-delta correction paid back too', () => {

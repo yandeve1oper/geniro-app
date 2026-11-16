@@ -20,6 +20,15 @@
  * fixed number of frames — markdown images and artifact frames settle long
  * after React commits the page. There is ONE hold per scroller: a second load
  * joins it, since two holds would each pay back the same shift.
+ *
+ * While a finger or a fling owns the scroll (`gestureOwnsScroll`), `scrollTop`
+ * is not written: mobile WebKit ignores the write under a dragging finger,
+ * stops a fling dead on it (iOS 26 and earlier), and from Safari 27 lets the
+ * fling carry on past it. The content is lifted instead, by a negative top
+ * margin on the scroller's first child, so the reader sees nothing move; once
+ * the gesture has let go the lift is taken off and paid back as one
+ * `scrollTop` write in the same frame. The hold outlives its settle and its cap
+ * while a lift stands.
  */
 
 /** A row that has not moved for this long after the page landed has settled. */
@@ -51,7 +60,12 @@ interface Hold {
   holders: number;
   releasedAt: number | null;
   lastShiftAt: number;
+  lift: number;
+  liftHost: HTMLElement | null;
+  gestureOwnsScroll: () => boolean;
 }
+
+const NO_GESTURE = (): boolean => false;
 
 const active = new WeakMap<HTMLElement, Hold>();
 
@@ -97,6 +111,22 @@ function contentOffset(scroller: HTMLElement, row: HTMLElement): number {
   );
 }
 
+function liftContent(scroller: HTMLElement, hold: Hold, by: number): void {
+  const first =
+    scroller.firstElementChild instanceof HTMLElement
+      ? scroller.firstElementChild
+      : null;
+  if (hold.liftHost !== null && (by === 0 || hold.liftHost !== first)) {
+    hold.liftHost.style.marginTop = '';
+    hold.liftHost = null;
+  }
+  hold.lift = by;
+  if (by !== 0 && first !== null) {
+    first.style.marginTop = `${-by}px`;
+    hold.liftHost = first;
+  }
+}
+
 function anchorOn(
   scroller: HTMLElement,
   hold: Hold,
@@ -115,6 +145,7 @@ function anchorOn(
 export function holdReadingPlace(
   scroller: HTMLElement,
   clock: ReadingAnchorClock = DEFAULT_CLOCK,
+  gestureOwnsScroll: () => boolean = NO_GESTURE,
 ): { release: () => void } {
   const existing = active.get(scroller);
   const hold: Hold = existing ?? {
@@ -124,6 +155,9 @@ export function holdReadingPlace(
     holders: 0,
     releasedAt: null,
     lastShiftAt: clock.now(),
+    lift: 0,
+    liftHost: null,
+    gestureOwnsScroll,
   };
   hold.holders += 1;
   hold.releasedAt = null;
@@ -164,20 +198,33 @@ export function holdReadingPlace(
         `[${SEQ_ATTRIBUTE}="${hold.seq}"]`,
       );
     }
+    if (hold.lift !== 0 && hold.liftHost !== scroller.firstElementChild) {
+      liftContent(scroller, hold, hold.lift);
+    }
     if (hold.anchor === null || !hold.anchor.isConnected) {
       anchorOn(scroller, hold, pickAnchor(scroller));
     } else {
-      const now = contentOffset(scroller, hold.anchor);
-      const shift = now - hold.last;
-      if (Math.abs(shift) >= 0.5) {
+      const shift =
+        contentOffset(scroller, hold.anchor) + hold.lift - hold.last;
+      if (Math.abs(shift) < 0.5) {
+        liftContent(scroller, hold, 0);
+        hold.last = contentOffset(scroller, hold.anchor);
+      } else if (hold.gestureOwnsScroll()) {
+        if (Math.abs(shift - hold.lift) >= 0.5) {
+          liftContent(scroller, hold, shift);
+          hold.lastShiftAt = clock.now();
+        }
+      } else {
+        liftContent(scroller, hold, 0);
         scroller.scrollTop += shift;
+        hold.last = contentOffset(scroller, hold.anchor);
         hold.lastShiftAt = clock.now();
       }
-      hold.last = now;
     }
     const at = clock.now();
     if (
       hold.releasedAt !== null &&
+      hold.lift === 0 &&
       (at - hold.lastShiftAt >= READING_ANCHOR_SETTLE_MS ||
         at - hold.releasedAt >= READING_ANCHOR_MAX_MS)
     ) {

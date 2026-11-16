@@ -308,6 +308,7 @@ import {
   nextFollowState,
   shouldLoadNewer,
   shouldLoadOlder,
+  TOUCH_SETTLE_MS,
 } from './scroll-follow';
 import { SenderRow } from './sender-row';
 import { SessionPicker } from './session-picker';
@@ -2958,7 +2959,9 @@ export function Chats({
       if (load === null) {
         return false;
       }
-      const hold = holdReadingPlace(scroller);
+      const hold = holdReadingPlace(scroller, undefined, () =>
+        touchGuardRef.current.active(Date.now()),
+      );
       try {
         return await load();
       } finally {
@@ -3043,6 +3046,25 @@ export function Chats({
     // A freshly opened transcript is at its tail (`pendingScrollRef`), so the
     // control starts hidden rather than flashing on until the first scroll.
     setAboveTail(false);
+    let olderAfterGesture: ReturnType<typeof setTimeout> | null = null;
+    const pageOlderOnceLetGo = (): void => {
+      if (olderAfterGesture !== null) {
+        return;
+      }
+      if (!touchGuardRef.current.active(Date.now())) {
+        void pageOlder(scroller);
+        return;
+      }
+      olderAfterGesture = setTimeout(() => {
+        olderAfterGesture = null;
+        if (
+          loadOlderRef.current !== null &&
+          shouldLoadOlder(scroller, scroller.scrollTop)
+        ) {
+          pageOlderOnceLetGo();
+        }
+      }, TOUCH_SETTLE_MS);
+    };
     const onScroll = (): void => {
       // Read ONCE, up front: both decisions below are about the direction this
       // scroll moved, and the ref is overwritten a few lines down. Passing the
@@ -3079,12 +3101,14 @@ export function Chats({
       // so the rest is fetched only if somebody actually goes looking for it —
       // which a viewport travelling DOWN is not doing. See `shouldLoadOlder`
       // for the threshold, and for what reading position alone did to the
-      // "Latest" button.
+      // "Latest" button. Not while a finger or a fling owns the scroll: the
+      // page lands above the reader and `holdReadingPlace` would have to move
+      // them mid-gesture, which mobile WebKit fights.
       if (
         loadOlderRef.current !== null &&
         shouldLoadOlder(scroller, previousScrollTop)
       ) {
-        void pageOlder(scroller);
+        pageOlderOnceLetGo();
       }
       // …and FORWARD, off a window a jump left the reader in. Appending below
       // the viewport moves nothing the reader is looking at, so it needs no
@@ -3136,6 +3160,9 @@ export function Chats({
     window.addEventListener('pointercancel', onPointerUp, { capture: true });
     window.addEventListener('keydown', onKeyDown, { capture: true });
     return () => {
+      if (olderAfterGesture !== null) {
+        clearTimeout(olderAfterGesture);
+      }
       scroller.removeEventListener('scroll', onScroll);
       scroller.removeEventListener('touchstart', onTouchStart);
       window.removeEventListener('touchend', onTouchEnd, { capture: true });

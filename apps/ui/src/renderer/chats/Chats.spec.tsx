@@ -37,6 +37,7 @@ import { PARKED_SEND_TITLE } from './follow-up-delivery';
 import type { HostedThread } from './hosted-thread';
 import type { LiveTextEvent } from './live-text';
 import { RUN_LIST_PAGE } from './run-list-pages';
+import { TOUCH_SETTLE_MS } from './scroll-follow';
 import { forgetThread } from './thread-ui-memory';
 import { HISTORY_PAGE } from './use-chat-run';
 import { PROCESS_POLL_MS } from './use-run-processes';
@@ -9273,6 +9274,68 @@ describe('Chats queued messages', () => {
     //
     // Per-test rather than `vi.setConfig`, which would raise it for all 286
     // tests in this file and blunt the hang guard for every one of them.
+  }, 20_000);
+
+  it('holds the older page while a finger owns the scroll, and asks once it lets go', async () => {
+    const page = (from: number, count: number): ChatItem[] =>
+      Array.from({ length: count }, (_, i) =>
+        msg(from + i, 'user', `m${from + i}`),
+      );
+    openAtSmallestPage();
+    api.listRunItems.mockResolvedValue(page(1000, SMALL_PAGE));
+    const container = await mount(makeClient().client);
+    await clickRun(container, 'My chat');
+    api.listRunItems.mockResolvedValue(page(0, 10));
+    const scroller = container.querySelector<HTMLElement>(
+      '[data-slot="transcript"]',
+    )!;
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 10_000,
+      configurable: true,
+    });
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 1_000,
+      configurable: true,
+    });
+    scroller.scrollTop = 9_000;
+    await act(async () => {
+      scroller.dispatchEvent(new Event('scroll'));
+      await Promise.resolve();
+    });
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      scroller.dispatchEvent(new Event('touchstart'));
+      scroller.scrollTop = 100;
+      await act(async () => {
+        scroller.dispatchEvent(new Event('scroll'));
+        await Promise.resolve();
+      });
+      const olderReads = (): number =>
+        api.listRunItems.mock.calls.filter(
+          ([request]) => request.beforeSeq !== undefined,
+        ).length;
+      expect(olderReads()).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TOUCH_SETTLE_MS * 2);
+      });
+      expect(olderReads()).toBe(0);
+
+      window.dispatchEvent(new Event('touchend'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TOUCH_SETTLE_MS * 3);
+      });
+      expect(api.listRunItems).toHaveBeenLastCalledWith({
+        runId: 'r1',
+        limit: SMALL_PAGE,
+        beforeSeq: 1000,
+        conversation: 'root',
+      });
+      expect(olderReads()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   }, 20_000);
 
   it('keeps paging on ONE press while the page it loaded adds nothing on screen', async () => {
