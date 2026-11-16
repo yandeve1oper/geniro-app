@@ -12,28 +12,43 @@ import {
 
 const PAGE = '<!doctype html><title>x</title><p>hello';
 
+function readPage(args: Record<string, unknown>) {
+  const read = readHostArtifact(args);
+  return read.ok && 'html' in read.artifact ? read.artifact : null;
+}
+
+function readPatch(args: Record<string, unknown>) {
+  const read = readHostArtifact(args);
+  return read.ok && 'patch' in read.artifact ? read.artifact : null;
+}
+
+function refusal(args: Record<string, unknown>): string {
+  const read = readHostArtifact(args);
+  return read.ok ? '' : read.reason;
+}
+
 describe('readHostArtifact', () => {
   it('reads a title and a document', () => {
-    expect(readHostArtifact({ title: 'Migration plan', html: PAGE })).toEqual({
+    expect(readPage({ title: 'Migration plan', html: PAGE })).toEqual({
       title: 'Migration plan',
       html: PAGE,
     });
   });
 
   it('accepts `content` as a synonym for `html`', () => {
-    expect(readHostArtifact({ title: 'x', content: PAGE })?.html).toBe(PAGE);
+    expect(readPage({ title: 'x', content: PAGE })?.html).toBe(PAGE);
   });
 
   it('refuses a document with no title — a rail row needs a heading', () => {
-    expect(readHostArtifact({ html: PAGE })).toBeNull();
+    expect(readPage({ html: PAGE })).toBeNull();
   });
 
   it('refuses a title with no document', () => {
-    expect(readHostArtifact({ title: 'Just a name' })).toBeNull();
+    expect(readPage({ title: 'Just a name' })).toBeNull();
   });
 
   it('refuses a document that is only whitespace', () => {
-    expect(readHostArtifact({ title: 'x', html: '   \n  ' })).toBeNull();
+    expect(readPage({ title: 'x', html: '   \n  ' })).toBeNull();
   });
 
   it('keeps the document WHOLE rather than trimming it to a cap', () => {
@@ -41,26 +56,21 @@ describe('readHostArtifact', () => {
     // document short: half an HTML file renders as its own broken source. This
     // fails if a `.slice(...)` is ever added to the html path.
     const long = `${PAGE}${'<p>x</p>'.repeat(50_000)}`;
-    expect(readHostArtifact({ title: 'x', html: long })?.html).toBe(long);
+    expect(readPage({ title: 'x', html: long })?.html).toBe(long);
   });
 
   it('strips the blank lines a model wraps a document in', () => {
-    expect(
-      readHostArtifact({ title: 'x', html: `\n\n${PAGE}\n\n` })?.html,
-    ).toBe(PAGE);
+    expect(readPage({ title: 'x', html: `\n\n${PAGE}\n\n` })?.html).toBe(PAGE);
   });
 
   describe('artifact_id', () => {
     it('is absent when the caller named none, so the store mints one', () => {
-      expect(readHostArtifact({ title: 'x', html: PAGE })).not.toHaveProperty(
-        'id',
-      );
+      expect(readPage({ title: 'x', html: PAGE })).not.toHaveProperty('id');
     });
 
     it('passes a slug through unchanged', () => {
       expect(
-        readHostArtifact({ title: 'x', html: PAGE, artifact_id: 'plan-v2' })
-          ?.id,
+        readPage({ title: 'x', html: PAGE, artifact_id: 'plan-v2' })?.id,
       ).toBe('plan-v2');
     });
 
@@ -71,19 +81,18 @@ describe('readHostArtifact', () => {
         '  migration plan  ',
       ]) {
         expect(
-          readHostArtifact({ title: 'x', html: PAGE, artifact_id: written })
-            ?.id,
+          readPage({ title: 'x', html: PAGE, artifact_id: written })?.id,
         ).toBe('migration-plan');
       }
     });
 
     it('normalizes stably, which is what makes a revision land on the same page', () => {
-      const once = readHostArtifact({
+      const once = readPage({
         title: 'x',
         html: PAGE,
         artifact_id: 'My Plan!',
       })?.id;
-      const twice = readHostArtifact({
+      const twice = readPage({
         title: 'x',
         html: PAGE,
         artifact_id: 'My Plan!',
@@ -93,14 +102,12 @@ describe('readHostArtifact', () => {
     });
 
     it('accepts `id` as a synonym', () => {
-      expect(readHostArtifact({ title: 'x', html: PAGE, id: 'plan' })?.id).toBe(
-        'plan',
-      );
+      expect(readPage({ title: 'x', html: PAGE, id: 'plan' })?.id).toBe('plan');
     });
 
     it('cannot produce a path separator or a traversal segment', () => {
       for (const hostile of ['../../etc/passwd', 'a/b', '..', './x', 'C:\\x']) {
-        const id = readHostArtifact({
+        const id = readPage({
           title: 'x',
           html: PAGE,
           artifact_id: hostile,
@@ -114,12 +121,12 @@ describe('readHostArtifact', () => {
 
     it('drops an id that normalizes to nothing rather than inventing one', () => {
       expect(
-        readHostArtifact({ title: 'x', html: PAGE, artifact_id: '!!!' }),
+        readPage({ title: 'x', html: PAGE, artifact_id: '!!!' }),
       ).not.toHaveProperty('id');
     });
 
     it('caps the length, and never ends on the separator the slice exposes', () => {
-      const id = readHostArtifact({
+      const id = readPage({
         title: 'x',
         html: PAGE,
         artifact_id: `${'a'.repeat(MAX_ARTIFACT_ID_LENGTH)} tail`,
@@ -130,7 +137,7 @@ describe('readHostArtifact', () => {
   });
 
   it('caps the title', () => {
-    const title = readHostArtifact({
+    const title = readPage({
       title: 'T'.repeat(MAX_ARTIFACT_TITLE_LENGTH + 40),
       html: PAGE,
     })?.title;
@@ -138,9 +145,7 @@ describe('readHostArtifact', () => {
   });
 
   it('leaves an absent summary absent rather than inventing one', () => {
-    expect(readHostArtifact({ title: 'x', html: PAGE })).not.toHaveProperty(
-      'summary',
-    );
+    expect(readPage({ title: 'x', html: PAGE })).not.toHaveProperty('summary');
   });
 
   it('does not throw on any shape a model could send', () => {
@@ -157,6 +162,86 @@ describe('readHostArtifact', () => {
   });
 });
 
+describe('readHostArtifact with edits', () => {
+  const edit = { old_string: 'hello', new_string: 'goodbye' };
+  const call = (extra: Record<string, unknown> = {}) => ({
+    title: 'Plan',
+    artifact_id: 'plan',
+    base_version: 2,
+    edits: [edit],
+    ...extra,
+  });
+
+  it('reads edits against a base version in place of a document', () => {
+    expect(readPatch(call())).toEqual({
+      title: 'Plan',
+      id: 'plan',
+      patch: {
+        baseVersion: 2,
+        edits: [
+          { oldString: 'hello', newString: 'goodbye', replaceAll: false },
+        ],
+      },
+    });
+  });
+
+  it('keeps old_string and new_string exactly as written, whitespace included', () => {
+    const exact = { old_string: '  <p>a</p>\n', new_string: '\t<p>b</p>' };
+    expect(readPatch(call({ edits: [exact] }))?.patch.edits[0]).toEqual({
+      oldString: '  <p>a</p>\n',
+      newString: '\t<p>b</p>',
+      replaceAll: false,
+    });
+  });
+
+  it('reads replace_all, and a base version a model sent as text', () => {
+    const patch = readPatch(
+      call({ base_version: '3', edits: [{ ...edit, replace_all: true }] }),
+    )?.patch;
+    expect(patch?.baseVersion).toBe(3);
+    expect(patch?.edits[0]?.replaceAll).toBe(true);
+  });
+
+  it('refuses html and edits together', () => {
+    expect(refusal(call({ html: PAGE }))).toContain('not both');
+  });
+
+  it('refuses edits that name no page to change', () => {
+    expect(refusal(call({ artifact_id: undefined }))).toContain('artifact_id');
+  });
+
+  it('refuses edits with no usable base version', () => {
+    for (const baseVersion of [undefined, 0, -1, 1.5, 'latest']) {
+      expect(refusal(call({ base_version: baseVersion }))).toContain(
+        'base_version',
+      );
+    }
+  });
+
+  it('refuses an empty or malformed edit list', () => {
+    for (const edits of [[], 'hello', { old_string: 'a' }]) {
+      expect(refusal(call({ edits }))).toContain("'edits' must be a list");
+    }
+  });
+
+  it('names the edit it refuses, counting from one', () => {
+    expect(
+      refusal(call({ edits: [edit, { old_string: '', new_string: 'x' }] })),
+    ).toMatch(/^edit 2: old_string is empty/);
+    expect(
+      refusal(call({ edits: [{ old_string: 'same', new_string: 'same' }] })),
+    ).toMatch(/^edit 1: .*changes nothing/);
+    expect(refusal(call({ edits: [edit, 'text'] }))).toMatch(/^edit 2: /);
+    expect(
+      refusal(call({ edits: [{ old_string: 'a', new_string: 5 }] })),
+    ).toMatch(/^edit 1: old_string and new_string must both be text/);
+  });
+
+  it('still needs a title', () => {
+    expect(refusal(call({ title: undefined }))).toContain("'title'");
+  });
+});
+
 describe('hostArtifactResultText', () => {
   it('teaches the agent the id it must reuse to revise a first publish', () => {
     const text = hostArtifactResultText({
@@ -166,6 +251,23 @@ describe('hostArtifactResultText', () => {
     });
     expect(text).toContain('plan');
     expect(text).toContain('revise');
+  });
+
+  it('names the version every publish lands as, so the next edits know their base', () => {
+    expect(
+      hostArtifactResultText({
+        status: 'published',
+        artifactId: 'plan',
+        version: 1,
+      }),
+    ).toContain('version 1');
+    expect(
+      hostArtifactResultText({
+        status: 'published',
+        artifactId: 'plan',
+        version: 3,
+      }),
+    ).toContain('base_version 3');
   });
 
   it('states the version on a revision, so a silent no-op is visible', () => {
@@ -234,7 +336,7 @@ describe('hostArtifactResultText with a share', () => {
         url: 'https://x.example/a/index.html#k=KEY',
       }),
     ).toMatch(
-      /artifact_id: report\)[^\n]*\nShared link: https:\/\/x\.example\/a\/index\.html#k=KEY$/,
+      /artifact_id: report, version 1\)[^\n]*\nShared link: https:\/\/x\.example\/a\/index\.html#k=KEY$/,
     );
   });
 

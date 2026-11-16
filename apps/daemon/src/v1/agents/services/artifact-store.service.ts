@@ -19,11 +19,13 @@ import { atomicWriteSync } from '../../../utils/atomic-file';
 import { registerSecret } from '../../diagnostics/utils/redact';
 import {
   ARTIFACT_ID_PATTERN,
+  type ArtifactPatch,
   type HostArtifact,
   MAX_ARTIFACT_HTML_BYTES,
   MAX_ARTIFACT_ID_LENGTH,
 } from '../chat.types';
 import type { RunDao } from '../dao/run.dao';
+import { applyArtifactEdits } from '../utils/artifact-edits';
 import {
   ARTIFACT_IMAGE_FILE,
   ARTIFACT_IMAGE_MEDIA_TYPE,
@@ -95,6 +97,14 @@ interface PageImage {
 interface PreparedPage {
   html: string;
   images: PageImage[];
+  pictures: Map<string, string>;
+}
+
+interface PatchBase {
+  artifactId: string;
+  dir: string;
+  version: number;
+  pictures: ReadonlyMap<string, string>;
 }
 
 /** `<userData>/` directory published pages live in, one folder per run. */
@@ -164,17 +174,29 @@ export class ArtifactStoreService {
         reason: 'the run is not one artifacts can be stored for',
       };
     }
-    const bytes = Buffer.from(artifact.html, 'utf8');
-    if (bytes.byteLength > MAX_ARTIFACT_HTML_BYTES) {
+    let source: string;
+    let base: PatchBase | null = null;
+    if ('patch' in artifact) {
+      const resolved = this.resolvePatch(runId, artifact.id, artifact.patch);
+      if (!resolved.ok) {
+        return resolved;
+      }
+      base = resolved.base;
+      source = resolved.source;
+    } else {
+      source = artifact.html;
+    }
+    const bytes = Buffer.byteLength(source, 'utf8');
+    if (bytes > MAX_ARTIFACT_HTML_BYTES) {
       const limit = Math.floor(MAX_ARTIFACT_HTML_BYTES / 1024);
       return {
         ok: false,
-        reason: `the page is ${Math.floor(bytes.byteLength / 1024)}KB, over the ${limit}KB limit — publish a smaller one`,
+        reason: `the page is ${Math.floor(bytes / 1024)}KB, over the ${limit}KB limit — publish a smaller one`,
       };
     }
     let page: PreparedPage;
     try {
-      page = await this.preparePage(runId, artifact.html);
+      page = await this.preparePage(runId, source, base);
     } catch (error) {
       if (
         error instanceof BadRequestException ||
@@ -203,8 +225,15 @@ export class ArtifactStoreService {
         reason: 'the run was deleted while its page was being published',
       };
     }
-    const artifactId = this.resolveId(artifact.id);
+    const artifactId = base?.artifactId ?? this.resolveId(artifact.id);
     const dir = join(this.root, runId, artifactId);
+    const previous = this.readMeta(dir);
+    if (base !== null && previous?.version !== base.version) {
+      return {
+        ok: false,
+        reason: staleBaseReason(base.version, previous?.version ?? null),
+      };
+    }
     mkdirSync(dir, { recursive: true });
     if (page.images.length > 0) {
       mkdirSync(join(dir, ARTIFACT_IMAGES_DIR), { recursive: true });
@@ -217,7 +246,6 @@ export class ArtifactStoreService {
         atomicWriteSync(file, image.bytes);
       }
     }
-    const previous = this.readMeta(dir);
     const meta: ArtifactMeta = {
       key: previous?.key ?? mintToken(),
       version: (previous?.version ?? 0) + 1,
@@ -230,6 +258,22 @@ export class ArtifactStoreService {
     // the first read after a restart is the only chance this process gets.
     registerSecret(meta.key, 'artifact key');
     writeFileSync(join(dir, `v${meta.version}.html`), page.html, 'utf8');
+    const sourcePath = join(dir, sourceFile(meta.version));
+    const picturesPath = join(dir, picturesFile(meta.version));
+    if (page.html !== source) {
+      writeFileSync(sourcePath, source, 'utf8');
+    } else {
+      rmSync(sourcePath, { force: true });
+    }
+    if (page.pictures.size > 0) {
+      writeFileSync(
+        picturesPath,
+        JSON.stringify(Object.fromEntries(page.pictures)),
+        'utf8',
+      );
+    } else {
+      rmSync(picturesPath, { force: true });
+    }
     // The page lands BEFORE the meta that advertises it: a crash between the
     // two leaves an unreferenced file, where the reverse order would leave a
     // meta pointing at a version that does not exist.
@@ -397,6 +441,7 @@ export class ArtifactStoreService {
   private async preparePage(
     runId: string,
     html: string,
+    base: PatchBase | null,
   ): Promise<PreparedPage> {
     if (!imageTagsAreWhole(html)) {
       throw new BadRequestException(
@@ -409,16 +454,21 @@ export class ArtifactStoreService {
       folder === null ? systemImageRoots() : [...systemImageRoots(), folder];
     const byPath = new Map<string, PageImage>();
     const images = new Map<string, PageImage>();
+    const pictures = new Map<string, string>();
     let shown = 0;
     const rewritten = mapImageSources(html, (src) => {
       if (!isLocalImageSource(src)) {
         return src;
       }
-      const path = localPathOf(src);
+      const stored = base === null ? null : storedImageName(src);
+      const path = stored === null ? localPathOf(src) : src;
       let picture = byPath.get(path);
       if (picture === undefined) {
-        const image = readArtifactImage(path, roots);
-        const name = `${createHash('sha256').update(image.bytes).digest('hex')}.${image.extension}`;
+        const image =
+          stored === null || base === null
+            ? this.readPageImage(path, roots, base)
+            : this.readKeptImage(base, stored);
+        const { name } = image;
         picture = images.get(name);
         if (picture === undefined) {
           if (images.size >= MAX_ARTIFACT_PAGE_IMAGES) {
@@ -431,6 +481,9 @@ export class ArtifactStoreService {
           images.set(name, picture);
         }
         byPath.set(path, picture);
+        if (stored === null) {
+          pictures.set(path, picture.name);
+        }
       }
       shown += picture.bytes.byteLength;
       if (shown > MAX_ARTIFACT_PAGE_IMAGE_BYTES) {
@@ -441,7 +494,150 @@ export class ArtifactStoreService {
       }
       return `${ARTIFACT_IMAGES_DIR}/${picture.name}`;
     });
-    return { html: rewritten, images: [...images.values()] };
+    return { html: rewritten, images: [...images.values()], pictures };
+  }
+
+  /**
+   * A local picture a page names, read from disk; for a patch, a file that is gone
+   * falls back to the copy stored for that same path, so a text-only edit never
+   * fails because a screenshot was cleaned up. A file still there is read again.
+   */
+  private readPageImage(
+    path: string,
+    roots: string[],
+    base: PatchBase | null,
+  ): PageImage {
+    try {
+      const image = readArtifactImage(path, roots);
+      return {
+        name: `${createHash('sha256').update(image.bytes).digest('hex')}.${image.extension}`,
+        bytes: image.bytes,
+      };
+    } catch (error) {
+      if (!(error instanceof NotFoundException) || base === null) {
+        throw error;
+      }
+      const kept = base.pictures.get(path);
+      if (kept === undefined) {
+        throw error;
+      }
+      return this.readKeptImage(base, kept);
+    }
+  }
+
+  private readKeptImage(base: PatchBase, name: string): PageImage {
+    try {
+      return {
+        name,
+        bytes: readFileSync(join(base.dir, ARTIFACT_IMAGES_DIR, name)),
+      };
+    } catch {
+      throw new NotFoundException(
+        'IMAGE_NOT_FOUND',
+        `the picture ${ARTIFACT_IMAGES_DIR}/${name} is no longer stored with this page — name the picture by its path again`,
+      );
+    }
+  }
+
+  /**
+   * The full source a patch produces: the edits applied, in order, to the text the
+   * agent published as `baseVersion`, which must be the artifact's latest version.
+   * A version stored before sources were kept is its served page.
+   */
+  private resolvePatch(
+    runId: string,
+    requested: string | undefined,
+    patch: ArtifactPatch,
+  ):
+    | { ok: true; base: PatchBase; source: string }
+    | { ok: false; reason: string } {
+    if (
+      requested === undefined ||
+      requested.length > MAX_ARTIFACT_ID_LENGTH ||
+      !ARTIFACT_ID_PATTERN.test(requested)
+    ) {
+      return {
+        ok: false,
+        reason: 'edits need the artifact_id of a page this run published',
+      };
+    }
+    const dir = join(this.root, runId, requested);
+    const meta = this.readMeta(dir);
+    if (meta === null) {
+      return {
+        ok: false,
+        reason: `this run has no artifact "${requested}" to edit — publish the whole page with html`,
+      };
+    }
+    if (meta.version !== patch.baseVersion) {
+      return {
+        ok: false,
+        reason: staleBaseReason(patch.baseVersion, meta.version),
+      };
+    }
+    const text = this.readVersionSource(dir, meta.version);
+    if (text === null) {
+      return {
+        ok: false,
+        reason: `version ${meta.version} of this page could not be read — publish the whole page with html`,
+      };
+    }
+    const edited = applyArtifactEdits(
+      text,
+      patch.edits,
+      meta.version,
+      MAX_ARTIFACT_HTML_BYTES,
+    );
+    if (!edited.ok) {
+      return edited;
+    }
+    return {
+      ok: true,
+      base: {
+        artifactId: requested,
+        dir,
+        version: meta.version,
+        pictures: this.readPictures(dir, meta.version),
+      },
+      source: edited.text,
+    };
+  }
+
+  private readVersionSource(dir: string, version: number): string | null {
+    for (const file of [sourceFile(version), `v${version}.html`]) {
+      try {
+        return readFileSync(join(dir, file), 'utf8');
+      } catch (error) {
+        if (codeOf(error) !== 'ENOENT') {
+          this.logger.warn(
+            `could not read ${file} of an artifact: ${codeOf(error)}`,
+          );
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
+  private readPictures(dir: string, version: number): Map<string, string> {
+    const pictures = new Map<string, string>();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(
+        readFileSync(join(dir, picturesFile(version)), 'utf8'),
+      );
+    } catch {
+      return pictures;
+    }
+    if (typeof parsed !== 'object' || parsed === null) {
+      return pictures;
+    }
+    for (const [path, name] of Object.entries(parsed)) {
+      if (typeof name === 'string' && ARTIFACT_IMAGE_FILE.test(name)) {
+        pictures.set(path, name);
+      }
+    }
+    return pictures;
   }
 
   /** The run's working folder, or null when the run has none (or no run source). */
@@ -497,6 +693,30 @@ export class ArtifactStoreService {
       return null;
     }
   }
+}
+
+function sourceFile(version: number): string {
+  return `v${version}.source.html`;
+}
+
+function picturesFile(version: number): string {
+  return `v${version}.images.json`;
+}
+
+function storedImageName(src: string): string | null {
+  const prefix = `${ARTIFACT_IMAGES_DIR}/`;
+  const trimmed = src.trim();
+  if (!trimmed.startsWith(prefix)) {
+    return null;
+  }
+  const name = trimmed.slice(prefix.length);
+  return ARTIFACT_IMAGE_FILE.test(name) ? name : null;
+}
+
+function staleBaseReason(base: number, latest: number | null): string {
+  return latest === null
+    ? `the page these edits were written against is gone — publish the whole page with html`
+    : `these edits were written against version ${base}, but the page is at version ${latest} now — publish the whole page with html, or send edits against version ${latest}`;
 }
 
 /** The system error code behind a failed read, for a log line. */

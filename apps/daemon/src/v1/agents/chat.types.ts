@@ -2278,8 +2278,22 @@ export const MAX_ARTIFACT_SUMMARY_LENGTH = 200;
 export const MAX_ARTIFACT_ID_LENGTH = 64;
 export const ARTIFACT_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
-/** One `show_artifact` call, as the panel will publish it. */
-export interface HostArtifact {
+export interface ArtifactEdit {
+  oldString: string;
+  newString: string;
+  replaceAll: boolean;
+}
+
+export interface ArtifactPatch {
+  baseVersion: number;
+  edits: ArtifactEdit[];
+}
+
+/** One `show_artifact` call, as the panel will publish it: a whole page, or edits to the latest one. */
+export type HostArtifact = HostArtifactFields &
+  ({ html: string } | { patch: ArtifactPatch });
+
+export interface HostArtifactFields {
   /**
    * The agent's own name for this page, and its identity ACROSS turns: calling
    * again with the same id publishes a new version of the same artifact instead
@@ -2290,8 +2304,6 @@ export interface HostArtifact {
   id?: string;
   /** What the page IS — the panel row, the popup heading, the browser title. */
   title: string;
-  /** The whole document: inline style/script, libraries only from the CDNs `ARTIFACT_PAGE_CSP` admits, no fetch. */
-  html: string;
   /**
    * One line under the title in the rail. Optional and genuinely so — a good
    * title carries most pages, and a summary invented to fill the field is noise

@@ -109,6 +109,10 @@ export function showArtifactInstructions(
     'To REVISE a page you already published, call this again with the SAME artifact_id — it replaces ' +
     'the page in place as a new version rather than adding a second one, which is how a plan stays ' +
     'current while you work. A different id, or none, makes a new page. ' +
+    'For a SMALL change — a figure, a row, a status, a paragraph — send edits instead of html: ' +
+    'exact-text replacements against the HTML you last published, with base_version set to the version ' +
+    'the last receipt named, so you never resend the whole page. Send html when you rewrite most of it. ' +
+    'Edits against a version that is no longer the latest are refused; the refusal names the latest. ' +
     'Call it ONCE per page, and do not also write the content out as text: the user sees the page, so ' +
     'restating it shows the same thing twice. Say what it SHOWS, and what you want them to notice. ' +
     (inTeamRun ? `${TEAM_RUN_PAGES} ` : '') +

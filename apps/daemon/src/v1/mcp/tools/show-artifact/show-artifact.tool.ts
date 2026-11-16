@@ -46,15 +46,11 @@ export class ShowArtifactTool extends BaseMcpTool {
     context: McpCallContext,
   ): Promise<McpToolResult> {
     const { runId, memberId, caller, conversationId } = context;
-    const artifact = readHostArtifact(args);
-    // Null is the reader saying there is no page here — no document, or no
-    // title to list it under. A malformed call on the chart's rule: an
-    // artifact of nothing is only ever a mistake.
-    if (artifact === null) {
-      return this.invalidArgs(
-        "no page to show — 'html' must hold the document and 'title' must name it.",
-      );
+    const read = readHostArtifact(args);
+    if (!read.ok) {
+      return this.invalidArgs(read.reason);
     }
+    const { artifact } = read;
     const outcome = await this.artifacts.publish(
       runId,
       memberId,

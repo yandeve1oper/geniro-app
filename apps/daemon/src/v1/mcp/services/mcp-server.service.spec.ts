@@ -3208,6 +3208,47 @@ describe('McpServerService', () => {
     });
   });
 
+  it('hands a show_artifact call carrying edits to the run as a patch of the named page', async () => {
+    const artifacts = new ArtifactBroker();
+    const published: unknown[] = [];
+    artifacts.register('run-1', 'agent', async (artifact) => {
+      published.push(artifact);
+      return { status: 'published', artifactId: 'plan', version: 3 };
+    });
+    const { json } = await post(
+      artifactService(artifacts),
+      'run-1',
+      'agent',
+      rpc('tools/call', {
+        name: HOST_ARTIFACT_TOOL,
+        arguments: {
+          title: 'Plan',
+          artifact_id: 'plan',
+          base_version: 2,
+          edits: [{ old_string: 'step one', new_string: 'step two' }],
+        },
+      }),
+    );
+    const result = json().result as {
+      content: { text: string }[];
+      isError: boolean;
+    };
+    expect(result.isError).toBe(false);
+    expect(result.content[0]!.text).toContain('updated to version 3');
+    expect(published).toEqual([
+      {
+        title: 'Plan',
+        id: 'plan',
+        patch: {
+          baseVersion: 2,
+          edits: [
+            { oldString: 'step one', newString: 'step two', replaceAll: false },
+          ],
+        },
+      },
+    ]);
+  });
+
   it('refuses a show_artifact call carrying no document, without reaching the run', async () => {
     const artifacts = new ArtifactBroker();
     const published: unknown[] = [];

@@ -788,6 +788,389 @@ describe('ArtifactStoreService', () => {
     });
   });
 
+  describe('patch', () => {
+    const edit = (
+      oldString: string,
+      newString: string,
+      replaceAll = false,
+    ) => ({ oldString, newString, replaceAll });
+
+    const patch = (
+      baseVersion: number,
+      edits: ReturnType<typeof edit>[],
+      on: ArtifactStoreService = store,
+      id = 'plan',
+    ) =>
+      on.publish(RUN, {
+        title: 'Plan',
+        id,
+        patch: { baseVersion, edits },
+      });
+
+    const files = () => readdirSync(join(root, RUN, 'plan')).sort();
+
+    const keyOf = async (html: string) => {
+      const first = await publish({ id: 'plan', html });
+      if (!first.ok) {
+        throw new Error(first.reason);
+      }
+      return first.stored.key;
+    };
+
+    it('publishes the edited latest version as the next one, under the same key', async () => {
+      const key = await keyOf('<h1>Plan</h1><p>step one</p>');
+
+      const result = await patch(1, [edit('step one', 'step two')]);
+
+      expect(result).toEqual({
+        ok: true,
+        stored: { artifactId: 'plan', version: 2, key },
+      });
+      expect(store.read(RUN, 'plan', 2, key)).toBe(
+        '<h1>Plan</h1><p>step two</p>',
+      );
+      expect(store.read(RUN, 'plan', 1, key)).toBe(
+        '<h1>Plan</h1><p>step one</p>',
+      );
+      expect(files()).toEqual(['meta.json', 'v1.html', 'v2.html']);
+    });
+
+    it('applies the edits in order, each to the result of the ones before it', async () => {
+      const key = await keyOf('<p>a</p>');
+
+      await patch(1, [
+        edit('<p>a</p>', '<p>b</p>'),
+        edit('<p>b</p>', '<p>c</p>'),
+      ]);
+
+      expect(store.read(RUN, 'plan', 2, key)).toBe('<p>c</p>');
+    });
+
+    it('takes a replacement literally, never as a pattern', async () => {
+      const key = await keyOf('<p>price</p>');
+
+      await patch(1, [edit('price', '$& $1 $$')]);
+
+      expect(store.read(RUN, 'plan', 2, key)).toBe('<p>$& $1 $$</p>');
+    });
+
+    it('replaces every occurrence only when replace_all is set', async () => {
+      const key = await keyOf('<li>x</li><li>x</li>');
+
+      const refused = await patch(1, [edit('x', 'y')]);
+      expect(refused).toEqual({
+        ok: false,
+        reason: expect.stringMatching(/^edit 1: old_string occurs 2 times/),
+      });
+      expect(files()).toEqual(['meta.json', 'v1.html']);
+
+      await patch(1, [edit('x', 'y', true)]);
+      expect(store.read(RUN, 'plan', 2, key)).toBe('<li>y</li><li>y</li>');
+    });
+
+    it('refuses edits whose text is not on the page, naming the edit, and writes nothing', async () => {
+      await keyOf('<p>a</p>');
+
+      const result = await patch(1, [
+        edit('<p>a</p>', '<p>b</p>'),
+        edit('<p>a</p>', '<p>c</p>'),
+      ]);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringMatching(
+          /^edit 2: old_string was not found in version 1 once the edits before it were applied/,
+        ),
+      });
+      expect(files()).toEqual(['meta.json', 'v1.html']);
+    });
+
+    it('refuses edits written against an older version, naming the latest, and writes nothing', async () => {
+      await keyOf('<p>a</p>');
+      await publish({ id: 'plan', html: '<p>b</p>' });
+
+      const result = await patch(1, [edit('<p>a</p>', '<p>c</p>')]);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining(
+          'written against version 1, but the page is at version 2 now',
+        ),
+      });
+      expect(files()).toEqual(['meta.json', 'v1.html', 'v2.html']);
+    });
+
+    it('refuses edits when a revision lands while the patched page is being prepared', async () => {
+      let raced = true;
+      const racing: ArtifactStoreService = new ArtifactStoreService({
+        root,
+        runs: {
+          getById: async () => {
+            if (!raced) {
+              raced = true;
+              await racing.publish(RUN, {
+                title: 'Plan',
+                id: 'plan',
+                html: '<p>theirs</p>',
+              });
+            }
+            return null;
+          },
+        } as unknown as ArtifactStoreOptions['runs'],
+      });
+      const first = await racing.publish(RUN, {
+        title: 'Plan',
+        id: 'plan',
+        html: '<p>a</p>',
+      });
+      expect(first.ok).toBe(true);
+      raced = false;
+
+      const result = await patch(1, [edit('<p>a</p>', '<p>mine</p>')], racing);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining('the page is at version 2 now'),
+      });
+      expect(files()).toEqual(['meta.json', 'v1.html', 'v2.html']);
+    });
+
+    it('refuses edits to an artifact this run never published', async () => {
+      const result = await patch(1, [edit('a', 'b')], store, 'nothing');
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining('no artifact "nothing" to edit'),
+      });
+      expect(existsSync(join(root, RUN, 'nothing'))).toBe(false);
+    });
+
+    it('refuses a patched page over the HTML limit', async () => {
+      await keyOf('<p>a</p>');
+
+      const result = await patch(1, [
+        edit('a', 'x'.repeat(MAX_ARTIFACT_HTML_BYTES)),
+      ]);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining('over the 512KB limit'),
+      });
+      expect(files()).toEqual(['meta.json', 'v1.html']);
+    });
+
+    it('refuses a patched page whose image tag no longer closes', async () => {
+      await keyOf('<p>a</p>');
+
+      const result = await patch(1, [
+        edit('<p>a</p>', '<img src="/tmp/x.png"'),
+      ]);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining('does not close'),
+      });
+      expect(files()).toEqual(['meta.json', 'v1.html']);
+    });
+
+    it('refuses a replace_all that would grow the page past the limit before building it', async () => {
+      await keyOf(`<p>${'a'.repeat(1000)}</p>`);
+
+      const result = await patch(1, [edit('a', 'x'.repeat(1000), true)]);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringMatching(
+          /^edit 1: the page would be over the 512KB limit/,
+        ),
+      });
+      expect(files()).toEqual(['meta.json', 'v1.html']);
+    });
+
+    it('refuses edits when the page vanishes while the patched page is being prepared', async () => {
+      let vanish = false;
+      const racing = new ArtifactStoreService({
+        root,
+        runs: {
+          getById: async () => {
+            if (vanish) {
+              rmSync(join(root, RUN, 'plan'), { recursive: true, force: true });
+            }
+            return null;
+          },
+        } as unknown as ArtifactStoreOptions['runs'],
+      });
+      await racing.publish(RUN, {
+        title: 'Plan',
+        id: 'plan',
+        html: '<p>a</p>',
+      });
+      vanish = true;
+
+      const result = await patch(1, [edit('<p>a</p>', '<p>b</p>')], racing);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining('is gone'),
+      });
+      expect(existsSync(join(root, RUN, 'plan'))).toBe(false);
+    });
+
+    it('edits the page a version holds, not a source left behind by a publish that never landed', async () => {
+      const key = await keyOf('<p>a</p>');
+      writeFileSync(join(root, RUN, 'plan', 'v2.source.html'), '<p>stale</p>');
+      writeFileSync(
+        join(root, RUN, 'plan', 'v2.images.json'),
+        JSON.stringify({ '/tmp/x.png': `${'a'.repeat(64)}.png` }),
+      );
+      await publish({ id: 'plan', html: '<p>b</p>' });
+
+      const result = await patch(2, [edit('<p>b</p>', '<p>c</p>')]);
+
+      expect(result.ok).toBe(true);
+      expect(store.read(RUN, 'plan', 3, key)).toBe('<p>c</p>');
+      expect(files()).toEqual(['meta.json', 'v1.html', 'v2.html', 'v3.html']);
+    });
+
+    it('matches edits against the picture path the agent wrote, not the stored copy’s name', async () => {
+      const before = pngNamed('before');
+      const after = pngNamed('after');
+      const shotBefore = imageFile('before.png', before);
+      const shotAfter = imageFile('after.png', after);
+      const key = await keyOf(`<p>see</p><img src="${shotBefore}">`);
+
+      const result = await patch(1, [
+        edit(`<img src="${shotBefore}">`, `<img src="${shotAfter}">`),
+      ]);
+
+      expect(result.ok).toBe(true);
+      expect(store.read(RUN, 'plan', 2, key)).toBe(
+        `<p>see</p><img src="images/${sha256(after)}.png">`,
+      );
+    });
+
+    it('keeps a picture whose file is gone, from the copy stored with the page', async () => {
+      const bytes = pngNamed('gone');
+      const shot = imageFile('gone.png', bytes);
+      const key = await keyOf(`<p>see</p><img src="${shot}">`);
+      rmSync(shot);
+
+      const first = await patch(1, [edit('see', 'look')]);
+      const second = await patch(2, [edit('look', 'watch')]);
+
+      expect(first.ok && second.ok).toBe(true);
+      const name = `${sha256(bytes)}.png`;
+      expect(store.read(RUN, 'plan', 3, key)).toBe(
+        `<p>watch</p><img src="images/${name}">`,
+      );
+      expect(store.readImage(RUN, 'plan', key, name)?.bytes).toEqual(bytes);
+    });
+
+    it('reads a picture whose file is still there again, so a re-shot screenshot shows', async () => {
+      const shot = imageFile('shot.png', pngNamed('old'));
+      const key = await keyOf(`<p>see</p><img src="${shot}">`);
+      const fresh = pngNamed('new');
+      writeFileSync(shot, fresh);
+
+      await patch(1, [edit('see', 'look')]);
+
+      expect(store.read(RUN, 'plan', 2, key)).toBe(
+        `<p>look</p><img src="images/${sha256(fresh)}.png">`,
+      );
+    });
+
+    it('refuses a gone picture a patch names that the page never stored', async () => {
+      const key = await keyOf('<p>see</p>');
+      const missing = join(root, 'shots', 'never.png');
+
+      const result = await patch(1, [
+        edit('<p>see</p>', `<p>see</p><img src="${missing}">`),
+      ]);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining(`no file at ${missing}`),
+      });
+      expect(store.read(RUN, 'plan', 1, key)).toBe('<p>see</p>');
+      expect(files()).toEqual(['meta.json', 'v1.html']);
+    });
+
+    it('patches a page stored before sources were kept against its served text, keeping its pictures', async () => {
+      const bytes = pngNamed('legacy');
+      const shot = imageFile('legacy.png', bytes);
+      const key = await keyOf(`<p>see</p><img src="${shot}">`);
+      rmSync(join(root, RUN, 'plan', 'v1.source.html'));
+      rmSync(join(root, RUN, 'plan', 'v1.images.json'));
+      rmSync(shot);
+      const name = `${sha256(bytes)}.png`;
+
+      const result = await patch(1, [edit('see', 'look')]);
+
+      expect(result.ok).toBe(true);
+      expect(store.read(RUN, 'plan', 2, key)).toBe(
+        `<p>look</p><img src="images/${name}">`,
+      );
+    });
+
+    it('still refuses a stored picture name in a whole page sent with html', async () => {
+      const bytes = pngNamed('kept');
+      const shot = imageFile('kept.png', bytes);
+      await keyOf(`<img src="${shot}">`);
+
+      const result = await publish({
+        id: 'plan',
+        html: `<img src="images/${sha256(bytes)}.png">`,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining('not an absolute path'),
+      });
+      expect(files()).toEqual([
+        'images',
+        'meta.json',
+        'v1.html',
+        'v1.images.json',
+        'v1.source.html',
+      ]);
+    });
+
+    it('refuses a kept picture whose stored copy is gone too, naming it', async () => {
+      const bytes = pngNamed('lost');
+      const shot = imageFile('lost.png', bytes);
+      await keyOf(`<p>see</p><img src="${shot}">`);
+      const name = `${sha256(bytes)}.png`;
+      rmSync(shot);
+      rmSync(join(root, RUN, 'plan', 'images', name));
+
+      const result = await patch(1, [edit('see', 'look')]);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining(
+          `images/${name} is no longer stored with this page`,
+        ),
+      });
+    });
+
+    it('ignores a picture map entry that is not a stored picture name', async () => {
+      const bytes = pngNamed('tampered');
+      const shot = imageFile('tampered.png', bytes);
+      await keyOf(`<p>see</p><img src="${shot}">`);
+      rmSync(shot);
+      writeFileSync(
+        join(root, RUN, 'plan', 'v1.images.json'),
+        JSON.stringify({ [shot]: '../../meta.json' }),
+      );
+
+      const result = await patch(1, [edit('see', 'look')]);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining(`no file at ${shot}`),
+      });
+    });
+  });
+
   describe('removeRun', () => {
     it('drops the run’s artifacts and leaves other runs alone', async () => {
       const mine = await publish({ id: 'plan' });
