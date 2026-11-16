@@ -255,6 +255,7 @@ describe('MemoryService', () => {
       agentWrites: 'pending',
       nativeMemoryOff: false,
       autoForgetAfterDays: null,
+      removeNotUseful: true,
     });
 
     const agentEntry = created(
@@ -279,6 +280,7 @@ describe('MemoryService', () => {
         agentWrites: 'pending',
         nativeMemoryOff: false,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
     });
 
@@ -386,6 +388,7 @@ describe('MemoryService', () => {
         agentWrites: 'pending',
         nativeMemoryOff: false,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
       const waiting = created(
         await db.service.save(
@@ -399,6 +402,7 @@ describe('MemoryService', () => {
         agentWrites: 'active',
         nativeMemoryOff: false,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
       return { global, p1, gone, waiting };
     }
@@ -532,6 +536,7 @@ describe('MemoryService', () => {
         agentWrites: 'pending',
         nativeMemoryOff: false,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
       const waiting = created(
         await db.service.save(
@@ -545,6 +550,7 @@ describe('MemoryService', () => {
         agentWrites: 'active',
         nativeMemoryOff: false,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
 
       for (const entry of [other, gone, waiting]) {
@@ -779,6 +785,7 @@ describe('MemoryService', () => {
         agentWrites: 'pending',
         nativeMemoryOff: false,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
       await db.service.save(AGENT, { title: 'Waiting', body: 'x' }, NONE);
 
@@ -818,6 +825,7 @@ describe('MemoryService', () => {
         agentWrites: 'active',
         nativeMemoryOff: false,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
       const off = await db.service.runSnapshot(FACTS);
 
@@ -979,6 +987,7 @@ describe('MemoryService', () => {
         agentWrites: 'active',
         nativeMemoryOff: true,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
       const memoryOff = await db.service.runSnapshot(FACTS);
 
@@ -993,6 +1002,7 @@ describe('MemoryService', () => {
       agentWrites: 'active',
       nativeMemoryOff: false,
       autoForgetAfterDays: null,
+      removeNotUseful: true,
     });
 
     const outcome = await db.service.save(
@@ -1042,6 +1052,7 @@ describe('MemoryService', () => {
       agentWrites: 'pending',
       nativeMemoryOff: false,
       autoForgetAfterDays: null,
+      removeNotUseful: true,
     });
     await db.service.save(
       AGENT,
@@ -2171,6 +2182,7 @@ describe('MemoryService', () => {
         agentWrites: 'pending',
         nativeMemoryOff: false,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
       const pending = await seed('Loopback binding', AGENT);
       db.service.setConfig(DEFAULT_MEMORY_CONFIG);
@@ -2503,6 +2515,7 @@ describe('MemoryService', () => {
         new ProjectDao(db.em),
         db.usage,
         new RunDao(db.em),
+        db.service,
       );
       const readsOfMerged = async () =>
         (await review.page({ tab: 'cold', minAgeDays: 0 })).rows.find(
@@ -2703,6 +2716,7 @@ describe('MemoryService', () => {
         new ProjectDao(db.em),
         db.usage,
         new RunDao(db.em),
+        db.service,
       );
 
       const { batches } = await review.batches();
@@ -3087,6 +3101,7 @@ describe('MemoryService', () => {
         agentWrites: 'pending',
         nativeMemoryOff: false,
         autoForgetAfterDays: null,
+        removeNotUseful: true,
       });
     });
 

@@ -43,6 +43,9 @@ import {
   HOST_LESSONS_TOOL,
   HOST_LIST_MONITORS_TOOL,
   HOST_LIST_THREADS_TOOL,
+  HOST_MEMORY_FEEDBACK_TOOL,
+  HOST_MEMORY_FORGET_TOOL,
+  HOST_MEMORY_READ_TOOL,
   HOST_MEMORY_SAVE_TOOL,
   HOST_MEMORY_SEARCH_TOOL,
   HOST_MEMORY_TOOLS,
@@ -854,7 +857,7 @@ describe('McpServerService', () => {
       return service(...args);
     }
 
-    it('lists the four memory tools after the chat history tools while memory is on, and none while it is off', async () => {
+    it('lists the memory tools after the chat history tools, in order, while memory is on, and none while it is off', async () => {
       const names = async (memory: MemoryService) => {
         const { json } = await post(
           memoryService(memory),
@@ -875,7 +878,20 @@ describe('McpServerService', () => {
       ]);
       expect(
         on.slice(afterHistory + 2, afterHistory + 2 + HOST_MEMORY_TOOLS.length),
-      ).toEqual([...HOST_MEMORY_TOOLS]);
+      ).toEqual([
+        HOST_MEMORY_SEARCH_TOOL,
+        HOST_MEMORY_READ_TOOL,
+        HOST_MEMORY_SAVE_TOOL,
+        HOST_MEMORY_FORGET_TOOL,
+        HOST_MEMORY_FEEDBACK_TOOL,
+      ]);
+      expect(HOST_MEMORY_TOOLS).toEqual([
+        HOST_MEMORY_SEARCH_TOOL,
+        HOST_MEMORY_READ_TOOL,
+        HOST_MEMORY_SAVE_TOOL,
+        HOST_MEMORY_FORGET_TOOL,
+        HOST_MEMORY_FEEDBACK_TOOL,
+      ]);
       expect(await names(fakeMemory(false).service)).not.toEqual(
         expect.arrayContaining([HOST_MEMORY_SEARCH_TOOL]),
       );
@@ -3858,6 +3874,16 @@ describe('McpServerService — what the descriptions tell a model', () => {
     const tools = await everyHostTool();
     expect(find(tools, HOST_CHART_TOOL)).toContain('show_metrics');
     expect(find(tools, HOST_METRICS_TOOL)).toContain('show_chart');
+  });
+
+  it('makes memory_feedback and memory_forget name each other, for the entries that do not help', async () => {
+    const tools = await everyHostTool();
+    expect(find(tools, HOST_MEMORY_FEEDBACK_TOOL)).toContain(
+      HOST_MEMORY_FORGET_TOOL,
+    );
+    expect(find(tools, HOST_MEMORY_FORGET_TOOL)).toContain(
+      HOST_MEMORY_FEEDBACK_TOOL,
+    );
   });
 
   it('makes BOTH sides of the memory/knowledge boundary name the other', async () => {

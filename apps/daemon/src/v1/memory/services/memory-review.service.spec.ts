@@ -80,6 +80,7 @@ describe('MemoryReviewService', () => {
       new ProjectDao(db.em),
       db.usage,
       new RunDao(db.em),
+      db.service,
     );
   });
 
@@ -362,12 +363,23 @@ describe('MemoryReviewService', () => {
       agentWrites: 'pending',
       nativeMemoryOff: false,
       autoForgetAfterDays: null,
+      removeNotUseful: true,
     });
     await save(AGENT, { title: 'Colima restarts', body: 'x' });
     db.service.setConfig(DEFAULT_MEMORY_CONFIG);
     const gone = await save(AGENT, { title: 'Changelog format', body: 'x' });
     const batch = await db.service.forgetBatch([gone.id]);
     await use(read.id, daysBefore(10), 2);
+    const newest = {
+      batchId: batch.batchId,
+      count: 1,
+      forgottenAt: expect.any(String),
+      automatic: false,
+      kind: 'manual',
+      title: 'Changelog format',
+      reason: null,
+      purgeAt: null,
+    };
 
     expect(await review.summary(NOW)).toEqual({
       active: 3,
@@ -382,16 +394,57 @@ describe('MemoryReviewService', () => {
       minAgeDays: 14,
       countedSince: daysBefore(10),
       counting: true,
-      lastBatch: {
-        batchId: batch.batchId,
-        count: 1,
-        forgottenAt: expect.any(String),
-        automatic: false,
-      },
+      lastBatch: newest,
+      lastPass: [newest],
       autoForget: null,
     });
     await db.usage.markBackfilled();
     expect((await review.summary(NOW)).counting).toBe(false);
+  });
+
+  it('the newest pass lists every batch forgotten at its instant, with the purge dates the batch list gives', async () => {
+    const dao = new MemoryDao(db.em);
+    const older = await save(AGENT, { title: 'Older cleanup', body: 'x' });
+    await dao.forgetBatch([older.id], 'manual-older', ago(5));
+    const pass = ago(2);
+    const pnpm = await save(AGENT, { title: 'Use pnpm', body: 'x' });
+    const loopback = await save(AGENT, { title: 'Loopback only', body: 'x' });
+    const colima = await save(AGENT, { title: 'Colima restarts', body: 'x' });
+    const lesson = await save(AGENT, { title: 'Auto lesson', body: 'x' });
+    await dao.forgetBatch([pnpm.id], 'marks-1', pass);
+    await dao.forgetBatch([loopback.id], 'marks-2', pass);
+    await dao.forgetBatch([colima.id], 'marks-3', pass);
+    await dao.forgetBatch([lesson.id], 'expired-lesson-1', pass);
+
+    const summary = await review.summary(NOW);
+    const listed = (await review.batches()).batches;
+
+    expect(summary.lastPass).toHaveLength(4);
+    expect(summary.lastPass).toEqual(listed.slice(0, 4));
+    expect(listed[4]?.batchId).toBe('manual-older');
+    expect(summary.lastBatch).toEqual(summary.lastPass[0]);
+    expect(summary.lastPass.map((batch) => batch.kind).sort()).toEqual([
+      'expired_lesson',
+      'marks',
+      'marks',
+      'marks',
+    ]);
+    expect(summary.lastPass.every((batch) => batch.purgeAt !== null)).toBe(
+      true,
+    );
+
+    db.service.setConfig({ ...DEFAULT_MEMORY_CONFIG, removeNotUseful: false });
+    const off = await review.summary(NOW);
+
+    expect(
+      off.lastPass
+        .filter((batch) => batch.kind === 'marks')
+        .map((batch) => batch.purgeAt),
+    ).toEqual([null, null, null]);
+    expect(
+      off.lastPass.find((batch) => batch.kind === 'expired_lesson')?.purgeAt,
+    ).not.toBeNull();
+    expect(off.lastPass).toEqual((await review.batches()).batches.slice(0, 4));
   });
 
   it('the auto-forget figure is what the sweep takes now, with the warned ones beside it', async () => {
@@ -592,6 +645,7 @@ describe('MemoryReviewService', () => {
       } as unknown as ProjectDao,
       db.usage,
       new RunDao(db.em),
+      db.service,
     );
 
     try {
@@ -603,5 +657,111 @@ describe('MemoryReviewService', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('names a hand-made cleanup manual and a sweep automatic, and titles only a one-entry batch', async () => {
+    const em = db.em.fork();
+    em.persist(make(Run, { id: 'r-recent', status: 'completed' }));
+    await em.flush();
+    await db.em
+      .fork()
+      .nativeUpdate(Run, { id: 'r-recent' }, { createdAt: ago(-99) });
+    await save(AGENT, { title: 'Cold one', body: 'x' });
+    await save(AGENT, { title: 'Cold two', body: 'x' });
+    const mine = await save(USER, { title: 'Picked by hand', body: 'x' });
+    const byHand = await db.service.forgetBatch([mine.id]);
+    db.service.setConfig({ ...DEFAULT_MEMORY_CONFIG, autoForgetAfterDays: 30 });
+    await db.usage.markBackfilled();
+    const swept = await db.service.sweepCold(NOW);
+
+    const { batches } = await review.batches();
+
+    expect(batches.find((batch) => batch.batchId === swept?.batchId)).toEqual({
+      batchId: swept?.batchId,
+      count: 2,
+      forgottenAt: NOW.toISOString(),
+      automatic: true,
+      kind: 'automatic',
+      title: null,
+      reason: null,
+      purgeAt: null,
+    });
+    expect(
+      batches.find((batch) => batch.batchId === byHand.batchId),
+    ).toMatchObject({
+      automatic: false,
+      kind: 'manual',
+      count: 1,
+      title: 'Picked by hand',
+      reason: null,
+      purgeAt: null,
+    });
+  });
+
+  it('gives a marks cleanup and an expired lesson a purge date 30 days on, and a marks cleanup none while the switch is off', async () => {
+    const stale = await save(USER, { title: 'Stale flag', body: 'x' });
+    for (const threadId of ['t1', 't2', 't3']) {
+      await db.marks.record(
+        {
+          memoryId: stale.id,
+          threadId,
+          runId: threadId,
+          memberId: null,
+          source: 'agent',
+          verdict: 'not_useful',
+          reason: `${threadId} saw it stale`,
+          evidenceSeq: null,
+          agentKind: 'claude',
+          model: null,
+        },
+        new Date(NOW.getTime() - DAY),
+        db.em.fork(),
+      );
+    }
+    const lesson = entryOf(
+      await db.service.fileLesson(
+        { kind: 'lesson', runId: 'refl-1', agentKind: 'claude', model: 'opus' },
+        { title: 'Check before retrying', body: 'x', type: 'feedback' },
+        { projectId: null, teamSlug: null },
+        { sourceRunId: 'src-1', proposalId: 'lp-1' },
+      ),
+    );
+    const purgeAt = new Date(NOW.getTime() + 30 * DAY).toISOString();
+
+    expect(await db.service.sweepMarks(NOW)).toMatchObject({
+      forgotten: 1,
+      expired: 1,
+    });
+    let { batches: listed } = await review.batches();
+
+    expect(listed.find((batch) => batch.kind === 'marks')).toEqual({
+      batchId: expect.stringMatching(/^marks-/),
+      count: 1,
+      forgottenAt: NOW.toISOString(),
+      automatic: false,
+      kind: 'marks',
+      title: 'Stale flag',
+      reason:
+        '3 threads marked it not useful: a deleted thread — t1 saw it stale; a deleted thread — t2 saw it stale; a deleted thread — t3 saw it stale',
+      purgeAt,
+    });
+    expect(listed.find((batch) => batch.kind === 'expired_lesson')).toEqual({
+      batchId: expect.stringMatching(/^expired-lesson-/),
+      count: 1,
+      forgottenAt: NOW.toISOString(),
+      automatic: false,
+      kind: 'expired_lesson',
+      title: lesson.title,
+      reason: 'An auto lesson no thread marked helped in 90 days',
+      purgeAt,
+    });
+
+    db.service.setConfig({ ...DEFAULT_MEMORY_CONFIG, removeNotUseful: false });
+    ({ batches: listed } = await review.batches());
+
+    expect(listed.find((batch) => batch.kind === 'marks')?.purgeAt).toBeNull();
+    expect(
+      listed.find((batch) => batch.kind === 'expired_lesson')?.purgeAt,
+    ).toBe(purgeAt);
   });
 });

@@ -62,6 +62,46 @@ describe('readProposeLessons', () => {
   });
 });
 
+describe('readProposeLessons effects', () => {
+  const EFFECT = {
+    handle: 'm3',
+    effect: 'followed',
+    seq: 6,
+    reason: 'the agent ran pnpm as the rule says',
+  };
+
+  it('reads the effects a reflection reports next to its lessons', () => {
+    expect(
+      readProposeLessons({ lessons: [LESSON], effects: [EFFECT] }),
+    ).toEqual({
+      ok: true,
+      query: { lessons: [LESSON], effects: [EFFECT] },
+    });
+  });
+
+  it('reads a call without effects, and one with an empty list', () => {
+    expect(readProposeLessons({ lessons: [] })).toEqual({
+      ok: true,
+      query: { lessons: [] },
+    });
+    expect(readProposeLessons({ lessons: [], effects: [] })).toEqual({
+      ok: true,
+      query: { lessons: [], effects: [] },
+    });
+  });
+
+  it.each([
+    ['an effect that is not one of the three', { ...EFFECT, effect: 'helped' }],
+    ['an effect with no reason', { ...EFFECT, reason: '' }],
+    ['an effect with no row seq', { ...EFFECT, seq: undefined }],
+    ['an effect with an unknown field', { ...EFFECT, memberId: 'builder' }],
+  ])('refuses %s', (_, effect) => {
+    expect(readProposeLessons({ lessons: [], effects: [effect] }).ok).toBe(
+      false,
+    );
+  });
+});
+
 describe('proposeLessonsResultText', () => {
   it('lists every refusal code, and says nothing was recorded', () => {
     const result = proposeLessonsResultText({

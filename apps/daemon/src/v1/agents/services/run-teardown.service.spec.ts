@@ -8,8 +8,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CallTokenRegistry } from '../../../auth/call-token.registry';
 import { BrowserBridgeService } from '../../browser/services/browser-bridge.service';
 import { BrowserHostApprovals } from '../../browser/services/browser-host-approvals.service';
+import { MemoryMarkDao } from '../../memory/dao/memory-mark.dao';
 import { MemoryReviewFindingDao } from '../../memory/dao/memory-review-finding.dao';
 import { MemoryUsageDao } from '../../memory/dao/memory-usage.dao';
+import { MemoryMark } from '../../memory/entity/memory-mark.entity';
 import { MemoryReviewFinding } from '../../memory/entity/memory-review-finding.entity';
 import { MemoryUsageBackfill } from '../../memory/entity/memory-usage-backfill.entity';
 import { MemoryUsageDay } from '../../memory/entity/memory-usage-day.entity';
@@ -102,6 +104,7 @@ describe('RunTeardownService (in-memory sqlite)', () => {
           Goal,
           ToolCallEvent,
           UsageActivity,
+          MemoryMark,
           MemoryUsageDay,
           MemoryUsageBackfill,
           MemoryReviewFinding,
@@ -454,6 +457,34 @@ describe('RunTeardownService (in-memory sqlite)', () => {
       },
     ]);
     expect(await usage.backfilledRunIds()).toEqual(new Set(['run-a']));
+  });
+
+  it('keeps the memory marks the run’s thread made, which outlive the chat', async () => {
+    await seedRun('run-a');
+    await new MemoryMarkDao(orm.em.fork()).record(
+      {
+        memoryId: 'mem-1',
+        threadId: 'run-a',
+        runId: 'run-a',
+        memberId: null,
+        source: 'agent',
+        verdict: 'not_useful',
+        reason: 'the path moved',
+        evidenceSeq: null,
+        agentKind: AgentKind.Claude,
+        model: null,
+      },
+      new Date(),
+      orm.em.fork(),
+    );
+
+    await teardown.purge(orm.em.fork(), 'run-a', undefined);
+
+    expect(
+      await orm.em.fork().find(MemoryMark, { memoryId: 'mem-1' }),
+    ).toMatchObject([
+      { threadId: 'run-a', verdict: 'not_useful', reason: 'the path moved' },
+    ]);
   });
 
   it('keeps the memory check findings the run’s reads led to, which outlive the chat', async () => {

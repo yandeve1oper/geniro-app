@@ -8,6 +8,7 @@ import {
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
 import { tempDir } from '../../agents/__tests__/temp-dir';
+import { ItemDao } from '../../agents/dao/item.dao';
 import { NodeStateDao } from '../../agents/dao/node-state.dao';
 import { RunDao } from '../../agents/dao/run.dao';
 import { ProjectDao } from '../../projects/dao/project.dao';
@@ -20,15 +21,18 @@ import { Run } from '../../runs/entity/run.entity';
 import { TaskDao } from '../../tasks/dao/task.dao';
 import { Task } from '../../tasks/entity/task.entity';
 import { MemoryDao } from '../dao/memory.dao';
+import { MemoryMarkDao } from '../dao/memory-mark.dao';
 import { MemoryReviewFindingDao } from '../dao/memory-review-finding.dao';
 import { MemoryUsageDao } from '../dao/memory-usage.dao';
 import { Memory } from '../entity/memory.entity';
+import { MemoryMark } from '../entity/memory-mark.entity';
 import { MemoryReviewFinding } from '../entity/memory-review-finding.entity';
 import { MemoryUsageBackfill } from '../entity/memory-usage-backfill.entity';
 import { MemoryUsageDay } from '../entity/memory-usage-day.entity';
 import { MemoryService } from '../services/memory.service';
 import { MemoryEventBus } from '../services/memory-events.bus';
 import { MemoryFindingsService } from '../services/memory-findings.service';
+import { MemoryMarksService } from '../services/memory-marks.service';
 import { MemoryTextIndexService } from '../services/memory-text-index.service';
 import {
   MEMORY_USAGE_MARKER_FILE,
@@ -44,6 +48,7 @@ export async function memoryDb() {
       dbName: ':memory:',
       entities: [
         Memory,
+        MemoryMark,
         MemoryUsageDay,
         MemoryUsageBackfill,
         MemoryReviewFinding,
@@ -76,6 +81,12 @@ export async function memoryDb() {
           .map((cwd) => [cwd, ROOTS.get(cwd) ?? cwd]),
       ),
   } as unknown as ProjectRootsService;
+  const marks = new MemoryMarksService(
+    new MemoryMarkDao(em),
+    usageDao,
+    new RunDao(em),
+    new ItemDao(em),
+  );
   const service = new MemoryService(
     em,
     new MemoryDao(em),
@@ -86,6 +97,7 @@ export async function memoryDb() {
     events,
     usage,
     new MemoryReviewFindingDao(em),
+    marks,
   );
   const findings = new MemoryFindingsService(
     em,
@@ -96,6 +108,7 @@ export async function memoryDb() {
     orm,
     em,
     service,
+    marks,
     findings,
     events,
     index,

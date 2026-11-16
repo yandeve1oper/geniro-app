@@ -30,6 +30,9 @@ function storyEntry(handle: string): MemoryEntry {
     lastUsedAt: null,
     approvedAt: null,
     indexed: false,
+    promotedAt: null,
+    forgetReason: null,
+    purgeAt: null,
   };
 }
 
@@ -167,6 +170,46 @@ export const Forgot: Story = {
       reason: 'superseded by the monorepo move',
       failure: null,
     },
+  },
+};
+
+export const MarkedNotUseful: Story = {
+  args: {
+    entry: {
+      tool: 'memory_feedback',
+      handle: 'm12',
+      verdict: 'not_useful',
+      reason: 'the monorepo move changed the path',
+      retired: false,
+      failure: null,
+    },
+  },
+};
+
+export const MarkedRetired: Story = {
+  args: {
+    entry: {
+      tool: 'memory_feedback',
+      handle: 'm12',
+      verdict: 'misleading',
+      reason: 'it sent the deploy to the old host',
+      retired: true,
+      failure: null,
+    },
+  },
+};
+
+export const FeedbackRefused: Story = {
+  args: {
+    entry: {
+      tool: 'memory_feedback',
+      handle: 'm12',
+      verdict: 'helped',
+      reason: null,
+      retired: false,
+      failure: 'no entry m12 in this project.',
+    },
+    status: 'error',
   },
 };
 

@@ -737,6 +737,21 @@ describe('memory settings', () => {
     expect(readSettings().memoryAutoForgetAfterDays).toBeNull();
   });
 
+  it('removing entries agents mark not useful is on by default and keeps a saved off', () => {
+    expect(readSettings().memoryRemoveNotUseful).toBe(true);
+
+    writeRaw({ memoryRemoveNotUseful: false, onboardingComplete: true });
+    expect(readSettings().memoryRemoveNotUseful).toBe(false);
+
+    for (const memoryRemoveNotUseful of ['no', 0, null]) {
+      writeRaw({ memoryRemoveNotUseful, onboardingComplete: true });
+
+      const settings = readSettings();
+      expect(settings.memoryRemoveNotUseful).toBe(true);
+      expect(settings.onboardingComplete).toBe(true);
+    }
+  });
+
   it('a half-valid memory object keeps its valid field and defaults the other', () => {
     writeRaw({ memory: { enabled: false, agentWrites: 'bogus' } });
 

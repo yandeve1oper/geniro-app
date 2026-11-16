@@ -26,6 +26,7 @@ import type { LessonSegment } from '../entity/lesson-segment.entity';
 import {
   LESSON_REJECTED_BRIEF_MAX,
   LESSON_ROW_KINDS,
+  LESSON_SEEN_ENTRIES_BRIEF_MAX,
   LESSON_SEGMENT_LEASE_MS,
   LESSON_SEGMENT_MAX_ATTEMPTS,
   LESSONS_REFLECTION_APPROVAL,
@@ -228,11 +229,22 @@ export class LessonReflectionService implements OnModuleInit, OnModuleDestroy {
       projectId: project?.id ?? null,
       teamSlug: source.teamId,
     };
-    const rejected = await this.proposals.rejectedIn(
-      place,
-      LESSON_REJECTED_BRIEF_MAX,
-      em,
-    );
+    const rejected = [
+      ...(
+        await this.proposals.rejectedIn(place, LESSON_REJECTED_BRIEF_MAX, em)
+      ).map((proposal) => ({
+        title: proposal.title,
+        reason: proposal.rejectReason ?? proposal.checkReason,
+      })),
+      ...(await this.memory.forgottenLessons(place, LESSON_REJECTED_BRIEF_MAX)),
+    ].slice(0, LESSON_REJECTED_BRIEF_MAX);
+    const seenEntries = this.memory.enabled
+      ? await this.memory.seenEntries(
+          source.id,
+          place,
+          LESSON_SEEN_ENTRIES_BRIEF_MAX,
+        )
+      : [];
     const stretch = {
       fromSeq,
       toSeq: snapshotSeq,
@@ -300,11 +312,9 @@ export class LessonReflectionService implements OnModuleInit, OnModuleDestroy {
           fromSeq,
           toSeq: snapshotSeq,
           signals,
-          rejected: rejected.map((proposal) => ({
-            title: proposal.title,
-            reason: proposal.rejectReason ?? proposal.checkReason,
-          })),
+          rejected,
           places: placesOfRun(place, source),
+          seenEntries,
         }),
       );
     } catch (error) {

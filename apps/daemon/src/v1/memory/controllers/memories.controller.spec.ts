@@ -16,7 +16,9 @@ import {
   type MemoryFinding,
   type MemoryForgetBatchList,
   type MemoryForgetBatchResult,
+  type MemoryList,
   MemoryListQuerySchema,
+  MemoryListSchema,
   type MemoryMergeRequest,
   type MemoryMergeResult,
   MemoryPatchSchema,
@@ -53,6 +55,9 @@ const ENTRY: MemoryEntry = {
   lastUsedAt: null,
   approvedAt: null,
   indexed: true,
+  promotedAt: null,
+  forgetReason: null,
+  purgeAt: null,
 };
 
 const PAGE: MemoryReviewPage = { rows: [], total: 0, younger: 0, next: null };
@@ -73,6 +78,7 @@ const SUMMARY: MemoryReviewSummary = {
   countedSince: '2026-11-01',
   counting: false,
   lastBatch: null,
+  lastPass: [],
   autoForget: null,
 };
 
@@ -83,6 +89,10 @@ const BATCHES: MemoryForgetBatchList = {
       count: 2,
       forgottenAt: '2026-11-11T00:00:00.000Z',
       automatic: false,
+      kind: 'manual',
+      title: null,
+      reason: null,
+      purgeAt: null,
     },
   ],
 };
@@ -238,6 +248,28 @@ describe('MemoriesController', () => {
     expect(
       (await errorOf(missing.update('e9', { status: 'forgotten' }))).statusCode,
     ).toBe(404);
+  });
+
+  it('answers the list with a track per listed entry, beside the entries', async () => {
+    const track = {
+      memoryId: 'e1',
+      indexShows: 3,
+      reads: 2,
+      helped: 1,
+      notUseful: 0,
+    };
+    const listed: MemoryList = {
+      memories: [ENTRY],
+      tracks: [track],
+      next: null,
+    };
+    const controller = controllerOver({ list: async () => listed });
+
+    expect(await controller.list({})).toBe(listed);
+    expect(MemoryListSchema.safeParse(listed).success).toBe(true);
+    expect(
+      MemoryListSchema.safeParse({ memories: [ENTRY], next: null }).success,
+    ).toBe(false);
   });
 
   it('answers 404 for an entry that does not exist', async () => {

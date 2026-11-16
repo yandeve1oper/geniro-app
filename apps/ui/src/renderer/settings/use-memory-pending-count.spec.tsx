@@ -27,6 +27,7 @@ function summaryOf(pending: number): MemoryReviewSummaryDto {
     countedSince: null,
     counting: false,
     lastBatch: null,
+    lastPass: [],
     autoForget: null,
   };
 }

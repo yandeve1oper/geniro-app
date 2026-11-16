@@ -23,10 +23,15 @@ import {
   DEFAULT_MEMORY_CONFIG,
   MEMORY_AUTO_BATCH_PREFIX,
   MEMORY_BODY_MAX_BYTES,
+  MEMORY_EXPIRED_LESSON_BATCH_PREFIX,
+  MEMORY_FEEDBACK_REASON_MAX_CHARS,
   MEMORY_FORGET_BATCH_MAX,
   MEMORY_FORGET_REASON_MAX_CHARS,
+  MEMORY_LESSON_EXPIRY_DAYS,
   MEMORY_LIST_LIMIT_DEFAULT,
+  MEMORY_MARKS_BATCH_PREFIX,
   MEMORY_READ_MAX,
+  MEMORY_RULE_PURGE_AFTER_DAYS,
   MEMORY_SEARCH_MAX,
   MEMORY_STATUSES,
   MEMORY_TITLE_MAX_CHARS,
@@ -37,6 +42,8 @@ import {
   type MemoryEdit,
   type MemoryEntry,
   type MemoryExport,
+  type MemoryFeedbackOutcome,
+  type MemoryFeedbackVerdict,
   type MemoryForgetAll,
   type MemoryForgetBatchResult,
   type MemoryForgetOutcome,
@@ -54,6 +61,7 @@ import {
   type MemoryMergeRequest,
   type MemoryPatch,
   type MemoryPurgeResult,
+  type MemoryReflectionEffect,
   type MemoryRefusalCode,
   type MemoryRestoreBatchResult,
   type MemoryRunSnapshot,
@@ -67,6 +75,12 @@ import {
 import { autoForgetFilterOf } from '../utils/memory-auto-forget';
 import { memoryExportMarkdown } from '../utils/memory-export';
 import { markForgotten, markRestored } from '../utils/memory-forget-stamp';
+import {
+  forgetsByMarks,
+  marksForgetReason,
+  type MemoryMarkTally,
+  promotesLesson,
+} from '../utils/memory-marks-fold';
 import {
   referencedPathsOf,
   statesRule,
@@ -82,6 +96,7 @@ import {
 } from '../utils/memory-text';
 import { DAY_MS } from '../utils/memory-usage-day';
 import { MemoryEventBus } from './memory-events.bus';
+import { MemoryMarksService } from './memory-marks.service';
 import {
   MEMORY_USAGE_BACKFILL_VERSION,
   MemoryUsageService,
@@ -91,6 +106,7 @@ import {
 const DUPLICATE_CANDIDATES = 20;
 
 const AUTO_FORGET_FIRST_RUN_MS = 5 * 60 * 1000;
+const EXPIRED_LESSON_REASON = `An auto lesson no thread marked helped in ${MEMORY_LESSON_EXPIRY_DAYS} days`;
 const AUTO_FORGET_EVERY_MS = DAY_MS;
 
 type Refusal = Extract<MemorySaveOutcome, { kind: 'refused' }>;
@@ -146,6 +162,7 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     private readonly events: MemoryEventBus,
     private readonly usage: MemoryUsageService,
     private readonly findings: MemoryReviewFindingDao,
+    private readonly marks: MemoryMarksService,
   ) {}
 
   /**
@@ -219,35 +236,262 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
    * its handle is never handed out again, and its usage figures stay.
    */
   purge(id: string): Promise<MemoryPurgeResult | 'missing' | 'not-forgotten'> {
+    return this.serialize(() => this.purgeNow(id, new Date()));
+  }
+
+  /**
+   * The daily pass over agents' marks, after the cold sweep: forget every
+   * entry its marks condemn (unless the user switched that off), forget the
+   * auto lessons nobody confirmed in time, delete for good what either rule
+   * forgot once its hold is over, and admit the auto lessons agents found
+   * helpful to the memory index. Null when memory is off or not pushed yet.
+   */
+  sweepMarks(now = new Date()): Promise<{
+    forgotten: number;
+    expired: number;
+    purged: number;
+    promoted: number;
+  } | null> {
+    if (!this.configured || !this.enabled) {
+      return Promise.resolve(null);
+    }
     return this.serialize(async () => {
       const em = this.em.fork();
-      const row = await this.memories.getById(id, em);
-      if (!row) {
-        return 'missing';
-      }
-      const hash =
-        row.sourceActor === 'import'
-          ? importedTextHash(row.title, row.body)
-          : null;
-      const purged = await em.transactional(async (tx) => {
-        if (!(await this.memories.purge(id, hash, new Date(), tx))) {
-          return false;
+      const tallies = await this.marks.tallies(null, now, em);
+      const forgotten = this.config.removeNotUseful
+        ? await this.forgetByMarks([...tallies.keys()], tallies, now, em)
+        : 0;
+      const promoted = await this.promoteHelped(tallies, now, em);
+      const expiredIds = await this.memories.expiredLessonIds(
+        new Date(now.getTime() - MEMORY_LESSON_EXPIRY_DAYS * DAY_MS),
+        MEMORY_FORGET_BATCH_MAX,
+        em,
+      );
+      const expired = (
+        await this.forgetAsBatch(
+          expiredIds,
+          now,
+          em,
+          MEMORY_EXPIRED_LESSON_BATCH_PREFIX,
+          EXPIRED_LESSON_REASON,
+        )
+      ).forgotten;
+      const due = await this.memories.ruleForgottenBefore(
+        this.config.removeNotUseful
+          ? [MEMORY_EXPIRED_LESSON_BATCH_PREFIX, MEMORY_MARKS_BATCH_PREFIX]
+          : [MEMORY_EXPIRED_LESSON_BATCH_PREFIX],
+        new Date(now.getTime() - MEMORY_RULE_PURGE_AFTER_DAYS * DAY_MS),
+        MEMORY_FORGET_BATCH_MAX,
+        em,
+      );
+      let purged = 0;
+      for (const id of due) {
+        if (typeof (await this.purgeNow(id, now)) === 'object') {
+          purged += 1;
         }
-        await this.findings.deleteNaming(id, tx);
-        return true;
-      });
-      if (!purged) {
-        return 'not-forgotten';
       }
-      this.events.publish({
-        memoryId: null,
-        change: 'bulk',
-        status: 'forgotten',
-        projectId: row.projectId,
-        teamSlug: row.teamSlug,
-      });
-      return { id, handle: memoryHandle(row.handle) };
+      return { forgotten, expired, purged, promoted };
     });
+  }
+
+  /**
+   * An agent's word on an entry its run had in front of it — listed in the
+   * run's memory index or returned by its own `memory_read`. One vote per
+   * thread: a later mark replaces the earlier one. `helped` stamps the entry
+   * used and, for one the run only had in its index, counts the read its own
+   * `memory_read` would have; a mark that tips the entry over the threshold
+   * forgets it at once.
+   */
+  feedback(
+    actor: MemoryActor,
+    memberId: string | null,
+    handle: string,
+    verdict: MemoryFeedbackVerdict,
+    reason: string,
+    place: RunPlace,
+  ): Promise<MemoryFeedbackOutcome> {
+    return this.serialize(async () => {
+      if (actor.kind !== 'agent' && actor.kind !== 'analysis') {
+        return refused('USER_ONLY', 'only an agent marks entries');
+      }
+      if (!this.config.enabled) {
+        return refused('MEMORY_DISABLED', 'the user has turned memory off');
+      }
+      if (await this.isReflection(actor)) {
+        return refused(
+          'REFLECTION_READ_ONLY',
+          'a lessons reflection reports what entries did with propose_lessons',
+        );
+      }
+      const run = await this.runs.getById(actor.runId, this.em.fork());
+      const threadId = run?.analysisSourceRunId ?? actor.runId;
+      const trimmed = reason.trim();
+      if (trimmed.length === 0) {
+        return refused(
+          'REASON_REQUIRED',
+          'say in one line what the entry did for this task',
+        );
+      }
+      if (trimmed.length > MEMORY_FEEDBACK_REASON_MAX_CHARS) {
+        return refused(
+          'TOO_LONG',
+          `the reason is ${trimmed.length} characters; the limit is ${MEMORY_FEEDBACK_REASON_MAX_CHARS}`,
+        );
+      }
+      if (hasHiddenText(trimmed, false)) {
+        return refused(
+          'INVALID_ENTRY',
+          'the reason must be one line of plain text',
+        );
+      }
+      if (redactSecrets(trimmed) !== trimmed) {
+        return refused(
+          'CONTAINS_SECRET',
+          'the reason contains a secret geniro knows about; write it without one',
+        );
+      }
+      const em = this.em.fork();
+      const row = await this.findVisible(handle, place, em);
+      if (!row) {
+        return refused(
+          'NOT_FOUND',
+          `no active memory ${handle} this run can see`,
+        );
+      }
+      const named = memoryHandle(row.handle);
+      const seen = await this.marks.seenIn(
+        actor.runId,
+        { id: row.id, handle: named },
+        em,
+      );
+      if (seen === null) {
+        return refused(
+          'NOT_SEEN',
+          `${named} was not in this run's memory index and no memory_read of this run returned it — mark only an entry you read`,
+        );
+      }
+      const now = new Date();
+      await this.marks.record(
+        {
+          memoryId: row.id,
+          threadId,
+          runId: actor.runId,
+          memberId,
+          source: 'agent',
+          verdict,
+          reason: trimmed,
+          evidenceSeq: null,
+          agentKind: actor.agentKind,
+          model: actor.model,
+        },
+        now,
+        em,
+      );
+      if (verdict === 'helped') {
+        await this.memories.touch([row.id], now);
+        if (seen === 'index') {
+          await this.usage.count([row.id], 'reads');
+        }
+      }
+      const forgotten = await this.applyMarks([row.id], now, em);
+      return {
+        kind: 'marked',
+        handle: named,
+        verdict,
+        forgotten: forgotten > 0,
+      };
+    });
+  }
+
+  /**
+   * What a lessons reflection saw entries do in the thread it read, recorded
+   * as that thread's marks. Each effect names an entry the thread's agents
+   * could see; the reflection checked that it was in front of them.
+   */
+  markByReflection(
+    reflection: Extract<MemoryActor, { kind: 'lesson' }>,
+    threadId: string,
+    effects: readonly (MemoryReflectionEffect & { memoryId: string })[],
+  ): Promise<void> {
+    if (effects.length === 0 || !this.config.enabled) {
+      return Promise.resolve();
+    }
+    return this.serialize(async () => {
+      const em = this.em.fork();
+      const now = new Date();
+      for (const effect of effects) {
+        await this.marks.record(
+          {
+            memoryId: effect.memoryId,
+            threadId,
+            runId: reflection.runId,
+            memberId: null,
+            source: 'reflection',
+            verdict: effect.verdict,
+            reason: effect.reason,
+            evidenceSeq: effect.evidenceSeq,
+            agentKind: reflection.agentKind,
+            model: reflection.model,
+          },
+          now,
+          em,
+        );
+      }
+      await this.applyMarks(
+        effects.map((effect) => effect.memoryId),
+        now,
+        em,
+      );
+    });
+  }
+
+  /**
+   * The active entries `place` may see that the run had in front of it —
+   * listed in its memory index or returned by its own `memory_read` — at most
+   * `limit`, as a lessons reflection is told about them.
+   */
+  async seenEntries(
+    runId: string,
+    place: RunPlace,
+    limit: number,
+  ): Promise<MemoryEntry[]> {
+    const visible = await this.listVisible(place);
+    const seen = await this.marks.seenBy(runId, visible, this.em.fork());
+    return visible.filter((entry) => seen.has(entry.id)).slice(0, limit);
+  }
+
+  /**
+   * Auto lessons `place` may see that agents' marks or the expiry forgot,
+   * newest first: a reflection is told not to file them again unasked.
+   */
+  async forgottenLessons(
+    place: RunPlace,
+    limit: number,
+  ): Promise<{ title: string; reason: string | null }[]> {
+    const rows = await this.memories.getInScope(
+      { statuses: ['forgotten'], places: { visibleTo: place } },
+      undefined,
+      this.em.fork(),
+    );
+    return rows
+      .filter(
+        (row) =>
+          row.sourceActor === 'lesson' &&
+          row.forgetBatchId !== null &&
+          (row.forgetBatchId.startsWith(MEMORY_MARKS_BATCH_PREFIX) ||
+            row.forgetBatchId.startsWith(MEMORY_EXPIRED_LESSON_BATCH_PREFIX)),
+      )
+      .sort(
+        (a, b) =>
+          (b.forgottenAt?.getTime() ?? 0) - (a.forgottenAt?.getTime() ?? 0),
+      )
+      .slice(0, limit)
+      .map((row) => ({ title: row.title, reason: row.forgetReason }));
+  }
+
+  /** Whether agents' marks may forget entries and delete them for good. */
+  get removesNotUseful(): boolean {
+    return this.config.removeNotUseful;
   }
 
   /** Apply what the user chose for a deleted team's entries. */
@@ -279,9 +523,24 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     return this.config.enabled;
   }
 
+  /**
+   * Flipping the removal by marks moves the purge date of every entry those
+   * marks forgot, so the lists are told to read again once it has landed.
+   */
   setConfig(config: MemoryConfig): MemoryConfig {
+    const flipped =
+      this.configured && this.config.removeNotUseful !== config.removeNotUseful;
     this.config = { ...config };
     this.configured = true;
+    if (flipped) {
+      this.events.publish({
+        memoryId: null,
+        change: 'bulk',
+        status: 'forgotten',
+        projectId: null,
+        teamSlug: null,
+      });
+    }
     return this.config;
   }
 
@@ -544,7 +803,12 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
       if (indexable(row) === indexed) {
         return { kind: 'changed', entry: toEntry(row) };
       }
-      row.approvedAt = indexed ? new Date() : null;
+      const now = new Date();
+      row.approvedAt = indexed ? now : null;
+      if (!indexed && row.sourceActor === 'lesson') {
+        row.promotedAt = null;
+        row.restoredAt = now;
+      }
       row.rev += 1;
       await em.flush();
       this.publish(row, indexed ? 'approved' : 'updated');
@@ -590,7 +854,7 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     if (query.q !== undefined) {
       const ready = chatTextMatchQuery(query.q);
       if (ready === null) {
-        return { memories: [], next: null };
+        return { memories: [], tracks: [], next: null };
       }
       match = ready;
     }
@@ -626,7 +890,12 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     );
     const last = rows.at(-1);
     return {
-      memories: rows.map(toEntry),
+      memories: rows.map((row) => entryOf(row, this.removesNotUseful)),
+      tracks: await this.marks.trackRecords(
+        rows.map((row) => row.id),
+        new Date(),
+        this.em.fork(),
+      ),
       next:
         rows.length === limit && last
           ? {
@@ -640,7 +909,7 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
   /** One entry by id, whatever its status or scope — the user's read. */
   async get(id: string): Promise<MemoryEntry | null> {
     const row = await this.memories.getById(id, this.em.fork());
-    return row ? toEntry(row) : null;
+    return row ? entryOf(row, this.removesNotUseful) : null;
   }
 
   /**
@@ -1373,11 +1642,12 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
     at: Date,
     em: EntityManager,
     batchPrefix = '',
+    reason: string | null = null,
   ): Promise<MemoryForgetBatchResult> {
     const wanted = [...new Set(ids)];
     const batchId = `${batchPrefix}${randomUUID()}`;
     const taken = new Set(
-      await this.memories.forgetBatch(wanted, batchId, at, em),
+      await this.memories.forgetBatch(wanted, batchId, at, em, null, reason),
     );
     const left = wanted.filter((id) => !taken.has(id));
     const known = new Map(
@@ -1418,6 +1688,129 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
         `memory auto-forget failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    try {
+      const result = await this.sweepMarks();
+      if (result !== null) {
+        this.logger.log(
+          `memory marks pass: forgot ${result.forgotten}, expired ${result.expired}, purged ${result.purged}, promoted ${result.promoted}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `memory marks pass failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Act on these entries' marks now: forget each one they condemn as a batch
+   * of its own (unless switched off), and promote each auto lesson they
+   * vouch for. Returns how many were forgotten.
+   */
+  private async applyMarks(
+    memoryIds: readonly string[],
+    now: Date,
+    em: EntityManager,
+  ): Promise<number> {
+    const tallies = await this.marks.tallies(memoryIds, now, em);
+    const forgotten = this.config.removeNotUseful
+      ? await this.forgetByMarks(memoryIds, tallies, now, em)
+      : 0;
+    await this.promoteHelped(tallies, now, em);
+    return forgotten;
+  }
+
+  private async forgetByMarks(
+    memoryIds: readonly string[],
+    tallies: ReadonlyMap<string, MemoryMarkTally>,
+    now: Date,
+    em: EntityManager,
+  ): Promise<number> {
+    const condemned = memoryIds.filter((id) => {
+      const tally = tallies.get(id);
+      return tally !== undefined && forgetsByMarks(tally);
+    });
+    if (condemned.length === 0) {
+      return 0;
+    }
+    const titles = await this.marks.threadTitles(
+      condemned.flatMap((id) =>
+        tallies.get(id)!.notUsefulThreads.map((vote) => vote.threadId),
+      ),
+      em,
+    );
+    let forgotten = 0;
+    for (const id of condemned) {
+      const reason = marksForgetReason(
+        tallies.get(id)!,
+        (threadId) => titles.get(threadId) ?? null,
+      );
+      forgotten += (
+        await this.forgetAsBatch(
+          [id],
+          now,
+          em,
+          MEMORY_MARKS_BATCH_PREFIX,
+          reason,
+        )
+      ).forgotten;
+    }
+    return forgotten;
+  }
+
+  private async promoteHelped(
+    tallies: ReadonlyMap<string, MemoryMarkTally>,
+    now: Date,
+    em: EntityManager,
+  ): Promise<number> {
+    const due = [...tallies]
+      .filter(([, tally]) => promotesLesson(tally))
+      .map(([id]) => id);
+    const promoted = await this.memories.promote(due, now, em);
+    for (const id of promoted) {
+      this.events.publish({
+        memoryId: id,
+        change: 'updated',
+        status: 'active',
+        projectId: null,
+        teamSlug: null,
+      });
+    }
+    return promoted.length;
+  }
+
+  private async purgeNow(
+    id: string,
+    at: Date,
+  ): Promise<MemoryPurgeResult | 'missing' | 'not-forgotten'> {
+    const em = this.em.fork();
+    const row = await this.memories.getById(id, em);
+    if (!row) {
+      return 'missing';
+    }
+    const hash =
+      row.sourceActor === 'import'
+        ? importedTextHash(row.title, row.body)
+        : null;
+    const purged = await em.transactional(async (tx) => {
+      if (!(await this.memories.purge(id, hash, at, tx))) {
+        return false;
+      }
+      await this.findings.deleteNaming(id, tx);
+      await this.marks.deleteFor(id, tx);
+      return true;
+    });
+    if (!purged) {
+      return 'not-forgotten';
+    }
+    this.events.publish({
+      memoryId: null,
+      change: 'bulk',
+      status: 'forgotten',
+      projectId: row.projectId,
+      teamSlug: row.teamSlug,
+    });
+    return { id, handle: memoryHandle(row.handle) };
   }
 
   private serialize<T>(work: () => Promise<T>): Promise<T> {
@@ -1429,7 +1822,8 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
 
 /**
  * Whether an active entry may sit in a run's instructions: the user's own, an
- * import's, or one the user approved. An agent's unreviewed entry is reached
+ * import's, one the user approved, or an auto lesson agents' `helped` marks
+ * promoted. An agent's unreviewed entry is reached
  * only through `memory_search`, a tool result framed as data — one an agent
  * was steered into saving must not speak in every later run's instructions.
  *
@@ -1437,7 +1831,8 @@ export class MemoryService implements OnModuleInit, OnApplicationShutdown {
  */
 function indexable(row: Memory): boolean {
   return (
-    row.status === 'active' && (alwaysIndexed(row) || row.approvedAt !== null)
+    row.status === 'active' &&
+    (alwaysIndexed(row) || row.approvedAt !== null || row.promotedAt !== null)
   );
 }
 
@@ -1560,6 +1955,7 @@ function stampSource(
   lesson?: MemoryLessonSource,
 ): void {
   row.approvedAt = null;
+  row.promotedAt = null;
   row.sourceActor = actor.kind;
   row.sourceAgentKind = 'agentKind' in actor ? actor.agentKind : null;
   row.sourceModel = 'model' in actor ? actor.model : null;
@@ -1569,7 +1965,44 @@ function stampSource(
   row.lessonProposalId = lesson?.proposalId ?? null;
 }
 
+/**
+ * When a rule that forgot this row deletes it for good: agents' marks only
+ * while that removal is switched on, the auto-lesson expiry always.
+ */
+function purgeAtOf(row: Memory, marksPurge: boolean): string | null {
+  const batch = row.forgetBatchId;
+  if (
+    row.status !== 'forgotten' ||
+    row.forgottenAt === null ||
+    batch === null
+  ) {
+    return null;
+  }
+  const byRule =
+    batch.startsWith(MEMORY_EXPIRED_LESSON_BATCH_PREFIX) ||
+    (marksPurge && batch.startsWith(MEMORY_MARKS_BATCH_PREFIX));
+  return byRule
+    ? new Date(
+        row.forgottenAt.getTime() + MEMORY_RULE_PURGE_AFTER_DAYS * DAY_MS,
+      ).toISOString()
+    : null;
+}
+
 export function toEntry(row: Memory): MemoryEntry {
+  return entryOf(row, true);
+}
+
+/** {@link toEntry}, its purge date as the user's switch for removal by marks has it. */
+export function entryOf(row: Memory, marksPurge: boolean): MemoryEntry {
+  const source = {
+    actor: row.sourceActor,
+    agentKind: row.sourceAgentKind,
+    model: row.sourceModel,
+    runId: row.sourceRunId,
+    importedFrom: row.sourceImportedFrom,
+  };
+  const approvedAt = row.approvedAt?.toISOString() ?? null;
+  const promotedAt = row.promotedAt?.toISOString() ?? null;
   return {
     id: row.id,
     handle: memoryHandle(row.handle),
@@ -1580,18 +2013,15 @@ export function toEntry(row: Memory): MemoryEntry {
     teamSlug: row.teamSlug,
     status: row.status,
     rev: row.rev,
-    source: {
-      actor: row.sourceActor,
-      agentKind: row.sourceAgentKind,
-      model: row.sourceModel,
-      runId: row.sourceRunId,
-      importedFrom: row.sourceImportedFrom,
-    },
+    source,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
-    approvedAt: row.approvedAt?.toISOString() ?? null,
+    approvedAt,
+    promotedAt,
     indexed: indexable(row),
+    forgetReason: row.forgetReason,
+    purgeAt: purgeAtOf(row, marksPurge),
   };
 }
 

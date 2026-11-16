@@ -29,6 +29,9 @@ const ENTRY: MemoryEntry = {
   lastUsedAt: null,
   approvedAt: null,
   indexed: false,
+  promotedAt: null,
+  forgetReason: null,
+  purgeAt: null,
 };
 
 describe('readMemoryReadArgs', () => {

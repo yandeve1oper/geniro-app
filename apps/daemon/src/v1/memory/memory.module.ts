@@ -9,11 +9,13 @@ import { MemoriesController } from './controllers/memories.controller';
 import { MemoryConfigController } from './controllers/memory-config.controller';
 import { MemoryPurgeController } from './controllers/memory-purge.controller';
 import { MemoryDao } from './dao/memory.dao';
+import { MemoryMarkDao } from './dao/memory-mark.dao';
 import { MemoryReviewFindingDao } from './dao/memory-review-finding.dao';
 import { MemoryUsageDao } from './dao/memory-usage.dao';
 import { MemoryService } from './services/memory.service';
 import { MemoryEventBus } from './services/memory-events.bus';
 import { MemoryFindingsService } from './services/memory-findings.service';
+import { MemoryMarksService } from './services/memory-marks.service';
 import { MemoryReviewService } from './services/memory-review.service';
 import { MemoryTextIndexService } from './services/memory-text-index.service';
 import { MemoryUsageService } from './services/memory-usage.service';
@@ -39,6 +41,7 @@ import { MemoryUsageBackfillService } from './services/memory-usage-backfill.ser
   providers: [
     DesktopOnlyGuard,
     MemoryDao,
+    MemoryMarkDao,
     MemoryUsageDao,
     MemoryReviewFindingDao,
     RunDao,
@@ -47,6 +50,7 @@ import { MemoryUsageBackfillService } from './services/memory-usage-backfill.ser
     MemoryService,
     MemoryEventBus,
     MemoryFindingsService,
+    MemoryMarksService,
     MemoryReviewService,
     MemoryTextIndexService,
     MemoryUsageService,

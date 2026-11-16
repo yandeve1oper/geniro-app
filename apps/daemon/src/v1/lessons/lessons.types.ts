@@ -12,6 +12,14 @@ export const LESSONS_REFLECTION_APPROVAL: ChatApprovalMode = 'ask';
 export const LESSON_REJECT_REASON_MAX_CHARS = 300;
 /** How many rejected proposals of the same place a reflection is shown. */
 export const LESSON_REJECTED_BRIEF_MAX = 20;
+/** Memory entries a reflection brief lists as in front of the thread's agents. */
+export const LESSON_SEEN_ENTRIES_BRIEF_MAX = 30;
+/** Effects one reflection may report. */
+export const LESSON_EFFECTS_MAX = 10;
+export const LESSON_EFFECT_REASON_MAX_CHARS = 200;
+/** What a reflection saw an entry do in the thread, and the mark it becomes. */
+export const LESSON_EFFECTS = ['followed', 'misled', 'broken'] as const;
+export type LessonEffect = (typeof LESSON_EFFECTS)[number];
 
 /** The rows the lessons machinery writes into a thread: never new activity to reflect on. */
 export const LESSON_ROW_KINDS: readonly ItemKind[] = [
@@ -688,6 +696,38 @@ export const ProposeLessonsCallSchema = z.object({
     )
     .describe(
       `At most ${LESSONS_PER_REFLECTION_MAX}; an empty list when no lesson passes all five gates`,
+    ),
+  effects: z
+    .array(
+      z
+        .object({
+          handle: z
+            .string()
+            .min(1)
+            .describe(
+              'A memory entry your brief lists as in front of this thread’s agents (m12)',
+            ),
+          effect: z
+            .enum(LESSON_EFFECTS)
+            .describe(
+              'followed: the agents relied on it and it helped; misled: following it caused a mistake; broken: the agents had it and acted against it',
+            ),
+          seq: z
+            .number()
+            .int()
+            .describe('The seq of the row inside your stretch that shows it'),
+          reason: z
+            .string()
+            .min(1)
+            .describe(
+              `What the entry did here, at most ${LESSON_EFFECT_REASON_MAX_CHARS} characters`,
+            ),
+        })
+        .strict(),
+    )
+    .optional()
+    .describe(
+      `At most ${LESSON_EFFECTS_MAX}: what memory entries did in this stretch, only where a row shows it; omit or leave empty when none clearly did anything`,
     ),
 });
 export type ProposeLessonsCall = z.infer<typeof ProposeLessonsCallSchema>;

@@ -453,6 +453,7 @@ export class MemoryDao extends BaseDao<Memory> {
     at: Date,
     em: EntityManager = this.em,
     mergedIntoId: string | null = null,
+    reason: string | null = null,
   ): Promise<string[]> {
     if (ids.length === 0) {
       return [];
@@ -462,7 +463,7 @@ export class MemoryDao extends BaseDao<Memory> {
       .set((eb) => ({
         status_before_forget: eb.ref('status'),
         status: 'forgotten',
-        forget_reason: null,
+        forget_reason: reason,
         rev: eb('rev', '+', 1),
         merged_into_id: mergedIntoId,
         ...forgottenColumns(at, batchId),
@@ -547,36 +548,161 @@ export class MemoryDao extends BaseDao<Memory> {
     }));
   }
 
-  /** The newest cleanups whose entries are still forgotten. */
+  /**
+   * The newest cleanups whose entries are still forgotten; with `forgottenAt`,
+   * only the entries forgotten at that instant.
+   */
   async batches(
     limit: number,
     em: EntityManager = this.em,
-  ): Promise<{ batchId: string; count: number; forgottenAt: number }[]> {
+    forgottenAt?: number,
+  ): Promise<
+    {
+      batchId: string;
+      count: number;
+      forgottenAt: number;
+      title: string | null;
+      reason: string | null;
+    }[]
+  > {
     const rows = await this.database(em)
       .selectFrom('memories')
       .select((eb) => [
         'forget_batch_id',
         eb.fn.countAll<number>().as('n'),
         eb.fn.max('forgotten_at').as('at'),
+        eb.fn.max('title').as('title'),
+        eb.fn.min('forget_reason').as('reason_low'),
+        eb.fn.max('forget_reason').as('reason_high'),
+        eb.fn.count('forget_reason').as('reasons'),
       ])
       .where('deleted_at', 'is', null)
       .where('status', '=', 'forgotten')
       .where('forget_batch_id', 'is not', null)
+      .$if(forgottenAt !== undefined, (query) =>
+        query.where('forgotten_at', '=', forgottenAt ?? null),
+      )
       .groupBy('forget_batch_id')
       .orderBy('at', 'desc')
+      .orderBy('forget_batch_id')
       .limit(limit)
       .execute();
-    return rows.flatMap((row) =>
-      row.forget_batch_id === null
-        ? []
-        : [
-            {
-              batchId: row.forget_batch_id,
-              count: Number(row.n),
-              forgottenAt: Number(row.at ?? 0),
-            },
-          ],
-    );
+    return rows.flatMap((row) => {
+      if (row.forget_batch_id === null) {
+        return [];
+      }
+      const count = Number(row.n);
+      const shared =
+        Number(row.reasons) === count && row.reason_low === row.reason_high;
+      return [
+        {
+          batchId: row.forget_batch_id,
+          count,
+          forgottenAt: Number(row.at ?? 0),
+          title: count === 1 ? (row.title ?? null) : null,
+          reason: shared ? (row.reason_low ?? null) : null,
+        },
+      ];
+    });
+  }
+
+  /**
+   * Forgotten rows a rule's batch took before `before`, still forgotten:
+   * what the daily sweep deletes for good once their hold is over.
+   */
+  async ruleForgottenBefore(
+    prefixes: readonly string[],
+    before: Date,
+    max: number,
+    em: EntityManager = this.em,
+  ): Promise<string[]> {
+    if (prefixes.length === 0) {
+      return [];
+    }
+    const rows = await this.database(em)
+      .selectFrom('memories')
+      .select('id')
+      .where('deleted_at', 'is', null)
+      .where('status', '=', 'forgotten')
+      .where('forgotten_at', '<', before.getTime())
+      .where((eb) =>
+        eb.or(
+          prefixes.map((prefix) => eb('forget_batch_id', 'like', `${prefix}%`)),
+        ),
+      )
+      .orderBy('handle')
+      .limit(max)
+      .execute();
+    return rows.map((row) => row.id);
+  }
+
+  /**
+   * Active auto lessons, neither approved nor promoted, filed or last
+   * restored before `cutoff` and marked `helped` by no thread since then
+   * and since `cutoff`: the ones nobody confirmed in time.
+   */
+  async expiredLessonIds(
+    cutoff: Date,
+    max: number,
+    em: EntityManager = this.em,
+  ): Promise<string[]> {
+    const at = cutoff.getTime();
+    const rows = await this.database(em)
+      .selectFrom('memories as m')
+      .select('m.id')
+      .where('m.deleted_at', 'is', null)
+      .where('m.status', '=', 'active')
+      .where('m.source_actor', '=', 'lesson')
+      .where('m.approved_at', 'is', null)
+      .where('m.promoted_at', 'is', null)
+      .where('m.created_at', '<', at)
+      .where((eb) =>
+        eb.or([eb('m.restored_at', 'is', null), eb('m.restored_at', '<', at)]),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('memory_marks as k')
+              .select('k.id')
+              .whereRef('k.memory_id', '=', 'm.id')
+              .where('k.deleted_at', 'is', null)
+              .where('k.verdict', '=', 'helped')
+              .where('k.updated_at', '>=', at)
+              .where((eb) =>
+                eb.or([
+                  eb('m.restored_at', 'is', null),
+                  eb('k.updated_at', '>', eb.ref('m.restored_at')),
+                ]),
+              ),
+          ),
+        ),
+      )
+      .orderBy('m.handle')
+      .limit(max)
+      .execute();
+    return rows.map((row) => row.id);
+  }
+
+  /** Admit these active auto lessons to the memory index, outside the entity so the edit time stays. */
+  async promote(
+    ids: readonly string[],
+    at: Date,
+    em: EntityManager = this.em,
+  ): Promise<string[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const rows = await this.database(em)
+      .updateTable('memories')
+      .set({ promoted_at: at.getTime() })
+      .where('id', 'in', [...ids])
+      .where('deleted_at', 'is', null)
+      .where('status', '=', 'active')
+      .where('source_actor', '=', 'lesson')
+      .where('promoted_at', 'is', null)
+      .returning('id')
+      .execute();
+    return rows.map((row) => row.id);
   }
 
   /** Keep a live row out of the cleanup list, or stop; false when there is none. */
@@ -1112,6 +1238,7 @@ function reachExpression<DB extends { m: MemoryRow }>(
     ref.or([
       ref('m.source_actor', 'in', ['user', 'import']),
       ref('m.approved_at', 'is not', null),
+      ref('m.promoted_at', 'is not', null),
     ]),
   ]);
 }

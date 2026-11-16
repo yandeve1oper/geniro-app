@@ -352,6 +352,71 @@ describe('memory_forget', () => {
   });
 });
 
+describe('memory_feedback', () => {
+  it('shows the handle and the verdict it gave, with the reason', () => {
+    draw(
+      pair(
+        'memory_feedback',
+        {
+          id: 'm12',
+          verdict: 'not_useful',
+          reason: 'the monorepo move changed the path',
+        },
+        { text: 'Marked m12 not useful.' },
+      ),
+    );
+    expect(line()).toBe(
+      'Marked memory · m12 not useful · the monorepo move changed the path',
+    );
+  });
+
+  it('says so when the verdict tipped the entry out of the agents’ view', () => {
+    draw(
+      pair(
+        'memory_feedback',
+        {
+          id: 'm12',
+          verdict: 'misleading',
+          reason: 'it sent the deploy to the old host',
+        },
+        {
+          text: 'Marked m12 misleading. Enough threads found it not useful, so no agent sees it any more; the user can bring it back.',
+        },
+      ),
+    );
+    expect(line()).toBe(
+      'Marked memory · m12 misleading · it sent the deploy to the old host · no agent sees it now',
+    );
+  });
+
+  it('shows a refusal instead of the verdict and reason', () => {
+    draw(
+      pair(
+        'memory_feedback',
+        { id: 'm12', verdict: 'helped', reason: 'saved a migration' },
+        { text: 'NOT_SEEN: m12 was not shown to this run.', isError: true },
+      ),
+      { status: 'error' },
+    );
+    expect(line()).toBe('Marked memory · m12 · m12 was not shown to this run.');
+  });
+
+  it('reads a verdict it does not know as none', () => {
+    expect(
+      memoryToolEntryOf(
+        pair('memory_feedback', { id: 'm12', verdict: 'loved' }, { text: 'x' }),
+      ),
+    ).toEqual({
+      tool: 'memory_feedback',
+      handle: 'm12',
+      verdict: null,
+      reason: null,
+      retired: false,
+      failure: null,
+    });
+  });
+});
+
 function memory(handle: string, title: string): MemoryEntry {
   return {
     id: `id-${handle}`,
@@ -375,6 +440,9 @@ function memory(handle: string, title: string): MemoryEntry {
     lastUsedAt: null,
     approvedAt: null,
     indexed: true,
+    promotedAt: null,
+    forgetReason: null,
+    purgeAt: null,
   };
 }
 

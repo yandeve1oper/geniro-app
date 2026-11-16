@@ -369,24 +369,31 @@ export function useMemoryCleanup(
     refresh();
   };
 
-  const undo = (batchId: string): void => {
+  const undoPass = (batchIds: readonly string[]): void => {
     if (api === null) {
       return;
     }
-    void api
-      .restoreMemoryBatch({ batchId })
-      .then(({ restored }) =>
+    void Promise.all(
+      batchIds.map((batchId) => api.restoreMemoryBatch({ batchId })),
+    )
+      .then((answers) => {
+        const restored = answers.reduce(
+          (sum, answer) => sum + answer.restored,
+          0,
+        );
         setNotice({
           text:
             restored === 0
               ? 'Nothing to restore: every entry of that cleanup was changed since.'
               : `Restored ${entries(restored)}. Each is back as it was.`,
           batchId: null,
-        }),
-      )
+        });
+      })
       .catch((err: unknown) => setError(describeDaemonError(err)))
       .finally(refresh);
   };
+
+  const undo = (batchId: string): void => undoPass([batchId]);
 
   const act = (
     entry: MemoryEntry,
@@ -492,11 +499,13 @@ export function useMemoryCleanup(
     untickAll: clearPicks,
     forget,
     undo,
+    undoPass,
     keep,
     unkeep,
     restore,
     purge,
     autoForgetFigure,
+    refreshSummary: readSummary,
     loadMore,
     batches,
     notice,

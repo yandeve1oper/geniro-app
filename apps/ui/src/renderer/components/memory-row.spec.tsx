@@ -230,6 +230,103 @@ describe('MemoryRow', () => {
     expect(body.className).toContain('line-clamp-2');
   });
 
+  it('says how the threads used an entry under its provenance, with the figures that are above zero', () => {
+    const el = render(
+      <MemoryRow
+        entry={memoryEntry()}
+        projectName={null}
+        track={{
+          memoryId: 'memory-1',
+          indexShows: 3,
+          reads: 2,
+          helped: 1,
+          notUseful: 0,
+        }}
+      />,
+    );
+    const line = el.querySelector('[data-slot="memory-track"]')!;
+    expect(line.textContent).toBe(
+      'Shown in 3 runs · read 2 · helped 1 · not useful 0',
+    );
+    expect(line.className).toContain('text-muted-foreground');
+  });
+
+  it('leaves the track line out while every figure is zero or the list carries none', () => {
+    const zero = {
+      memoryId: 'memory-1',
+      indexShows: 0,
+      reads: 0,
+      helped: 0,
+      notUseful: 0,
+    };
+    expect(
+      render(
+        <MemoryRow entry={memoryEntry()} projectName={null} track={zero} />,
+      ).querySelector('[data-slot="memory-track"]'),
+    ).toBeNull();
+    expect(
+      render(
+        <MemoryRow entry={memoryEntry()} projectName={null} />,
+      ).querySelector('[data-slot="memory-track"]'),
+    ).toBeNull();
+  });
+
+  it('reads one run in the singular', () => {
+    const el = render(
+      <MemoryRow
+        entry={memoryEntry()}
+        projectName={null}
+        track={{
+          memoryId: 'memory-1',
+          indexShows: 1,
+          reads: 0,
+          helped: 0,
+          notUseful: 0,
+        }}
+      />,
+    );
+    expect(
+      el.querySelector('[data-slot="memory-track"]')!.textContent,
+    ).toContain('Shown in 1 run · read 0');
+  });
+
+  it('gives a forgotten entry its reason and the day it is deleted for good', () => {
+    const el = row('forgotten', {
+      entry: memoryEntry({
+        status: 'forgotten',
+        forgetReason: '3 threads marked it not useful',
+        purgeAt: '2026-12-15T12:00:00.000Z',
+      }),
+    });
+    const note = el.querySelector('[data-slot="memory-forget-note"]')!;
+    expect(note.textContent).toBe(
+      '3 threads marked it not useful · deleted for good on Dec 15',
+    );
+    expect(note.className).toContain('line-clamp-2');
+  });
+
+  it('gives a forgotten entry with no reason only its purge day', () => {
+    const el = row('forgotten', {
+      entry: memoryEntry({
+        status: 'forgotten',
+        purgeAt: '2026-12-15T12:00:00.000Z',
+      }),
+    });
+    expect(
+      el.querySelector('[data-slot="memory-forget-note"]')!.textContent,
+    ).toBe('Deleted for good on Dec 15');
+  });
+
+  it('draws no forget note on an entry that was not forgotten', () => {
+    const el = row('active', {
+      entry: memoryEntry({
+        forgetReason: 'stale',
+        purgeAt: '2026-12-15T12:00:00.000Z',
+      }),
+    });
+    expect(el.querySelector('[data-slot="memory-forget-note"]')).toBeNull();
+  });
+
   it('scrolls itself to the middle when it becomes focused', () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;

@@ -59,6 +59,7 @@ import { ListAgentThreadsTool } from './list-agent-threads/list-agent-threads.to
 import { ListMonitorsTool } from './list-monitors/list-monitors.tool';
 import { ListThreadsTool } from './list-threads/list-threads.tool';
 import { MarkRecommendationsTool } from './mark-recommendations/mark-recommendations.tool';
+import { MemoryFeedbackTool } from './memory-feedback/memory-feedback.tool';
 import { MemoryForgetTool } from './memory-forget/memory-forget.tool';
 import { MemoryReadTool } from './memory-read/memory-read.tool';
 import { MemorySaveTool } from './memory-save/memory-save.tool';
@@ -194,6 +195,7 @@ function allMcpTools(deps: McpToolDeps): McpTool[] {
     new MemoryReadTool(deps.memory),
     new MemorySaveTool(deps.memory),
     new MemoryForgetTool(deps.memory),
+    new MemoryFeedbackTool(deps.memory),
     new KnowledgeSearchTool(deps.knowledge, deps),
     new KnowledgeReadTool(deps.knowledge, deps),
     new KnowledgeSaveTool(deps.knowledge, deps, deps.knowledgeItems),

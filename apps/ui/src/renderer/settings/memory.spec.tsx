@@ -24,6 +24,7 @@ import type {
   MemoriesApiListMemoryReviewRequest,
   MemoryEntry,
   MemoryFinding,
+  MemoryForgetBatch,
   MemoryForgetBatchListDto,
   MemoryImportPreviewDto,
   MemoryImportResultDto,
@@ -114,8 +115,55 @@ const SUMMARY: MemoryReviewSummaryDto = {
   countedSince: '2026-10-29',
   counting: false,
   lastBatch: null,
+  lastPass: [],
   autoForget: null,
 };
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const PASS_FORGOTTEN_AT = new Date(
+  Date.now() - 2 * 60 * 60 * 1000,
+).toISOString();
+const PASS_PURGE_AT = new Date(
+  Date.parse(PASS_FORGOTTEN_AT) + 30 * DAY_MS,
+).toISOString();
+
+function forgetBatch(
+  batchId: string,
+  kind: MemoryForgetBatch['kind'],
+  title: string,
+  purgeAt: string | null,
+): MemoryForgetBatch {
+  return {
+    batchId,
+    count: 1,
+    forgottenAt: PASS_FORGOTTEN_AT,
+    automatic: false,
+    kind,
+    title,
+    reason: null,
+    purgeAt,
+  };
+}
+
+const MARKS: MemoryForgetBatch[] = [
+  forgetBatch('marks-1', 'marks', 'Use pnpm', PASS_PURGE_AT),
+  forgetBatch('marks-2', 'marks', 'Loopback only', PASS_PURGE_AT),
+  forgetBatch('marks-3', 'marks', 'Colima restarts', PASS_PURGE_AT),
+  forgetBatch('marks-4', 'marks', 'Changelog format', PASS_PURGE_AT),
+  forgetBatch('marks-5', 'marks', 'Edit rule', PASS_PURGE_AT),
+  forgetBatch('marks-6', 'marks', 'Pnpm workspace', PASS_PURGE_AT),
+];
+const LESSON = forgetBatch(
+  'expired-lesson-1',
+  'expired_lesson',
+  'Verify before merge',
+  PASS_PURGE_AT,
+);
+const PASS: MemoryForgetBatch[] = [...MARKS, LESSON];
+
+function passOf(batches: MemoryForgetBatch[]): Partial<MemoryReviewSummaryDto> {
+  return { lastBatch: batches[0] ?? null, lastPass: batches };
+}
 
 function reviewRow(
   entry: MemoryEntry,
@@ -226,6 +274,7 @@ function fakeApi(
               (request.reach === undefined ||
                 (request.reach === 'index') === entry.indexed),
           ),
+          tracks: [],
           next: null,
         }),
     ),
@@ -590,6 +639,30 @@ describe('Memory', () => {
       { memory: { ...DEFAULT_SETTINGS.memory, enabled: false } },
     ]);
     expect(await memoryRowActions(rowOf('m1'))).toContain('Edit');
+  });
+
+  it('shows each entry the figures its track record gives, from the list page that carries it', async () => {
+    const api = fakeApi();
+    api.listMemories.mockImplementation(() =>
+      Promise.resolve({
+        memories: [ACTIVE],
+        tracks: [
+          {
+            memoryId: ACTIVE.id,
+            indexShows: 2,
+            reads: 1,
+            helped: 0,
+            notUseful: 3,
+          },
+        ],
+        next: null,
+      }),
+    );
+    await render({ api });
+
+    expect(rowOf('m1').textContent).toContain(
+      'Shown in 2 runs · read 1 · helped 0 · not useful 3',
+    );
   });
 
   it('re-reads the list once for a burst of memory announcements', async () => {
@@ -1020,6 +1093,7 @@ describe('Memory', () => {
     api.listMemories.mockImplementation((request: { status?: string } = {}) =>
       Promise.resolve({
         memories: request.status === 'pending' ? [WAITING] : [ACTIVE, WAITING],
+        tracks: [],
         next:
           request.status === 'pending'
             ? { beforeUpdatedAt: WAITING.updatedAt, beforeId: WAITING.id }
@@ -1047,16 +1121,22 @@ describe('Memory', () => {
     api.listMemories.mockImplementation(
       (request: { status?: string; beforeId?: string } = {}) => {
         if (request.status === 'pending') {
-          return Promise.resolve<MemoryListDto>({ memories: [], next: null });
+          return Promise.resolve<MemoryListDto>({
+            memories: [],
+            tracks: [],
+            next: null,
+          });
         }
         if (request.beforeId === undefined) {
           return Promise.resolve<MemoryListDto>({
             memories: [ACTIVE],
+            tracks: [],
             next: { beforeUpdatedAt: ACTIVE.updatedAt, beforeId: ACTIVE.id },
           });
         }
         return new Promise<MemoryListDto>((resolve) => {
-          release = () => resolve({ memories: [older], next: null });
+          release = () =>
+            resolve({ memories: [older], tracks: [], next: null });
         });
       },
     );
@@ -1090,15 +1170,21 @@ describe('Memory', () => {
     api.listMemories.mockImplementation(
       (request: { status?: string; beforeId?: string } = {}) => {
         if (request.status === 'pending') {
-          return Promise.resolve<MemoryListDto>({ memories: [], next: null });
+          return Promise.resolve<MemoryListDto>({
+            memories: [],
+            tracks: [],
+            next: null,
+          });
         }
         if (request.beforeId !== undefined) {
           return new Promise<MemoryListDto>((resolve) => {
-            finishPage = () => resolve({ memories: [older], next: null });
+            finishPage = () =>
+              resolve({ memories: [older], tracks: [], next: null });
           });
         }
         const first: MemoryListDto = {
           memories: [ACTIVE],
+          tracks: [],
           next: { beforeUpdatedAt: ACTIVE.updatedAt, beforeId: ACTIVE.id },
         };
         reads += 1;
@@ -1514,15 +1600,21 @@ describe('Memory clean up', () => {
   });
 
   it('undoes the last cleanup from the panel, wherever it was made', async () => {
+    const batch: MemoryForgetBatch = {
+      batchId: 'batch-9',
+      count: 4,
+      forgottenAt: new Date().toISOString(),
+      kind: 'automatic',
+      title: null,
+      reason: null,
+      purgeAt: null,
+      automatic: true,
+    };
     const api = await render({
       api: fakeApi(undefined, undefined, {
         ...SUMMARY,
-        lastBatch: {
-          batchId: 'batch-9',
-          count: 4,
-          forgottenAt: new Date().toISOString(),
-          automatic: true,
-        },
+        lastBatch: batch,
+        lastPass: [batch],
       }),
     });
 
@@ -1532,6 +1624,74 @@ describe('Memory clean up', () => {
     await press(button(container, 'Undo'));
 
     expect(api.restoreMemoryBatch).toHaveBeenCalledWith({ batchId: 'batch-9' });
+  });
+
+  it('shows a cleanup pass as one line of its totals and its titles, with one Undo all', async () => {
+    await render({
+      api: fakeApi(undefined, undefined, { ...SUMMARY, ...passOf(PASS) }),
+    });
+
+    expect(container.textContent).toContain(
+      "Forgot 7 entries in one pass · 2h ago · 6 by agents' marks · 1 auto lesson nobody confirmed · deleted for good on ",
+    );
+    expect(container.textContent).toContain(
+      'Use pnpm · Loopback only · Colima restarts · Changelog format · Edit rule · Pnpm workspace · Verify before merge',
+    );
+    const buttons = [...container.querySelectorAll('button')].map((candidate) =>
+      candidate.textContent?.trim(),
+    );
+    expect(buttons).toContain('Undo all');
+    expect(buttons).not.toContain('Undo');
+  });
+
+  it('undoes every batch of a pass with one press, refreshes the summary once and says so once', async () => {
+    const api = await render({
+      api: fakeApi(undefined, undefined, { ...SUMMARY, ...passOf(PASS) }),
+    });
+    api.restoreMemoryBatch.mockImplementation(() =>
+      Promise.resolve({ restored: 1 }),
+    );
+    const summaryReads = api.memoryReviewSummary.mock.calls.length;
+
+    await press(button(container, 'Undo all'));
+
+    expect(
+      api.restoreMemoryBatch.mock.calls.map(([request]) => request.batchId),
+    ).toEqual(PASS.map((batch) => batch.batchId));
+    expect(api.memoryReviewSummary.mock.calls.length).toBe(summaryReads + 1);
+    expect(container.textContent).toContain(
+      'Restored 7 entries. Each is back as it was.',
+    );
+  });
+
+  it('re-reads the cleanup summary when the removal switch flips, so the purge date follows it', async () => {
+    const api = await render({
+      api: fakeApi(undefined, undefined, { ...SUMMARY, ...passOf(MARKS) }),
+    });
+    api.memoryReviewSummary.mockImplementation(() =>
+      Promise.resolve<MemoryReviewSummaryDto>({
+        ...SUMMARY,
+        ...passOf(
+          MARKS.map((batch) => ({
+            ...batch,
+            purgeAt: stored.memoryRemoveNotUseful ? PASS_PURGE_AT : null,
+          })),
+        ),
+      }),
+    );
+    expect(container.textContent).toContain('deleted for good on ');
+    const summaryReads = api.memoryReviewSummary.mock.calls.length;
+
+    await press(
+      container.querySelector<HTMLElement>(
+        '#settings-memory-remove-not-useful',
+      )!,
+    );
+
+    expect(api.memoryReviewSummary.mock.calls.length).toBeGreaterThan(
+      summaryReads,
+    );
+    expect(container.textContent).not.toContain('deleted for good on ');
   });
 
   it('says why nothing is proposed while the cold entries are all younger than the age', () => {
@@ -1555,6 +1715,10 @@ describe('Memory clean up', () => {
           batchId: 'batch-7',
           count: 3,
           forgottenAt: new Date().toISOString(),
+          kind: 'manual',
+          title: null,
+          reason: null,
+          purgeAt: null,
           automatic: false,
         },
       ],
@@ -1766,6 +1930,34 @@ describe('Memory clean up', () => {
 
     expect(inDialog().textContent).toContain('Old rule');
     expect(await memoryRowActions(dialogRow('m3'))).toEqual(['Restore']);
+  });
+
+  it('turns the removal of entries agents mark not useful off in settings, once it is read', async () => {
+    await render();
+    const toggle = container.querySelector<HTMLElement>(
+      '#settings-memory-remove-not-useful',
+    )!;
+    expect(container.textContent).toContain(
+      'When three more threads mark an entry not useful than helped, it is forgotten — any entry, kept ones included. It stays restorable under Forgotten for 30 days, then is deleted for good.',
+    );
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+
+    await press(toggle);
+
+    expect(writes).toEqual([{ memoryRemoveNotUseful: false }]);
+    expect(
+      container
+        .querySelector('#settings-memory-remove-not-useful')!
+        .getAttribute('aria-checked'),
+    ).toBe('false');
+  });
+
+  it('offers no removal switch on a paired device', async () => {
+    await render({ remote: true });
+
+    expect(container.textContent).not.toContain(
+      'Remove entries agents mark as not useful',
+    );
   });
 
   it('arms the automatic sweep only after a confirm naming what it would forget now', async () => {

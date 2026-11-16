@@ -33,6 +33,9 @@ const HIT: MemoryHit = {
   lastUsedAt: null,
   approvedAt: null,
   indexed: false,
+  promotedAt: null,
+  forgetReason: null,
+  purgeAt: null,
 };
 
 describe('readMemorySearchArgs', () => {

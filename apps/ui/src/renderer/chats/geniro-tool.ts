@@ -192,6 +192,7 @@ export const GENIRO_MEMORY_TOOLS = [
   'memory_read',
   'memory_save',
   'memory_forget',
+  'memory_feedback',
 ] as const;
 
 export type GeniroMemoryTool = (typeof GENIRO_MEMORY_TOOLS)[number];

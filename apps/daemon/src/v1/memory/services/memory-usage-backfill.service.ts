@@ -10,10 +10,7 @@ import { MemoryUsageDao } from '../dao/memory-usage.dao';
 import type { MemoryUsageCount } from '../memory.types';
 import { indexHandlesOf } from '../utils/memory-text';
 import { usageDay } from '../utils/memory-usage-day';
-import {
-  memoryHistoryToolNames,
-  memoryUsageHistory,
-} from '../utils/memory-usage-history';
+import { runMemoryUsage } from '../utils/memory-usage-history';
 import {
   MEMORY_USAGE_BACKFILL_VERSION,
   MemoryUsageService,
@@ -112,37 +109,8 @@ export class MemoryUsageBackfillService {
     idsByHandle: ReadonlyMap<string, string>,
   ): Promise<void> {
     const em = this.em.fork();
-    const memoryCalls = await this.items.toolCallsNamed(
-      run.id,
-      [...memoryHistoryToolNames(run.id).keys()],
-      em,
-    );
-    const callIds = [
-      ...new Set(
-        memoryCalls
-          .filter((call) => call.createdAt < cutoff)
-          .map((call) => call.payloadId)
-          .filter((id): id is string => id !== null),
-      ),
-    ];
-    const sharingIds =
-      callIds.length === 0
-        ? []
-        : await this.items.rowsByPayloadId(
-            run.id,
-            ['tool_call', 'tool_result'],
-            callIds,
-            undefined,
-            em,
-          );
     const counts: MemoryUsageCount[] = [
-      ...memoryUsageHistory(
-        run.id,
-        sharingIds.filter((row) => row.kind === 'tool_call'),
-        sharingIds.filter((row) => row.kind === 'tool_result'),
-        idsByHandle,
-        cutoff,
-      ),
+      ...(await runMemoryUsage(this.items, run.id, idsByHandle, cutoff, em)),
       ...indexShowsOf(run, idsByHandle),
     ];
     await em.transactional(async (tx) => {

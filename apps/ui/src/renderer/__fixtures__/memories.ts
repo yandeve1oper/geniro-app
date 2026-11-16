@@ -36,6 +36,9 @@ export function memoryEntry(over: Partial<MemoryEntry> = {}): MemoryEntry {
     updatedAt: '2026-10-20T09:00:00.000Z',
     lastUsedAt: null,
     approvedAt: null,
+    promotedAt: null,
+    forgetReason: null,
+    purgeAt: null,
     ...over,
   };
   return {
@@ -45,7 +48,8 @@ export function memoryEntry(over: Partial<MemoryEntry> = {}): MemoryEntry {
       (entry.status === 'active' &&
         (entry.source.actor === 'user' ||
           entry.source.actor === 'import' ||
-          entry.approvedAt !== null)),
+          entry.approvedAt !== null ||
+          entry.promotedAt !== null)),
   };
 }
 

@@ -48,6 +48,8 @@ const TEAM = teamOf([member('builder'), member('reviewer')], {
   name: 'Reviewers',
 });
 const TEAM_SNAPSHOT = teamSnapshotOf(TEAM);
+const SEEN_M3 = { id: 'id-m3', handle: 'm3', title: 'Use pnpm, not npm!' };
+const SEEN_M7 = { id: 'id-m7', handle: 'm7', title: 'Port 47615' };
 
 const ITEMS: Item[] = [
   message(4, 'the earlier stretch says use pnpm not npm too'),
@@ -106,7 +108,8 @@ function build(
     } | null;
     project?: { id: string } | null;
     documents?: { id: string }[];
-    visible?: { handle: string; title: string }[];
+    visible?: { id: string; handle: string; title: string }[];
+    seen?: { id: string; handle: string; title: string }[];
     items?: Item[];
     closedBy?: 'manual' | 'archive' | 'delete';
     checker?: LessonModelChoice | null;
@@ -177,6 +180,8 @@ function build(
   };
   const memory = {
     listVisible: vi.fn(() => Promise.resolve(options.visible ?? [])),
+    seenEntries: vi.fn(() => Promise.resolve(options.seen ?? [])),
+    markByReflection: vi.fn(() => Promise.resolve()),
     fileLesson: vi.fn(() =>
       Promise.resolve(
         options.saved ?? {
@@ -253,6 +258,7 @@ function expectNothingWritten(fixture: ReturnType<typeof build>): void {
   expect(fixture.runDao.updateById).not.toHaveBeenCalled();
   expect(fixture.rows.write).not.toHaveBeenCalled();
   expect(fixture.memory.fileLesson).not.toHaveBeenCalled();
+  expect(fixture.memory.markByReflection).not.toHaveBeenCalled();
   expect(fixture.segment.status).toBe('reflecting');
 }
 
@@ -422,7 +428,7 @@ describe('LessonFilingService.file', () => {
 
   it('refuses a new lesson whose title a visible entry already carries', async () => {
     const fixture = build({
-      visible: [{ handle: 'm3', title: 'Use pnpm, not npm!' }],
+      visible: [{ id: 'id-m3', handle: 'm3', title: 'Use pnpm, not npm!' }],
     });
 
     const duplicate = await fixture.service.file(fixture.turn, [
@@ -444,7 +450,9 @@ describe('LessonFilingService.file', () => {
 
   it('refuses a new lesson that says a visible entry in other words, and records one that says another thing', async () => {
     const fixture = build({
-      visible: [{ handle: 'm3', title: 'Run pnpm test before a commit' }],
+      visible: [
+        { id: 'id-m3', handle: 'm3', title: 'Run pnpm test before a commit' },
+      ],
     });
 
     const similar = await fixture.service.file(fixture.turn, [
@@ -468,7 +476,7 @@ describe('LessonFilingService.file', () => {
     'refuses a %s verdict that names no visible entry',
     async (_, dedup) => {
       const fixture = build({
-        visible: [{ handle: 'm3', title: 'Use pnpm, not npm!' }],
+        visible: [{ id: 'id-m3', handle: 'm3', title: 'Use pnpm, not npm!' }],
       });
 
       const result = await fixture.service.file(fixture.turn, [
@@ -898,7 +906,9 @@ describe('LessonFilingService.file', () => {
     'keeps a memory lesson that %s an entry as proposed, filing no entry for it, while a new lesson beside it is filed',
     async (verdict) => {
       const fixture = build({
-        visible: [{ handle: 'm3', title: 'Run pnpm test before a commit' }],
+        visible: [
+          { id: 'id-m3', handle: 'm3', title: 'Run pnpm test before a commit' },
+        ],
       });
 
       const result = await fixture.service.file(fixture.turn, [
@@ -939,5 +949,203 @@ describe('LessonFilingService.file', () => {
     expect(codesOf(again)).toEqual(['ALREADY_FILED']);
     expect(fixture.tx.persist).toHaveBeenCalledTimes(1);
     expect(fixture.rows.write).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a followed effect on an entry the thread saw as a reflection mark, naming the thread and the reflection', async () => {
+    const fixture = build({ visible: [SEEN_M3], seen: [SEEN_M3] });
+
+    const result = await fixture.service.file(
+      fixture.turn,
+      [],
+      [
+        {
+          handle: 'm3',
+          effect: 'followed',
+          seq: 6,
+          reason: 'the agent ran pnpm as the rule says',
+        },
+      ],
+    );
+
+    expect(result).toEqual({ status: 'recorded', count: 0 });
+    expect(fixture.memory.seenEntries).toHaveBeenCalledWith(
+      'src',
+      { projectId: null, teamSlug: null },
+      1,
+    );
+    expect(fixture.memory.markByReflection).toHaveBeenCalledWith(
+      { kind: 'lesson', runId: 'refl', agentKind: 'claude', model: 'opus' },
+      'src',
+      [
+        {
+          memoryId: 'id-m3',
+          handle: 'm3',
+          verdict: 'helped',
+          reason: 'the agent ran pnpm as the rule says',
+          evidenceSeq: 6,
+        },
+      ],
+    );
+  });
+
+  it('maps a misled effect to a misleading mark and a broken one to broken, each on its own entry and row', async () => {
+    const fixture = build({
+      visible: [SEEN_M3, SEEN_M7],
+      seen: [SEEN_M3, SEEN_M7],
+    });
+
+    await fixture.service.file(
+      fixture.turn,
+      [],
+      [
+        {
+          handle: 'm3',
+          effect: 'misled',
+          seq: 6,
+          reason: 'following it led to the wrong command',
+        },
+        {
+          handle: 'm7',
+          effect: 'broken',
+          seq: 9,
+          reason: 'the agent hard-coded the port it says not to',
+        },
+      ],
+    );
+
+    expect(fixture.memory.markByReflection).toHaveBeenCalledWith(
+      { kind: 'lesson', runId: 'refl', agentKind: 'claude', model: 'opus' },
+      'src',
+      [
+        {
+          memoryId: 'id-m3',
+          handle: 'm3',
+          verdict: 'misleading',
+          reason: 'following it led to the wrong command',
+          evidenceSeq: 6,
+        },
+        {
+          memoryId: 'id-m7',
+          handle: 'm7',
+          verdict: 'broken',
+          reason: 'the agent hard-coded the port it says not to',
+          evidenceSeq: 9,
+        },
+      ],
+    );
+  });
+
+  it('refuses an effect on an entry the thread’s agents never had in front of them, filing and recording nothing', async () => {
+    const fixture = build({ visible: [SEEN_M3], seen: [] });
+
+    const result = await fixture.service.file(
+      fixture.turn,
+      [lesson()],
+      [
+        {
+          handle: 'm3',
+          effect: 'followed',
+          seq: 6,
+          reason: 'the agent ran pnpm',
+        },
+      ],
+    );
+
+    expect(codesOf(result)).toEqual(['NOT_SEEN']);
+    expectNothingWritten(fixture);
+  });
+
+  it.each([4, 10])(
+    'refuses an effect whose row %i is outside the reflection’s stretch, recording nothing',
+    async (seq) => {
+      const fixture = build({ visible: [SEEN_M3], seen: [SEEN_M3] });
+
+      const result = await fixture.service.file(
+        fixture.turn,
+        [],
+        [
+          {
+            handle: 'm3',
+            effect: 'followed',
+            seq,
+            reason: 'the agent ran pnpm',
+          },
+        ],
+      );
+
+      expect(codesOf(result)).toEqual(['EVIDENCE_OUT_OF_SEGMENT']);
+      expectNothingWritten(fixture);
+    },
+  );
+
+  it('refuses more than ten effects, recording nothing', async () => {
+    const fixture = build({ visible: [SEEN_M3], seen: [SEEN_M3] });
+    const effects = Array.from({ length: 11 }, () => ({
+      handle: 'm3',
+      effect: 'followed' as const,
+      seq: 6,
+      reason: 'the agent ran pnpm',
+    }));
+
+    const result = await fixture.service.file(fixture.turn, [], effects);
+
+    expect(codesOf(result)).toEqual(['TOO_MANY']);
+    expectNothingWritten(fixture);
+  });
+
+  it('records the marks of its effects even when the reflection files no lesson', async () => {
+    const fixture = build({ visible: [SEEN_M3], seen: [SEEN_M3] });
+
+    const result = await fixture.service.file(
+      fixture.turn,
+      [],
+      [
+        {
+          handle: 'm3',
+          effect: 'followed',
+          seq: 6,
+          reason: 'the agent ran pnpm as the rule says',
+        },
+      ],
+    );
+
+    expect(result).toEqual({ status: 'recorded', count: 0 });
+    expect(fixture.segment.status).toBe('empty');
+    expect(fixture.memory.markByReflection).toHaveBeenCalledWith(
+      { kind: 'lesson', runId: 'refl', agentKind: 'claude', model: 'opus' },
+      'src',
+      [
+        {
+          memoryId: 'id-m3',
+          handle: 'm3',
+          verdict: 'helped',
+          reason: 'the agent ran pnpm as the rule says',
+          evidenceSeq: 6,
+        },
+      ],
+    );
+  });
+  it('still records the stretch when writing its marks fails, so the filing is never stranded', async () => {
+    const fixture = build({ visible: [SEEN_M3], seen: [SEEN_M3] });
+    fixture.memory.markByReflection.mockImplementationOnce(() =>
+      Promise.reject(new Error('database is locked')),
+    );
+
+    const result = await fixture.service.file(
+      fixture.turn,
+      [],
+      [
+        {
+          handle: 'm3',
+          effect: 'misled',
+          seq: 6,
+          reason: 'the stale flag sent the agent wrong',
+        },
+      ],
+    );
+
+    expect(result).toEqual({ status: 'recorded', count: 0 });
+    expect(fixture.segment.status).toBe('empty');
+    expect(fixture.memory.markByReflection).toHaveBeenCalledTimes(1);
   });
 });

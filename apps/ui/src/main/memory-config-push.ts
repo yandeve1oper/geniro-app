@@ -4,15 +4,20 @@ import { DaemonConfigPush } from './daemon-config-push';
 /** The body of `PUT /v1/memories/config`. */
 export interface MemoryConfig extends MemorySettings {
   autoForgetAfterDays: number | null;
+  removeNotUseful: boolean;
 }
 
-/** The memory settings and the top-level auto-forget window, as the daemon takes them. */
+/** The memory settings and the two top-level sweep switches, as the daemon takes them. */
 export function memoryConfigOf(
-  settings: Pick<Settings, 'memory' | 'memoryAutoForgetAfterDays'>,
+  settings: Pick<
+    Settings,
+    'memory' | 'memoryAutoForgetAfterDays' | 'memoryRemoveNotUseful'
+  >,
 ): MemoryConfig {
   return {
     ...settings.memory,
     autoForgetAfterDays: settings.memoryAutoForgetAfterDays,
+    removeNotUseful: settings.memoryRemoveNotUseful,
   };
 }
 

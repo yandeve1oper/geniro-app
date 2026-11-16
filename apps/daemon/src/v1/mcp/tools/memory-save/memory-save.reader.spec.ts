@@ -26,6 +26,9 @@ const ENTRY: MemoryEntry = {
   lastUsedAt: null,
   approvedAt: null,
   indexed: false,
+  promotedAt: null,
+  forgetReason: null,
+  purgeAt: null,
 };
 
 const FENCE = 'memory-entry-f00d';

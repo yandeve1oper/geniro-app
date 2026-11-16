@@ -1,5 +1,5 @@
 import { EntityManager } from '@mikro-orm/sqlite';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 import type { AnalysisTurn } from '../../agents/chat.types';
 import { ItemDao } from '../../agents/dao/item.dao';
@@ -11,6 +11,7 @@ import { KnowledgeService } from '../../knowledge/services/knowledge.service';
 import { placeKeyOf } from '../../knowledge/utils/knowledge-text';
 import {
   memoryHandle,
+  type MemoryReflectionEffect,
   type MemorySaveOutcome,
   parseMemoryHandle,
 } from '../../memory/memory.types';
@@ -23,10 +24,13 @@ import { LessonSegmentDao } from '../dao/lesson-segment.dao';
 import { LessonProposal } from '../entity/lesson-proposal.entity';
 import type { LessonSegment } from '../entity/lesson-segment.entity';
 import {
+  LESSON_EFFECT_REASON_MAX_CHARS,
+  LESSON_EFFECTS_MAX,
   LESSON_RULE_MAX_CHARS,
   LESSON_TITLE_MAX_CHARS,
   LESSON_WHY_MAX_CHARS,
   type LessonDedup,
+  type LessonEffect,
   type LessonOutcomePayload,
   type LessonPlaces,
   type LessonProposalCard,
@@ -52,6 +56,21 @@ export interface ProposedLesson {
   dedup: LessonDedup;
 }
 
+/** What a reflection saw one memory entry do, as `propose_lessons` hands it over. */
+export interface ProposedEffect {
+  handle: string;
+  effect: LessonEffect;
+  seq: number;
+  reason: string;
+}
+
+const MARK_OF_EFFECT: Record<LessonEffect, MemoryReflectionEffect['verdict']> =
+  {
+    followed: 'helped',
+    misled: 'misleading',
+    broken: 'broken',
+  };
+
 export type LessonRefusalCode =
   | 'NOT_A_REFLECTION'
   | 'ALREADY_FILED'
@@ -62,6 +81,7 @@ export type LessonRefusalCode =
   | 'QUOTE_NOT_FOUND'
   | 'CONTAINS_SECRET'
   | 'UNKNOWN_HANDLE'
+  | 'NOT_SEEN'
   | 'NEAR_DUPLICATE'
   | 'NO_PLACE_FOR_TARGET'
   | 'UNKNOWN_MEMBER'
@@ -102,6 +122,7 @@ export type LessonCheckStarter = (
  */
 @Injectable()
 export class LessonFilingService {
+  private readonly logger = new Logger(LessonFilingService.name);
   private checkStarter: LessonCheckStarter | null = null;
 
   constructor(
@@ -131,6 +152,7 @@ export class LessonFilingService {
   async file(
     turn: AnalysisTurn,
     lessons: readonly ProposedLesson[],
+    effects: readonly ProposedEffect[] = [],
   ): Promise<LessonFiled> {
     if (turn.purpose !== 'lessons') {
       return refusedWith(
@@ -166,6 +188,13 @@ export class LessonFilingService {
     const place = { projectId: project?.id ?? null, teamSlug: source.teamId };
     const places = placesOfRun(place, source);
     const visible = await this.memory.listVisible(place);
+    const seen = new Set(
+      effects.length === 0
+        ? []
+        : (await this.memory.seenEntries(source.id, place, visible.length)).map(
+            (entry) => entry.id,
+          ),
+    );
     const problems: { code: LessonRefusalCode; reason: string }[] = [];
     for (const [index, lesson] of lessons.entries()) {
       const at = `lessons[${index}]`;
@@ -216,6 +245,70 @@ export class LessonFilingService {
         });
       }
     }
+    if (effects.length > LESSON_EFFECTS_MAX) {
+      problems.push({
+        code: 'TOO_MANY',
+        reason: `effects: at most ${LESSON_EFFECTS_MAX} — keep the clearest`,
+      });
+    }
+    const marks: (MemoryReflectionEffect & { memoryId: string })[] = [];
+    for (const [index, effect] of effects.entries()) {
+      const at = `effects[${index}]`;
+      const reason = effect.reason.trim();
+      if (
+        reason.length === 0 ||
+        reason.length > LESSON_EFFECT_REASON_MAX_CHARS
+      ) {
+        problems.push({
+          code: 'TOO_LONG',
+          reason: `${at}: the reason must be 1–${LESSON_EFFECT_REASON_MAX_CHARS} characters`,
+        });
+      } else if (hasHiddenText(reason, false)) {
+        problems.push({
+          code: 'HIDDEN_TEXT',
+          reason: `${at}: the reason must be one line of plain text`,
+        });
+      } else if (redactSecrets(reason) !== reason) {
+        problems.push({
+          code: 'CONTAINS_SECRET',
+          reason: `${at}: the reason contains a secret; write it without one`,
+        });
+      }
+      if (effect.seq <= segment.fromSeq || effect.seq > segment.toSeq) {
+        problems.push({
+          code: 'EVIDENCE_OUT_OF_SEGMENT',
+          reason: `${at}: seq ${effect.seq} is outside this reflection's stretch — after ${segment.fromSeq} up to ${segment.toSeq}`,
+        });
+      }
+      const number = parseMemoryHandle(effect.handle);
+      const entry =
+        number === null
+          ? undefined
+          : visible.find(
+              (candidate) => candidate.handle === memoryHandle(number),
+            );
+      if (entry === undefined) {
+        problems.push({
+          code: 'UNKNOWN_HANDLE',
+          reason: `${at}: ${effect.handle} is not an active memory entry this thread's agents can see`,
+        });
+        continue;
+      }
+      if (!seen.has(entry.id)) {
+        problems.push({
+          code: 'NOT_SEEN',
+          reason: `${at}: ${entry.handle} was neither in this thread's memory index nor returned by its memory_read — report only entries your brief lists`,
+        });
+        continue;
+      }
+      marks.push({
+        memoryId: entry.id,
+        handle: entry.handle,
+        verdict: MARK_OF_EFFECT[effect.effect],
+        reason,
+        evidenceSeq: effect.seq,
+      });
+    }
     if (problems.length > 0) {
       return { status: 'refused', problems };
     }
@@ -262,6 +355,9 @@ export class LessonFilingService {
         );
       }
     });
+    if (marks.length > 0) {
+      await this.recordEffects(turn.analysisRunId, source.id, marks);
+    }
     if (rows.length === 0) {
       if (segment.closedBy === 'manual') {
         await this.writeCard(segment, turn.analysisRunId, rows, null);
@@ -280,6 +376,37 @@ export class LessonFilingService {
     }
     await this.deliver(segment, rows, null);
     return { status: 'recorded', count: rows.length };
+  }
+
+  /**
+   * The effects as the thread's marks. The lessons are already recorded, so a
+   * failed write costs only the marks, never the card or the filing.
+   */
+  private async recordEffects(
+    reflectionRunId: string,
+    threadId: string,
+    marks: readonly (MemoryReflectionEffect & { memoryId: string })[],
+  ): Promise<void> {
+    try {
+      const reflection = await this.runDao.getById(
+        reflectionRunId,
+        this.em.fork(),
+      );
+      await this.memory.markByReflection(
+        {
+          kind: 'lesson',
+          runId: reflectionRunId,
+          agentKind: reflection?.agentKind ?? null,
+          model: reflection?.model ?? null,
+        },
+        threadId,
+        marks,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `reflection marks not recorded for ${threadId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**

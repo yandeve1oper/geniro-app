@@ -8214,6 +8214,12 @@ export interface MemoryConfigAckDto {
      * @memberof MemoryConfigAckDto
      */
     autoForgetAfterDays: number | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof MemoryConfigAckDto
+     */
+    removeNotUseful: boolean;
 }
 
 
@@ -8256,6 +8262,12 @@ export interface MemoryConfigDto {
      * @memberof MemoryConfigDto
      */
     autoForgetAfterDays: number | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof MemoryConfigDto
+     */
+    removeNotUseful: boolean;
 }
 
 
@@ -8364,6 +8376,24 @@ export interface MemoryEntry {
      * @memberof MemoryEntry
      */
     indexed: boolean;
+    /**
+     * 
+     * @type {string}
+     * @memberof MemoryEntry
+     */
+    promotedAt: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof MemoryEntry
+     */
+    forgetReason: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof MemoryEntry
+     */
+    purgeAt: string | null;
 }
 
 
@@ -8581,7 +8611,44 @@ export interface MemoryForgetBatch {
      * @memberof MemoryForgetBatch
      */
     automatic: boolean;
+    /**
+     * 
+     * @type {string}
+     * @memberof MemoryForgetBatch
+     */
+    kind: MemoryForgetBatchKindEnum;
+    /**
+     * 
+     * @type {string}
+     * @memberof MemoryForgetBatch
+     */
+    title: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof MemoryForgetBatch
+     */
+    reason: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof MemoryForgetBatch
+     */
+    purgeAt: string | null;
 }
+
+
+/**
+ * @export
+ */
+export const MemoryForgetBatchKindEnum = {
+    Manual: 'manual',
+    Automatic: 'automatic',
+    Marks: 'marks',
+    ExpiredLesson: 'expired_lesson'
+} as const;
+export type MemoryForgetBatchKindEnum = typeof MemoryForgetBatchKindEnum[keyof typeof MemoryForgetBatchKindEnum];
+
 /**
  * 
  * @export
@@ -9119,6 +9186,12 @@ export interface MemoryListDto {
     memories: Array<MemoryEntry>;
     /**
      * 
+     * @type {Array<MemoryTrackRecord>}
+     * @memberof MemoryListDto
+     */
+    tracks: Array<MemoryTrackRecord>;
+    /**
+     * 
      * @type {MemoryListDtoNext}
      * @memberof MemoryListDto
      */
@@ -9568,6 +9641,12 @@ export interface MemoryReviewSummaryDto {
     lastBatch: MemoryForgetBatch | null;
     /**
      * 
+     * @type {Array<MemoryForgetBatch>}
+     * @memberof MemoryReviewSummaryDto
+     */
+    lastPass: Array<MemoryForgetBatch>;
+    /**
+     * 
      * @type {MemoryReviewSummaryDtoAutoForget}
      * @memberof MemoryReviewSummaryDto
      */
@@ -9597,6 +9676,43 @@ export interface MemoryReviewSummaryDtoAutoForget {
      * @memberof MemoryReviewSummaryDtoAutoForget
      */
     warned: number;
+}
+/**
+ * 
+ * @export
+ * @interface MemoryTrackRecord
+ */
+export interface MemoryTrackRecord {
+    /**
+     * 
+     * @type {string}
+     * @memberof MemoryTrackRecord
+     */
+    memoryId: string;
+    /**
+     * 
+     * @type {number}
+     * @memberof MemoryTrackRecord
+     */
+    indexShows: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof MemoryTrackRecord
+     */
+    reads: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof MemoryTrackRecord
+     */
+    helped: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof MemoryTrackRecord
+     */
+    notUseful: number;
 }
 /**
  * 

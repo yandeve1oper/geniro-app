@@ -390,7 +390,8 @@ export function registerIpc(
   const updateSettingsRemotePolicy = allowRemotelyExceptFields(
     // `sharing` names the commands an upload runs and lets agents publish
     // pages through the user's own logins: the desktop's call alone.
-    // The auto-forget window arms a sweep that forgets memory on its own clock.
+    // The auto-forget window arms a sweep that forgets memory on its own clock,
+    // and removing unhelpful entries forgets them on the marks of other threads.
     // `resourceAlerts` reaches the daemon's desktop-only config route.
     // `lessons` picks what a reflection spends, through another such route.
     [
@@ -398,6 +399,7 @@ export function registerIpc(
       'daemonInspect',
       'lessons',
       'memoryAutoForgetAfterDays',
+      'memoryRemoveNotUseful',
       'resourceAlerts',
       'sharing',
     ],

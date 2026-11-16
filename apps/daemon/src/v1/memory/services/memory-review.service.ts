@@ -16,10 +16,15 @@ import type { Memory } from '../entity/memory.entity';
 import {
   MEMORY_AUTO_BATCH_PREFIX,
   MEMORY_BATCHES_LIMIT,
+  MEMORY_EXPIRED_LESSON_BATCH_PREFIX,
+  MEMORY_FORGET_BATCH_MAX,
+  MEMORY_MARKS_BATCH_PREFIX,
   MEMORY_REVIEW_IDS_MAX,
   MEMORY_REVIEW_LIMIT_DEFAULT,
   MEMORY_REVIEW_MIN_AGE_DAYS,
+  MEMORY_RULE_PURGE_AFTER_DAYS,
   type MemoryForgetBatch,
+  type MemoryForgetBatchKind,
   type MemoryForgetBatchList,
   type MemoryReviewIds,
   type MemoryReviewPage,
@@ -36,8 +41,8 @@ import {
   statesRule,
   storedPaths,
 } from '../utils/memory-references';
-import { usageDay } from '../utils/memory-usage-day';
-import { toEntry } from './memory.service';
+import { DAY_MS, usageDay } from '../utils/memory-usage-day';
+import { entryOf, MemoryService } from './memory.service';
 import {
   MEMORY_USAGE_BACKFILL_VERSION,
   MemoryUsageService,
@@ -71,6 +76,7 @@ export class MemoryReviewService {
     private readonly projects: ProjectDao,
     private readonly usage: MemoryUsageService,
     private readonly runs: RunDao,
+    private readonly memory: MemoryService,
   ) {}
 
   /** One page of a tab; the first page refreshes reference checks gone stale. */
@@ -106,9 +112,10 @@ export class MemoryReviewService {
         )
       ).map((row) => [row.id, row]),
     );
+    const marksPurge = this.memory.removesNotUseful;
     const rows = hits.flatMap((hit) => {
       const row = byId.get(hit.id);
-      return row ? [reviewRow(row, hit)] : [];
+      return row ? [reviewRow(row, hit, marksPurge)] : [];
     });
     const end = offset + hits.length;
     return {
@@ -147,7 +154,15 @@ export class MemoryReviewService {
     const cold = filterOf({}, now);
     const marker = this.usage.backfillMarker;
     const firstDay = await this.memories.firstUsageDay(em);
-    const [lastBatch] = await this.batchesOf(1, em);
+    const [newest] = await this.batchesOf(1, em);
+    const lastPass =
+      newest === undefined
+        ? []
+        : await this.batchesOf(
+            MEMORY_FORGET_BATCH_MAX,
+            em,
+            Date.parse(newest.forgottenAt),
+          );
     return {
       active: totals.active,
       pending: totals.pending,
@@ -170,7 +185,8 @@ export class MemoryReviewService {
         (marker === null ? null : usageDay(new Date(marker.cutoff))),
       counting:
         marker !== null && marker.doneVersion !== MEMORY_USAGE_BACKFILL_VERSION,
-      lastBatch: lastBatch ?? null,
+      lastBatch: lastPass[0] ?? null,
+      lastPass,
       autoForget:
         autoForgetDays === undefined
           ? null
@@ -284,14 +300,44 @@ export class MemoryReviewService {
   private async batchesOf(
     limit: number,
     em: EntityManager,
+    forgottenAt?: number,
   ): Promise<MemoryForgetBatch[]> {
-    return (await this.memories.batches(limit, em)).map((batch) => ({
-      batchId: batch.batchId,
-      count: batch.count,
-      forgottenAt: new Date(batch.forgottenAt).toISOString(),
-      automatic: batch.batchId.startsWith(MEMORY_AUTO_BATCH_PREFIX),
-    }));
+    const marksPurge = this.memory.removesNotUseful;
+    return (await this.memories.batches(limit, em, forgottenAt)).map(
+      (batch) => {
+        const kind = batchKindOf(batch.batchId);
+        const purged =
+          kind === 'expired_lesson' || (kind === 'marks' && marksPurge);
+        return {
+          batchId: batch.batchId,
+          count: batch.count,
+          forgottenAt: new Date(batch.forgottenAt).toISOString(),
+          automatic: kind === 'automatic',
+          kind,
+          title: batch.title,
+          reason: batch.reason,
+          purgeAt: purged
+            ? new Date(
+                batch.forgottenAt + MEMORY_RULE_PURGE_AFTER_DAYS * DAY_MS,
+              ).toISOString()
+            : null,
+        };
+      },
+    );
   }
+}
+
+function batchKindOf(batchId: string): MemoryForgetBatchKind {
+  if (batchId.startsWith(MEMORY_AUTO_BATCH_PREFIX)) {
+    return 'automatic';
+  }
+  if (batchId.startsWith(MEMORY_MARKS_BATCH_PREFIX)) {
+    return 'marks';
+  }
+  if (batchId.startsWith(MEMORY_EXPIRED_LESSON_BATCH_PREFIX)) {
+    return 'expired_lesson';
+  }
+  return 'manual';
 }
 
 function filterOf(
@@ -317,9 +363,13 @@ function filterOf(
   };
 }
 
-function reviewRow(row: Memory, hit: MemoryReviewHit): MemoryReviewRow {
+function reviewRow(
+  row: Memory,
+  hit: MemoryReviewHit,
+  marksPurge: boolean,
+): MemoryReviewRow {
   return {
-    entry: toEntry(row),
+    entry: entryOf(row, marksPurge),
     usage: {
       readsLast90Days: hit.readsLast90Days,
       reads: hit.reads,

@@ -6,6 +6,6 @@ export function memoryForgetInstructions(): string {
     'it is only partly wrong, correct it with memory_save instead. Give the reason in one line — ' +
     'the user reads it, and the entry is kept so they can bring it back. While the user reviews ' +
     'agent writes, forgetting is refused: tell the user instead. Do NOT use it to tidy up ' +
-    'entries you merely find unhelpful.'
+    'entries you merely find unhelpful — mark those not_useful with memory_feedback.'
   );
 }

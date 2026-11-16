@@ -15,12 +15,15 @@ import type { AgentEventBus } from '../../agents/services/agent-events.bus';
 import type { ChatService } from '../../agents/services/chat.service';
 import type { EffortsService } from '../../agents/services/efforts.service';
 import type { MemoryService } from '../../memory/services/memory.service';
+import type { RunPlace } from '../../projects/projects.types';
 import type { ProjectScopeService } from '../../projects/services/project-scope.service';
 import type { Run } from '../../runs/entity/run.entity';
 import type { LessonProposalDao } from '../dao/lesson-proposal.dao';
 import type { LessonSegmentDao } from '../dao/lesson-segment.dao';
 import {
   DEFAULT_LESSONS_CONFIG,
+  LESSON_REJECTED_BRIEF_MAX,
+  LESSON_SEEN_ENTRIES_BRIEF_MAX,
   type LessonModelChoice,
   type LessonsConfig,
 } from '../lessons.types';
@@ -117,6 +120,9 @@ function build(
     acceptsEffort?: boolean;
     runItems?: Item[];
     rejected?: { title: string; rejectReason: string | null }[];
+    forgotten?: { title: string; reason: string | null }[];
+    seen?: { handle: string; title: string }[];
+    memoryEnabled?: boolean;
     sendFails?: Error;
     createFails?: Error;
   } = {},
@@ -204,6 +210,15 @@ function build(
   );
   config.set({ ...DEFAULT_LESSONS_CONFIG, ...options.config });
   const events = new LessonsEventBus();
+  const memory = {
+    enabled: options.memoryEnabled ?? true,
+    forgottenLessons: vi.fn((_place: RunPlace, _limit: number) =>
+      Promise.resolve(options.forgotten ?? []),
+    ),
+    seenEntries: vi.fn((_runId: string, _place: RunPlace, _limit: number) =>
+      Promise.resolve(options.seen ?? []),
+    ),
+  };
   const service = new LessonReflectionService(
     em,
     runDao as unknown as RunDao,
@@ -213,7 +228,7 @@ function build(
       allDeleted: () => deleted.asObservable(),
       allStatuses: () => statuses.asObservable(),
     } as unknown as AgentEventBus,
-    { enabled: true } as MemoryService,
+    memory as unknown as MemoryService,
     projectScope as unknown as ProjectScopeService,
     segments as unknown as LessonSegmentDao,
     proposals as unknown as LessonProposalDao,
@@ -229,6 +244,7 @@ function build(
     chats,
     segments,
     proposals,
+    memory,
     projectScope,
     deleted,
     statuses,
@@ -377,6 +393,83 @@ describe('LessonReflectionService.start', () => {
     expect(brief).toContain('the items after seq 0 up to and including seq 3');
     expect(brief).toContain('- seq 2 · user_correction · "no, that is wrong"');
     expect(brief).toContain('- "Old rule" — reason: "too broad"');
+  });
+
+  it('lists the auto lessons memory forgot beside the rejected ones, so the reflection does not file them again', async () => {
+    const fixture = build({
+      source: { reflectedThroughSeq: 0 },
+      maxSeq: 3,
+      items: [turnComplete(1), userMessage(2, 'no, that is wrong')],
+      rejected: [{ title: 'Old rule', rejectReason: 'too broad' }],
+      forgotten: [
+        {
+          title: 'Retry after every failure',
+          reason: 'An auto lesson no thread marked helped in 90 days',
+        },
+      ],
+    });
+
+    await fixture.service.start('src', {});
+
+    const [, brief] = fixture.chats.sendMessage.mock.calls[0]!;
+    expect(brief).toContain('- "Old rule" — reason: "too broad"');
+    expect(brief).toContain(
+      '- "Retry after every failure" — reason: "An auto lesson no thread marked helped in 90 days"',
+    );
+  });
+
+  it('asks memory for the place’s forgotten lessons and the entries its agents saw, each capped at the brief’s limit', async () => {
+    const fixture = build({
+      source: { reflectedThroughSeq: 0 },
+      maxSeq: 3,
+      items: [turnComplete(1), userMessage(2, 'no, that is wrong')],
+    });
+
+    await fixture.service.start('src', {});
+
+    const place = { projectId: null, teamSlug: null };
+    expect(fixture.memory.forgottenLessons).toHaveBeenCalledWith(
+      place,
+      LESSON_REJECTED_BRIEF_MAX,
+    );
+    expect(fixture.memory.seenEntries).toHaveBeenCalledWith(
+      'src',
+      place,
+      LESSON_SEEN_ENTRIES_BRIEF_MAX,
+    );
+  });
+
+  it('lists the shared-memory entries the thread’s agents had in front of them, for the reflection’s effects', async () => {
+    const fixture = build({
+      source: { reflectedThroughSeq: 0 },
+      maxSeq: 3,
+      items: [turnComplete(1), userMessage(2, 'no, that is wrong')],
+      seen: [{ handle: 'm3', title: 'Use pnpm, not npm!' }],
+    });
+
+    await fixture.service.start('src', {});
+
+    const [, brief] = fixture.chats.sendMessage.mock.calls[0]!;
+    expect(brief).toContain('- m3 · "Use pnpm, not npm!"');
+    expect(brief).not.toContain('send no effects');
+  });
+
+  it('sends no effects and asks memory for nothing when memory is off', async () => {
+    const fixture = build({
+      source: { reflectedThroughSeq: 0 },
+      maxSeq: 3,
+      items: [turnComplete(1), userMessage(2, 'no, that is wrong')],
+      memoryEnabled: false,
+      seen: [{ handle: 'm3', title: 'Use pnpm, not npm!' }],
+    });
+
+    await fixture.service.start('src', {});
+
+    const [, brief] = fixture.chats.sendMessage.mock.calls[0]!;
+    expect(brief).toContain(
+      'No shared-memory entry was in front of this thread’s agents: send no effects.',
+    );
+    expect(fixture.memory.seenEntries).not.toHaveBeenCalled();
   });
 
   it('tells the reflection that the daemon found no signal when a correction follows no finished turn', async () => {

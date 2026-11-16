@@ -51,7 +51,11 @@ export class ProposeLessonsTool extends BaseMcpTool {
       return this.text(result.text, result.isError);
     }
     const result = proposeLessonsResultText(
-      await this.lessons.file(turn, read.query.lessons),
+      await this.lessons.file(
+        turn,
+        read.query.lessons,
+        read.query.effects ?? [],
+      ),
     );
     return this.text(result.text, result.isError);
   }

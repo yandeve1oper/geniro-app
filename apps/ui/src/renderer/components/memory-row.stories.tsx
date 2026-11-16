@@ -57,6 +57,47 @@ export const Forgotten: Story = {
   },
 };
 
+export const ForgottenWithReason: Story = {
+  args: {
+    entry: memoryEntry({
+      status: 'forgotten',
+      forgetReason:
+        '2 threads marked it not useful: “Invoice template” — the template changed in November',
+      purgeAt: '2026-12-15T09:00:00.000Z',
+    }),
+    onEdit: undefined,
+    onForget: undefined,
+    onRestore: () => undefined,
+  },
+};
+
+export const WithTrackRecord: Story = {
+  args: {
+    entry: memoryEntry(),
+    track: {
+      memoryId: 'memory-1',
+      indexShows: 3,
+      reads: 2,
+      helped: 1,
+      notUseful: 0,
+    },
+  },
+};
+
+export const SearchableOnly: Story = {
+  args: {
+    entry: memoryEntry({ indexed: false, source: AGENT_SOURCE }),
+    showReach: true,
+    track: {
+      memoryId: 'memory-1',
+      indexShows: 0,
+      reads: 1,
+      helped: 0,
+      notUseful: 2,
+    },
+  },
+};
+
 export const LongBody: Story = {
   args: { entry: memoryEntry({ body: LONG_BODY }) },
 };

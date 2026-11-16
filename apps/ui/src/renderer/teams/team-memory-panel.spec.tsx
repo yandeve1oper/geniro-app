@@ -48,7 +48,11 @@ const WAITING = memoryEntry({
 function fakeApis(listed: MemoryEntry[] = [NOTE, WAITING]) {
   const memories = {
     listMemories: vi.fn((_request: unknown) =>
-      Promise.resolve<MemoryListDto>({ memories: listed, next: null }),
+      Promise.resolve<MemoryListDto>({
+        memories: listed,
+        tracks: [],
+        next: null,
+      }),
     ),
     createMemory: vi.fn((_request: unknown) => Promise.resolve(NOTE)),
     updateMemory: vi.fn((_request: unknown) => Promise.resolve(NOTE)),
@@ -314,6 +318,7 @@ describe('TeamMemoryPanel', () => {
         memories: [
           memoryEntry({ id: 'e9', handle: 'm9', teamSlug: 'review-crew' }),
         ],
+        tracks: [],
         next: null,
       }),
     );

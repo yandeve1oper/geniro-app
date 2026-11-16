@@ -96,6 +96,13 @@ export class Memory extends TimestampsEntity {
   @Property({ type: DateTimeType, nullable: true })
   approvedAt: Date | null = null;
 
+  /**
+   * When `helped` marks from enough threads admitted an auto lesson to the
+   * memory index; an agent's rewrite clears it, as it clears `approvedAt`.
+   */
+  @Property({ type: DateTimeType, nullable: true })
+  promotedAt: Date | null = null;
+
   /** Set while the user keeps the entry out of the cleanup list. */
   @Property({ type: DateTimeType, nullable: true })
   keptAt: Date | null = null;

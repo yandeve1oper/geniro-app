@@ -1,8 +1,11 @@
+import type { EntityManager } from '@mikro-orm/sqlite';
+
 import {
   HOST_MEMORY_READ_TOOL,
   HOST_MEMORY_SEARCH_TOOL,
   type ToolCallTime,
 } from '../../agents/chat.types';
+import type { ItemDao } from '../../agents/dao/item.dao';
 import { hostMcpServerName } from '../../agents/utils/host-question';
 import {
   hostToolArguments,
@@ -127,6 +130,49 @@ export function memoryUsageHistory(
     }
   }
   return counts;
+}
+
+/**
+ * {@link memoryUsageHistory} over one run's stored memory calls made before
+ * `cutoff`, read with every call and result sharing their ids.
+ */
+export async function runMemoryUsage(
+  items: Pick<ItemDao, 'toolCallsNamed' | 'rowsByPayloadId'>,
+  runId: string,
+  idsByHandle: ReadonlyMap<string, string>,
+  cutoff: Date,
+  em: EntityManager,
+): Promise<MemoryUsageCount[]> {
+  const memoryCalls = await items.toolCallsNamed(
+    runId,
+    [...memoryHistoryToolNames(runId).keys()],
+    em,
+  );
+  const callIds = [
+    ...new Set(
+      memoryCalls
+        .filter((call) => call.createdAt < cutoff)
+        .map((call) => call.payloadId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  if (callIds.length === 0) {
+    return [];
+  }
+  const sharingIds = await items.rowsByPayloadId(
+    runId,
+    ['tool_call', 'tool_result'],
+    callIds,
+    undefined,
+    em,
+  );
+  return memoryUsageHistory(
+    runId,
+    sharingIds.filter((row) => row.kind === 'tool_call'),
+    sharingIds.filter((row) => row.kind === 'tool_result'),
+    idsByHandle,
+    cutoff,
+  );
 }
 
 /**

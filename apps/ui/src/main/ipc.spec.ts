@@ -77,6 +77,7 @@ const mocks = vi.hoisted(() => {
     },
     archiveRetentionDays: null,
     memoryAutoForgetAfterDays: null,
+    memoryRemoveNotUseful: true,
     historyPageSize: 1000,
     keptSessionIdleMinutes: 60,
     preventSleepWhileWorking: true,
@@ -684,6 +685,19 @@ describe('registerIpc remote-access channels', () => {
     expect(
       entry.policy.refuseRemoteArgs?.([{ memoryAutoForgetAfterDays: null }]),
     ).toContain('memoryAutoForgetAfterDays');
+  });
+
+  it('a paired device cannot turn the removal of unhelpful entries on or off', () => {
+    const entry = registry.get(IPC.updateSettings);
+    if (!entry || entry.policy.remote !== 'allow') {
+      throw new Error('updateSettings is not remotely callable');
+    }
+    expect(
+      entry.policy.refuseRemoteArgs?.([{ memoryRemoveNotUseful: false }]),
+    ).toContain('memoryRemoveNotUseful');
+    expect(
+      entry.policy.refuseRemoteArgs?.([{ memoryRemoveNotUseful: true }]),
+    ).toContain('memoryRemoveNotUseful');
   });
 
   it('a paired device cannot pick what a lessons reflection runs as', () => {

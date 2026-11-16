@@ -28,6 +28,7 @@ describe('MemoryConfigPush', () => {
       agentWrites: 'pending',
       nativeMemoryOff: false,
       autoForgetAfterDays: 30,
+      removeNotUseful: false,
     });
 
     expect(http.calls).toHaveLength(1);
@@ -42,25 +43,29 @@ describe('MemoryConfigPush', () => {
       agentWrites: 'pending',
       nativeMemoryOff: false,
       autoForgetAfterDays: 30,
+      removeNotUseful: false,
     });
   });
 
-  it('pushes the auto-forget window beside the memory settings, as autoForgetAfterDays', () => {
+  it('pushes the sweep switches beside the memory settings, as autoForgetAfterDays and removeNotUseful', () => {
     expect(
       memoryConfigOf({
         memory: { enabled: true, agentWrites: 'active', nativeMemoryOff: true },
         memoryAutoForgetAfterDays: 14,
+        memoryRemoveNotUseful: false,
       }),
     ).toEqual({
       enabled: true,
       agentWrites: 'active',
       nativeMemoryOff: true,
       autoForgetAfterDays: 14,
+      removeNotUseful: false,
     });
     expect(memoryConfigOf(DEFAULT_SETTINGS).autoForgetAfterDays).toBeNull();
+    expect(memoryConfigOf(DEFAULT_SETTINGS).removeNotUseful).toBe(true);
   });
 
-  it('pushes again when only the auto-forget window changes, and not for an unrelated write', async () => {
+  it('pushes again when only a sweep switch changes, and not for an unrelated write', async () => {
     const http = recordingFetch();
     const push = new MemoryConfigPush(() => undefined, http.fetchImpl);
     const before = memoryConfigOf(DEFAULT_SETTINGS);
@@ -77,6 +82,15 @@ describe('MemoryConfigPush', () => {
     expect(JSON.parse(String(http.calls[1]?.init.body))).toMatchObject({
       autoForgetAfterDays: 14,
     });
+
+    await push.pushIfChanged(
+      HANDLE,
+      memoryConfigOf({ ...DEFAULT_SETTINGS, memoryRemoveNotUseful: false }),
+    );
+    expect(http.calls).toHaveLength(3);
+    expect(JSON.parse(String(http.calls[2]?.init.body))).toMatchObject({
+      removeNotUseful: false,
+    });
   });
 
   it('names the refused settings and retries them on the next write', async () => {
@@ -91,6 +105,7 @@ describe('MemoryConfigPush', () => {
       agentWrites: 'active' as const,
       nativeMemoryOff: false,
       autoForgetAfterDays: null,
+      removeNotUseful: true,
     };
 
     await push.push(HANDLE, config);

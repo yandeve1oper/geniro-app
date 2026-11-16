@@ -12,7 +12,7 @@ import { BaseMcpTool } from './base-mcp-tool';
 
 /**
  * The base of the shared memory's tools (`memory_search`, `memory_read`,
- * `memory_save`, `memory_forget`): offered on every endpoint while the user
+ * `memory_save`, `memory_forget`, `memory_feedback`): offered on every endpoint while the user
  * has memory on, and refused at call time once it is off — a kept CLI can
  * hold a listing made while it was on. The run's project and team and the caller's
  * identity are looked up here, never taken from the arguments.
@@ -46,7 +46,7 @@ export abstract class MemoryMcpTool extends BaseMcpTool {
       this.memory.scopeOf(runId),
       this.memory.actorOf(runId, memberId),
     ]);
-    return this.answer(args, { place, actor });
+    return this.answer(args, { place, actor, memberId });
   }
 
   /**

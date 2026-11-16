@@ -664,6 +664,16 @@ export interface Settings {
    */
   memoryAutoForgetAfterDays: number | null;
   /**
+   * Forget an entry that more threads marked not useful than helped, so no
+   * agent sees it until the user restores it from Forgotten; its batch is
+   * deleted for good 30 days later. Pushed to the daemon beside `memory` (as
+   * `removeNotUseful`), which applies it on every mark and in its daily sweep.
+   *
+   * On by default: an entry that three more threads found unhelpful than helped
+   * is the case the user would want removed, and Undo stays for 30 days.
+   */
+  memoryRemoveNotUseful: boolean;
+  /**
    * How many transcript items one fetch of a chat brings back — the WINDOW a
    * thread opens on and pages through. Only the transcript's own rows depend on
    * it: every readout beside them is read from the daemon over the whole run.
@@ -900,6 +910,7 @@ export const DEFAULT_SETTINGS: Settings = {
   resourceAlerts: DEFAULT_RESOURCE_ALERTS,
   archiveRetentionDays: null,
   memoryAutoForgetAfterDays: null,
+  memoryRemoveNotUseful: true,
   historyPageSize: DEFAULT_HISTORY_PAGE_SIZE,
   keptSessionIdleMinutes: DEFAULT_KEPT_SESSION_IDLE_MINUTES,
   preventSleepWhileWorking: true,

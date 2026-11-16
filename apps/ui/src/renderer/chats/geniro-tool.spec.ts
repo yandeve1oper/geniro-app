@@ -115,6 +115,7 @@ describe('shared-memory tools', () => {
     'memory_read',
     'memory_save',
     'memory_forget',
+    'memory_feedback',
   ] as const;
 
   it.each(MEMORY_TOOLS)('recognises %s in claude’s spelling', (tool) => {

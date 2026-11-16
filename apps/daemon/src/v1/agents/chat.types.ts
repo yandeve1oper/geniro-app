@@ -8346,6 +8346,7 @@ export const HOST_MEMORY_SEARCH_TOOL = 'memory_search';
 export const HOST_MEMORY_READ_TOOL = 'memory_read';
 export const HOST_MEMORY_SAVE_TOOL = 'memory_save';
 export const HOST_MEMORY_FORGET_TOOL = 'memory_forget';
+export const HOST_MEMORY_FEEDBACK_TOOL = 'memory_feedback';
 
 /**
  * The shared memory's tools, in `tools/list` order.
@@ -8357,6 +8358,7 @@ export const HOST_MEMORY_TOOLS = [
   HOST_MEMORY_READ_TOOL,
   HOST_MEMORY_SAVE_TOOL,
   HOST_MEMORY_FORGET_TOOL,
+  HOST_MEMORY_FEEDBACK_TOOL,
 ] as const;
 
 export const HOST_KNOWLEDGE_SEARCH_TOOL = 'knowledge_search';

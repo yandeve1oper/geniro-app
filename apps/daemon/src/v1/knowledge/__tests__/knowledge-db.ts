@@ -5,14 +5,17 @@ import {
 } from '@mikro-orm/sqlite';
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
+import { ItemDao } from '../../agents/dao/item.dao';
 import { NodeStateDao } from '../../agents/dao/node-state.dao';
 import { RunDao } from '../../agents/dao/run.dao';
 import { MemoryDao } from '../../memory/dao/memory.dao';
+import { MemoryMarkDao } from '../../memory/dao/memory-mark.dao';
 import { MemoryReviewFindingDao } from '../../memory/dao/memory-review-finding.dao';
 import { MemoryUsageDao } from '../../memory/dao/memory-usage.dao';
 import { Memory } from '../../memory/entity/memory.entity';
 import { MemoryService } from '../../memory/services/memory.service';
 import { MemoryEventBus } from '../../memory/services/memory-events.bus';
+import { MemoryMarksService } from '../../memory/services/memory-marks.service';
 import { MemoryUsageService } from '../../memory/services/memory-usage.service';
 import { ProjectDao } from '../../projects/dao/project.dao';
 import { Project } from '../../projects/entity/project.entity';
@@ -86,6 +89,12 @@ export async function knowledgeDb(options: { configured?: boolean } = {}) {
     new MemoryEventBus(),
     new MemoryUsageService(new MemoryUsageDao(em)),
     new MemoryReviewFindingDao(em),
+    new MemoryMarksService(
+      new MemoryMarkDao(em),
+      new MemoryUsageDao(em),
+      new RunDao(em),
+      new ItemDao(em),
+    ),
   );
   const service = new KnowledgeService(
     em,

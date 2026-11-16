@@ -116,4 +116,6 @@ export type ToolArgs<TQuery> =
 export interface MemoryCallScope {
   place: RunPlace;
   actor: MemoryActor;
+  /** The team member calling, or the chat's own member id. */
+  memberId: string;
 }

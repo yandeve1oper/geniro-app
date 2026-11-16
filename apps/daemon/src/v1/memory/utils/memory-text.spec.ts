@@ -33,6 +33,9 @@ function entry(handle: number, title: string): MemoryEntry {
     lastUsedAt: null,
     approvedAt: null,
     indexed: true,
+    promotedAt: null,
+    forgetReason: null,
+    purgeAt: null,
   };
 }
 
