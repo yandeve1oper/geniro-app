@@ -17766,23 +17766,17 @@ describe('Chats — background sub-agents', () => {
     expect(block?.textContent).not.toContain('reading the diff now');
   });
 
-  it('says HELD — and still NOTIFIES — while a declared-open delegate is out', async () => {
-    // Two defects that pull in opposite directions, and this is where they
-    // meet. The delegate must stay VISIBLE: a cursor fan-out is nine reviewers
-    // the CLI declares out and never speaks about again, and reading the turn's
-    // end as theirs dropped every one of them off the composer shelf the second
-    // the agent stopped talking. But the badge must not say `running` over an
-    // agent that has finished, and the turn-end notification must still fire —
-    // the rules watch that same reading, so a run that never crosses into a
-    // settled state is never announced, which is the reported "on chats
-    // finishing im not receiving it".
+  it('says RUNNING — and still NOTIFIES — while a declared-open delegate is out', async () => {
+    // A cursor fan-out is nine reviewers the CLI declares out and never speaks
+    // about again. The delegate stays visible and its badge reads `running`
+    // while it is out, but the turn-end notification still fires: it reads the
+    // run without that delegate, because the banner reports the turn ending and
+    // a delegate running on does not undo that.
     //
-    // So a SILENT declared-open delegate answers `held` on the badge (the same
-    // reading a background command gets) and is withheld from the notification
-    // reading entirely. The delegate is ended by the daemon, not by this
-    // transcript: `ChatService.closeStrandedDelegates` states `stopped` for
-    // each one still out when the agent session closes — the moment a cursor
-    // delegate, living inside that process, demonstrably has.
+    // The delegate is ended by the daemon, not by this transcript:
+    // `ChatService.closeStrandedDelegates` states `stopped` for each one still
+    // out when the agent session closes — the moment a cursor delegate, living
+    // inside that process, demonstrably has.
     const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
     // `subagentsOut` on the ROW, which is the design point as much as the
     // setup: the count is the daemon's, carried by every run alike, so an
@@ -17809,10 +17803,8 @@ describe('Chats — background sub-agents', () => {
       emitItem({ ...terminal(3), createdAt: SETTLED_AT });
     });
 
-    // `working` is the word `held` wears — never `running`, which would put a
-    // spinner over an agent that has stopped.
-    expect(sidebarRow(container)).toContain('working');
-    expect(sidebarRow(container)).not.toContain('running');
+    expect(sidebarRow(container)).toContain('running');
+    expect(sidebarRow(container)).not.toContain('working');
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({ runId: 'r1', kind: 'turn-end' }),
     );

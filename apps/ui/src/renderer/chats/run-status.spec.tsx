@@ -416,6 +416,53 @@ describe('a command still running after its turn', () => {
   });
 });
 
+describe('a background sub-agent still out', () => {
+  const settled = {
+    status: 'completed' as const,
+    streaming: false,
+    awaitingAnswer: false,
+  };
+  const held = {
+    status: 'running' as const,
+    streaming: true,
+    awaitingAnswer: false,
+    heldForBackgroundWork: true,
+  };
+
+  it('reads a turn held with a sub-agent out as running, not held', () => {
+    expect(displayRunStatus({ ...held, subagentsOut: true })).toBe('running');
+  });
+
+  it('reads a settled row with a sub-agent out as running', () => {
+    expect(displayRunStatus({ ...settled, subagentsOut: true })).toBe(
+      'running',
+    );
+  });
+
+  it('keeps a turn held for a background command reading held', () => {
+    expect(displayRunStatus({ ...held, shellsRunning: true })).toBe('held');
+  });
+
+  it('an open question still outranks a sub-agent out', () => {
+    expect(
+      displayRunStatus({ ...held, awaitingAnswer: true, subagentsOut: true }),
+    ).toBe('needs-input');
+  });
+
+  it('lets failed and cancelled through while a sub-agent is out', () => {
+    for (const status of ['failed', 'cancelled'] as const) {
+      expect(
+        displayRunStatus({ ...held, status, subagentsOut: true }),
+        status,
+      ).toBe(status);
+      expect(
+        displayRunStatus({ ...settled, status, subagentsOut: true }),
+        status,
+      ).toBe(status);
+    }
+  });
+});
+
 describe('a monitor still running after its turn', () => {
   const settled = {
     status: 'completed' as const,

@@ -6775,14 +6775,12 @@ export function Chats({
   /**
    * A delegate of this run that is AUDIBLE — still writing rows.
    *
-   * Narrowed from "is any delegate out", and the split is the whole of it: a
-   * delegate writing rows is the run `running` (that is work happening,
-   * whatever the stale row says), while one the CLI merely declared out and has
-   * said nothing about since is `held`, which the run ROW answers for every
-   * chat at once (see `subagentsOut` below). Cursor's background delegates are
-   * permanently the second kind — their steps never reach this wire at all —
-   * so collapsing the two put a spinner and the word `running` over an agent
-   * that had finished speaking, and swallowed its turn-end notification with it.
+   * Narrowed from "is any delegate out" for the turn-end notification: the
+   * reading it fires on leaves out a delegate the CLI only declared out, which
+   * the run ROW counts (`subagentsOut`, see below). Cursor's background
+   * delegates are permanently that second kind, since their steps never reach
+   * this wire, so folding them in here would keep a finished cursor run from
+   * ever announcing its end. The badge reads both kinds as `running`.
    */
   const subagentRunning = useMemo(
     () => anySubagentRunning(durableEntries, runStoppedAt),

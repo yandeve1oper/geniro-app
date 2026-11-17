@@ -206,37 +206,21 @@ export function displayRunStatus({
    * said its piece and something it started is still out" — never `running`,
    * which would put a spinner over an agent that has stopped.
    *
-   * Ranked BELOW `heldForBackgroundWork` (a delegate hold is the stronger fact
-   * and already says `waiting on N sub-agents`) and below a live turn, which
-   * is the agent genuinely working. Defaulted, so every call site that knows
-   * nothing about shells — a background row, a team node — is unaffected.
+   * Ranked BELOW `heldForBackgroundWork` and `subagentsOut`, which are the
+   * stronger facts, and below a live turn, which is the agent genuinely working.
+   * Defaulted, so every call site that knows nothing about shells — a background
+   * row, a team node — is unaffected.
    */
   shellsRunning?: boolean;
   /**
-   * This run's turn is merely HELD: the agent has said its piece and stopped,
-   * and the process is alive only until background work it launched reports
-   * back (the daemon's `turn_held` → `holdingFor` on the run row).
+   * This run's turn is HELD: the agent has said its piece and stopped, and the
+   * process stays alive only until the background work it launched reports
+   * back (the daemon's `turn_held` → `holdingFor` on the run row). Answers
+   * `held`, unless a background sub-agent is out too ({@link subagentsOut}),
+   * which reads `running`.
    *
-   * Ranked ABOVE every other live reading — see the ordering comment in the
-   * body, which is where the reason lives.
-   *
-   * The reported "done but showing like it's working", and it is a different
-   * defect from the one that phrase last named: the sentence under the badge
-   * was fixed to say `waiting on 2 sub-agents`, and the BADGE went on
-   * spinning `running` above it. A background task with no end — a dev server,
-   * a tailed log — holds the turn until the 30-minute silence deadline, so the
-   * screenshot that came back showed `running · 20m 18s` under an answer the
-   * agent had finished writing twenty minutes earlier.
-   *
-   * It answers `held`, which was `idle` for one release and should not have
-   * been. `idle` is the word the COMPOSER uses to the user ("the agent is idle,
-   * waiting on its sub-agents"), where a whole sentence carries it; on a
-   * badge the word stands alone, and it came straight back reported twice over
-   * — `i still see it seems like it finished but not`, over a header reading
-   * `idle · 1h` above a live Stop button and a `waiting on 1 sub-agent`
-   * line. Neither status is SETTLED, so nothing downstream reads the run as
-   * finished either way: what changed is that the badge no longer says the
-   * opposite of what the row beneath it says.
+   * Ranked above every other live reading, and carried by the run row for every
+   * run alike, so a focused run and its unfocused row read it the same way.
    */
   heldForBackgroundWork?: boolean;
   /**
@@ -248,22 +232,19 @@ export function displayRunStatus({
    */
   teamLeadsDone?: boolean;
   /**
-   * At least one sub-agent of this run is DECLARED still out while producing
-   * nothing — the CLI said it was working in the background and has not said
-   * another word about it.
+   * At least one background sub-agent of this run is still out: the CLI said it
+   * is working in the background, and the daemon counts it until it reports
+   * back (the run row's `subagentsOut`). Reads `running`, the same as an agent
+   * working itself, whether or not the turn is held and whether or not the row
+   * has settled, so a focused run and its unfocused row read it alike.
    *
-   * The same kind of fact as {@link shellsRunning} and ranked with it, which is
-   * why it is a separate input from {@link subagentRunning} rather than more of
-   * it: the agent has stopped speaking, so a spinner over the run would claim
-   * work IT is doing, while `held` says exactly what is true — something it
-   * started is still out. A delegate that is producing rows stays
-   * `subagentRunning` and outranks this.
+   * A delegate producing rows is {@link subagentRunning} and reads the same way;
+   * this input also covers one the CLI declared out and has said nothing about
+   * since, which is why it is separate.
    *
-   * Like `shellsRunning`, it is deliberately withheld from the reading the
-   * turn-end notification and the unseen mark are fired on: the banner reports
-   * the TURN ending, which a delegate running on does not undo. Without that
-   * split a cursor fan-out — nine reviewers left out by design — would silence
-   * the notification for the whole of the chat's remaining session.
+   * Withheld from the readings the turn-end notification and the unseen mark
+   * are fired on, like {@link shellsRunning}: the banner reports the TURN
+   * ending, which a delegate running on does not undo.
    */
   subagentsOut?: boolean;
   /**
@@ -286,22 +267,14 @@ export function displayRunStatus({
   if (status === 'failed' || status === 'cancelled') {
     return status;
   }
-  // Held: the agent has stopped and only its background work keeps the turn
-  // open.
-  //
-  // It leads both of the readings below, and that ORDER is the fix for the
-  // reported "I see the chat is idle, and the moment I click it that changes
-  // to another status". `subagentRunning` is derived from the LOADED
-  // transcript, so it is knowable for the focused run and never for any other
-  // — a held run therefore read `running` in the header and `idle` in its own
-  // sidebar row, and clicking it swapped one for the other in front of the
-  // user. Deciding the hold first makes the two readings identical, because a
-  // hold is a fact the run row carries about every run alike.
-  //
-  // Nothing is lost by ranking a live delegate under it: the case that rule
-  // was written for — a delegating turn with nothing streaming, reading as its
-  // stale `completed` row — is a turn that is NOT held, so it still falls
-  // through to `subagentRunning` below.
+  // `subagentsOut` and a hold are carried by the run row for every run alike,
+  // so a focused run and its unfocused row read them the same way.
+  // `subagentRunning` is folded from the loaded transcript, which is why it
+  // ranks under them.
+  if (subagentsOut) {
+    return 'running';
+  }
+  // The agent has stopped; only background work it launched keeps the turn open.
   if (heldForBackgroundWork) {
     return 'held';
   }
@@ -323,7 +296,7 @@ export function displayRunStatus({
   // `completed` ALONE, spelled out rather than asked of `isSettledRunStatus`:
   // failed and cancelled already returned above, and `skipped` is a team
   // node nothing ever ran, which has no commands of its own to be waiting on.
-  if ((shellsRunning || subagentsOut) && status === 'completed') {
+  if (shellsRunning && status === 'completed') {
     return 'held';
   }
   if (monitorsRunning && status === 'completed') {

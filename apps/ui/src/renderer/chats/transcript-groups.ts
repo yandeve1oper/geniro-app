@@ -1421,11 +1421,12 @@ function lastRowAtOf(list: readonly TranscriptEntry[]): number | null {
  * unreportable and the block was downgraded for it. It no longer decides
  * anything about the WORK — a declared-open delegate is working until an
  * outcome says otherwise ({@link subagentBlockStatus}) — and what it decides
- * instead is the BADGE's wording: a delegate writing rows is the run `running`,
- * while one merely declared out is `held`, the same reading a background
- * command gets. A run that has not settled is all live, so everything is
- * audible; a settle nobody can place makes nothing audible, which is the
- * conservative half of {@link RunSettleAt} in its new job.
+ * instead is which reading the turn-end notification takes: a delegate writing
+ * rows keeps the run `running`, while one merely declared out, which the run
+ * row counts (`subagentsOut`), does not. A run that has not settled is all
+ * live, so everything is audible; a settle nobody can place makes nothing
+ * audible, which is the conservative half of {@link RunSettleAt} in its new
+ * job.
  */
 export function subagentSpokeSince(
   block: SubagentBlockEntry,
