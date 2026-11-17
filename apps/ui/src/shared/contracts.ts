@@ -1808,6 +1808,10 @@ export interface OnboardingInput {
   cliPaths?: Partial<Record<CliKind, string>>;
 }
 
+/** What showing an artifact page's folder or file in Finder did, or why it showed nothing. */
+export type ArtifactPathOutcome =
+  { shown: 'opened' | 'revealed' } | { shown: null; reason: string };
+
 /**
  * The typed API surface the preload exposes on `window.geniro`. The renderer
  * never touches Node or Electron directly — every privileged action is one of
@@ -2188,6 +2192,12 @@ export interface GeniroApi {
     path: string,
   ): Promise<{ revealed: boolean; reason: string | null }>;
   /**
+   * Show a folder or file a button on an agent's artifact page names, in Finder: a
+   * plain folder opens, anything else is revealed, so nothing is ever launched.
+   * Desktop only.
+   */
+  openArtifactPath(path: string): Promise<ArtifactPathOutcome>;
+  /**
    * Toggle Chrome DevTools on this window — the same Elements / Console /
    * Network panels a browser gives you, because the renderer IS a browser.
    *
@@ -2471,6 +2481,7 @@ export const IPC = {
   carryChangesToBranch: 'geniro:carryChangesToBranch',
   getPullRequestsByRef: 'geniro:getPullRequestsByRef',
   revealPath: 'geniro:revealPath',
+  openArtifactPath: 'geniro:openArtifactPath',
   getAppStorage: 'geniro:getAppStorage',
   removeStorageWorktree: 'geniro:removeStorageWorktree',
   clearBrowserCache: 'geniro:clearBrowserCache',

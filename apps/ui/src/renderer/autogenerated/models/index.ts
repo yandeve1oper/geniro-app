@@ -1928,6 +1928,25 @@ export type ApprovalMode = typeof ApprovalMode[keyof typeof ApprovalMode];
 /**
  * 
  * @export
+ * @interface ArtifactAnswersDto
+ */
+export interface ArtifactAnswersDto {
+    /**
+     * each answer by the name the page saved it under
+     * @type {{ [key: string]: any; }}
+     * @memberof ArtifactAnswersDto
+     */
+    values: { [key: string]: any; };
+    /**
+     * 
+     * @type {string}
+     * @memberof ArtifactAnswersDto
+     */
+    updatedAt: string | null;
+}
+/**
+ * 
+ * @export
  * @interface AttachTaskFileDto
  */
 export interface AttachTaskFileDto {
@@ -13642,6 +13661,19 @@ export const RunWorkStatus = {
 } as const;
 export type RunWorkStatus = typeof RunWorkStatus[keyof typeof RunWorkStatus];
 
+/**
+ * 
+ * @export
+ * @interface SaveArtifactAnswersDto
+ */
+export interface SaveArtifactAnswersDto {
+    /**
+     * 
+     * @type {{ [key: string]: any; }}
+     * @memberof SaveArtifactAnswersDto
+     */
+    changes: { [key: string]: any; };
+}
 /**
  * 
  * @export

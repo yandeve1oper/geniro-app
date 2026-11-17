@@ -8,6 +8,7 @@ import type {
   HostPatchFingerprint,
   HostPatchOutcome,
 } from '../chat.types';
+import { fsErrorCode } from './fs-error-code';
 import { writeContainment } from './write-containment';
 
 /** Null means no fingerprint could be taken; a whole-file write must refuse it. */
@@ -26,7 +27,7 @@ export async function captureHostPatchFingerprint(
   try {
     handle = await open(realPathOrSelf(target), constants.O_RDONLY | NO_FOLLOW);
   } catch (err) {
-    return codeOf(err) === 'ENOENT' ? 'absent' : null;
+    return fsErrorCode(err) === 'ENOENT' ? 'absent' : null;
   }
   try {
     return (await handle.stat()).isFile()
@@ -95,7 +96,7 @@ export async function applyHostPatch(
     } catch (err) {
       return {
         status: 'stale',
-        reason: `the file could not be written (${codeOf(err)})`,
+        reason: `the file could not be written (${fsErrorCode(err)})`,
       };
     }
     return writeContained(
@@ -117,9 +118,9 @@ export async function applyHostPatch(
     return {
       status: 'stale',
       reason:
-        codeOf(err) === 'ENOENT'
+        fsErrorCode(err) === 'ENOENT'
           ? 'the file does not exist'
-          : `the file could not be read (${codeOf(err)})`,
+          : `the file could not be read (${fsErrorCode(err)})`,
     };
   }
   const first = current.indexOf(patch.oldString);
@@ -174,11 +175,11 @@ async function notRegularFile(
       return null;
     }
   } catch (err) {
-    return codeOf(err) === 'ENOENT'
+    return fsErrorCode(err) === 'ENOENT'
       ? null
       : {
           status: 'stale',
-          reason: `the path could not be checked (${codeOf(err)})`,
+          reason: `the path could not be checked (${fsErrorCode(err)})`,
         };
   }
   return { status: 'stale', reason: 'the path is not a regular file' };
@@ -240,19 +241,19 @@ async function writeContained(
     );
   } catch (err) {
     if (
-      (fingerprint === 'absent' && codeOf(err) === 'EEXIST') ||
+      (fingerprint === 'absent' && fsErrorCode(err) === 'EEXIST') ||
       (fingerprint !== null &&
         fingerprint !== 'absent' &&
-        codeOf(err) === 'ENOENT')
+        fsErrorCode(err) === 'ENOENT')
     ) {
       return { status: 'stale', reason: FILE_CHANGED };
     }
     return {
       status: 'stale',
       reason:
-        codeOf(err) === 'ELOOP'
+        fsErrorCode(err) === 'ELOOP'
           ? LINK_OUT
-          : `the file could not be written (${codeOf(err)})`,
+          : `the file could not be written (${fsErrorCode(err)})`,
     };
   }
   try {
@@ -280,7 +281,7 @@ async function writeContained(
   } catch (err) {
     return {
       status: 'stale',
-      reason: `the file could not be written (${codeOf(err)})`,
+      reason: `the file could not be written (${fsErrorCode(err)})`,
     };
   } finally {
     await handle.close().catch(() => undefined);
@@ -310,11 +311,4 @@ function realPathOrSelf(path: string): string {
   } catch {
     return path;
   }
-}
-
-/** A filesystem error's `code`, which is safe to hand to a model. */
-function codeOf(err: unknown): string {
-  return typeof err === 'object' && err !== null && 'code' in err
-    ? String((err as { code: unknown }).code)
-    : 'unknown error';
 }

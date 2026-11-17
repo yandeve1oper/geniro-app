@@ -5,6 +5,7 @@ import {
   ARTIFACT_FRAME_SOURCE,
   ARTIFACT_HOST_SOURCE,
   ARTIFACT_PAGE_CSP,
+  ARTIFACT_SERVED_PAGE_CSP,
   renderArtifactDocument,
   renderArtifactPage,
   withInlineImages,
@@ -80,9 +81,17 @@ describe('ARTIFACT_PAGE_CSP', () => {
     expect(ARTIFACT_PAGE_CSP).not.toContain('unsafe-eval');
   });
 
-  it('allows only inline data for images and media', () => {
+  it('allows only inline data for images and media in the portable policy a share or a saved file carries', () => {
     expect(directive('img-src')).toBe('img-src data:');
     expect(directive('media-src')).toBe('media-src data:');
+  });
+
+  it('serves the framed page the same policy with its own origin added for media alone', () => {
+    expect(ARTIFACT_SERVED_PAGE_CSP).toBe(
+      ARTIFACT_PAGE_CSP.replace('media-src data:', "media-src data: 'self'"),
+    );
+    expect(ARTIFACT_SERVED_PAGE_CSP).toContain("media-src data: 'self';");
+    expect(ARTIFACT_SERVED_PAGE_CSP.match(/'self'/g)).toHaveLength(1);
   });
 
   it('takes fonts inline, from Google Fonts or from the CDNs', () => {

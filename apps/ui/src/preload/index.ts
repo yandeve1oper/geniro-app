@@ -238,6 +238,10 @@ const api: GeniroApi = {
     ipcRenderer.invoke(IPC.revealPath, path) as ReturnType<
       GeniroApi['revealPath']
     >,
+  openArtifactPath: (path) =>
+    ipcRenderer.invoke(IPC.openArtifactPath, path) as ReturnType<
+      GeniroApi['openArtifactPath']
+    >,
   getAppStorage: (unclaimed) =>
     ipcRenderer.invoke(IPC.getAppStorage, unclaimed) as ReturnType<
       GeniroApi['getAppStorage']

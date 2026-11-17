@@ -8,6 +8,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -20,6 +21,11 @@ import {
   MAX_ARTIFACT_IMAGE_BYTES,
   MAX_ARTIFACT_PAGE_IMAGES,
 } from '../utils/artifact-image-policy';
+import {
+  MAX_ARTIFACT_MEDIA_BYTES,
+  MAX_ARTIFACT_PAGE_MEDIA,
+  MAX_ARTIFACT_PAGE_MEDIA_BYTES,
+} from '../utils/artifact-media-policy';
 import {
   type ArtifactStoreOptions,
   ArtifactStoreService,
@@ -547,11 +553,266 @@ describe('ArtifactStoreService', () => {
         if (result.ok) {
           return;
         }
-        expect(result.reason).toContain('once its pictures are referenced');
+        expect(result.reason).toContain(
+          'once its pictures and media are referenced',
+        );
         expect(existsSync(join(root, RUN, 'plan'))).toBe(false);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe('media', () => {
+    const MP3 = Buffer.concat([
+      Buffer.from('ID3\u0004', 'latin1'),
+      Buffer.from('a song'),
+    ]);
+    const MP4 = Buffer.concat([
+      Buffer.from('\u0000\u0000\u0000\u0018ftypisom', 'latin1'),
+      Buffer.from('a clip'),
+    ]);
+
+    const keyOf = (result: Awaited<ReturnType<typeof publish>>): string => {
+      if (!result.ok) {
+        throw new Error(`not published: ${result.reason}`);
+      }
+      return result.stored.key;
+    };
+
+    it('copies local audio and video into the artifact, named by their bytes, and points the page at the copies', async () => {
+      const song = imageFile('song.dat', MP3);
+      const clip = imageFile('clip.mov', MP4);
+      const html = `<audio controls src="${song}"></audio><video><source src='${clip}'></video>`;
+
+      const key = keyOf(await publish({ id: 'tour', html }));
+
+      const songName = `${sha256(MP3)}.mp3`;
+      const clipName = `${sha256(MP4)}.mp4`;
+      expect(readFileSync(join(root, RUN, 'tour', 'v1.html'), 'utf8')).toBe(
+        `<audio controls src="media/${songName}"></audio><video><source src='media/${clipName}'></video>`,
+      );
+      expect(
+        readFileSync(join(root, RUN, 'tour', 'media', songName)).equals(MP3),
+      ).toBe(true);
+      expect(
+        readFileSync(join(root, RUN, 'tour', 'v1.source.html'), 'utf8'),
+      ).toBe(html);
+      expect(
+        JSON.parse(
+          readFileSync(join(root, RUN, 'tour', 'v1.media.json'), 'utf8'),
+        ),
+      ).toEqual({ [song]: songName, [clip]: clipName });
+      expect(readdirSync(join(root, RUN, 'tour', 'media')).sort()).toEqual(
+        [clipName, songName].sort(),
+      );
+      expect(store.locateMedia(RUN, 'tour', key, clipName)).toEqual({
+        path: join(root, RUN, 'tour', 'media', clipName),
+        size: MP4.length,
+        mediaType: 'video/mp4',
+      });
+    });
+
+    it('refuses the whole page over one file that is not audio or video, and writes nothing', async () => {
+      const song = imageFile('song.mp3', MP3);
+      const fake = imageFile('fake.mp4', Buffer.from('not a movie'));
+
+      const result = await publish({
+        id: 'tour',
+        html: `<audio src="${song}"></audio><video src="${fake}"></video>`,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.reason).toContain('is not an mp3');
+      expect(existsSync(join(root, RUN, 'tour'))).toBe(false);
+    });
+
+    it('refuses a media tag that does not close', async () => {
+      const result = await publish({ html: '<p>x</p><video src="/tmp/a.mp4' });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.reason).toContain('<video>');
+    });
+
+    it('keeps the stored copy for an edit after the file it came from is gone', async () => {
+      const song = imageFile('song.mp3', MP3);
+      await publish({
+        id: 'tour',
+        html: `<audio src="${song}"></audio><p>one</p>`,
+      });
+      rmSync(song);
+
+      const result = await store.publish(RUN, {
+        id: 'tour',
+        title: 'Plan',
+        patch: {
+          baseVersion: 1,
+          edits: [{ oldString: 'one', newString: 'two', replaceAll: false }],
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(readFileSync(join(root, RUN, 'tour', 'v2.html'), 'utf8')).toBe(
+        `<audio src="media/${sha256(MP3)}.mp3"></audio><p>two</p>`,
+      );
+    });
+
+    type Copying = {
+      copyMedia: (...args: unknown[]) => Promise<unknown>;
+    };
+
+    /** Runs `during` once, after the next publish copies its media and before its writes. */
+    const whileCopying = (during: () => Promise<unknown> | void): void => {
+      const copying = store as unknown as Copying;
+      const copy = copying.copyMedia.bind(store);
+      let pending = true;
+      vi.spyOn(copying, 'copyMedia').mockImplementation(async (...args) => {
+        const copied = await copy(...args);
+        if (pending) {
+          pending = false;
+          await during();
+        }
+        return copied;
+      });
+    };
+
+    it('refuses a page whose run is deleted while its media is copied, and leaves nothing of the run', async () => {
+      const song = imageFile('song.mp3', MP3);
+      whileCopying(() => store.removeRun(RUN));
+
+      const result = await publish({
+        id: 'tour',
+        html: `<audio src="${song}">`,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.reason).toContain('deleted');
+      expect(existsSync(join(root, RUN))).toBe(false);
+    });
+
+    it('refuses edits whose page another publish replaced while their media was copied', async () => {
+      const song = imageFile('song.mp3', MP3);
+      await publish({
+        id: 'tour',
+        html: `<audio src="${song}"></audio><p>one</p>`,
+      });
+      whileCopying(() => publish({ id: 'tour', html: '<p>rewritten</p>' }));
+
+      const result = await store.publish(RUN, {
+        id: 'tour',
+        title: 'Plan',
+        patch: {
+          baseVersion: 1,
+          edits: [{ oldString: 'one', newString: 'two', replaceAll: false }],
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.reason).toContain('version 2');
+      expect(
+        readdirSync(join(root, RUN, 'tour'))
+          .filter((name) => /^v\d+\.html$/.test(name))
+          .sort(),
+      ).toEqual(['v1.html', 'v2.html']);
+    });
+
+    it('refuses a page that plays more distinct files than the per-page count', async () => {
+      const tags = Array.from(
+        { length: MAX_ARTIFACT_PAGE_MEDIA + 1 },
+        (_, i) => {
+          const file = imageFile(
+            `s${i}.mp3`,
+            Buffer.concat([MP3, Buffer.from(String(i))]),
+          );
+          return `<audio src="${file}"></audio>`;
+        },
+      );
+
+      const result = await publish({ id: 'tour', html: tags.join('') });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.reason).toContain(
+        `more than ${MAX_ARTIFACT_PAGE_MEDIA} audio or video files`,
+      );
+      expect(existsSync(join(root, RUN, 'tour'))).toBe(false);
+    });
+
+    it('refuses a page whose files together pass the per-page size, before copying any', async () => {
+      const count =
+        Math.floor(MAX_ARTIFACT_PAGE_MEDIA_BYTES / MAX_ARTIFACT_MEDIA_BYTES) +
+        1;
+      const tags = Array.from({ length: count }, (_, i) => {
+        const file = imageFile(
+          `big${i}.webm`,
+          Buffer.from([0x1a, 0x45, 0xdf, 0xa3, i]),
+        );
+        truncateSync(file, MAX_ARTIFACT_MEDIA_BYTES);
+        return `<video src="${file}"></video>`;
+      });
+
+      const result = await publish({ id: 'tour', html: tags.join('') });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.reason).toContain('of audio and video');
+      expect(existsSync(join(root, RUN, 'tour'))).toBe(false);
+    });
+
+    it('refuses an edit whose kept copy is gone along with the file it came from', async () => {
+      const song = imageFile('song.mp3', MP3);
+      await publish({
+        id: 'tour',
+        html: `<audio src="${song}"></audio><p>one</p>`,
+      });
+      rmSync(song);
+      rmSync(join(root, RUN, 'tour', 'media', `${sha256(MP3)}.mp3`));
+
+      const result = await store.publish(RUN, {
+        id: 'tour',
+        title: 'Plan',
+        patch: {
+          baseVersion: 1,
+          edits: [{ oldString: 'one', newString: 'two', replaceAll: false }],
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.reason).toContain('no longer stored with this page');
+    });
+
+    it('answers no file for a wrong key, a name it does not write, or a file it does not hold', async () => {
+      const song = imageFile('song.mp3', MP3);
+      const key = keyOf(
+        await publish({ id: 'tour', html: `<audio src="${song}">` }),
+      );
+      const name = `${sha256(MP3)}.mp3`;
+
+      expect(store.locateMedia(RUN, 'tour', 'wrong', name)).toBeNull();
+      expect(store.locateMedia(RUN, 'tour', key, '../meta.json')).toBeNull();
+      expect(
+        store.locateMedia(RUN, 'tour', key, `${'a'.repeat(64)}.mp3`),
+      ).toBeNull();
+      expect(store.locateMedia(RUN, 'tour', key, name)).not.toBeNull();
     });
   });
 

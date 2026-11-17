@@ -265,6 +265,8 @@ import { ProgressChip, ProgressDialog } from './progress-dialog';
 import { ProjectSelect } from './project-select';
 import { PromptCacheNotice } from './prompt-cache-notice';
 import {
+  type ArtifactAnswersStore,
+  artifactAnswersStore,
   type ArtifactUrlBuilder,
   artifactUrlBuilder,
 } from './published-artifact';
@@ -8857,6 +8859,13 @@ export function Chats({
     }
     return artifactUrlBuilder(handle, activeRunId);
   }, [activeRunId, handle]);
+  const artifactAnswers = useMemo<ArtifactAnswersStore | null>(
+    () =>
+      activeRunId === null
+        ? null
+        : artifactAnswersStore(apis.chats, activeRunId),
+    [activeRunId, apis.chats],
+  );
   /**
    * The agents panel stands beside every open chat — there is nothing to open
    * and nothing to close, so this is just "is a chat open".
@@ -9941,6 +9950,7 @@ export function Chats({
         callContext={resolveCallReading}
         callChannel={callChannel}
         artifactUrl={artifactUrl}
+        artifactAnswers={artifactAnswers}
         artifactSharing={artifactSharing}
         // What the reader folded and opened is remembered per THREAD — see
         // `thread-ui-memory.ts`.

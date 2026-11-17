@@ -710,6 +710,7 @@ import { defaultSpawn } from './utils/spawn-cli';
     // And the store behind it: a TEAM member publishes a page too, and the
     // executor is the turn that persists that row.
     ArtifactStoreService,
+    ChatArtifactsService,
     // For v1/shares, which encrypts the same document a saved file carries.
     ArtifactPageService,
     PlanBroker,

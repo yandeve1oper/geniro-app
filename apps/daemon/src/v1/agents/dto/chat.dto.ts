@@ -7,6 +7,7 @@ import {
   ActivityWindowFields,
   AgentOptionsSchema,
   AppProcessesWireSchema,
+  ArtifactAnswersWireSchema,
   AttachmentMediaTypeSchema,
   AutoCompactPercentSchema,
   CALL_MESSAGES_MAX,
@@ -43,6 +44,7 @@ import {
   RunTeamNotesWireSchema,
   RunWaterfallWireSchema,
   RunWireSchema,
+  SaveArtifactAnswersSchema,
   ShellKillWireSchema,
   ShellOutputWireSchema,
   StopDetachedProcessesSchema,
@@ -831,6 +833,16 @@ export class ChatTimelineDto extends createZodDto(ChatTimelineWireSchema) {}
 
 /** The pages this run published — see `RunArtifactsWireSchema`. */
 export class RunArtifactsDto extends createZodDto(RunArtifactsWireSchema) {}
+
+/** One page's saved answers — see `ArtifactAnswersWireSchema`. */
+export class ArtifactAnswersDto extends createZodDto(
+  ArtifactAnswersWireSchema,
+) {}
+
+/** The answers a page changed, merged into what was kept — see `SaveArtifactAnswersSchema`. */
+export class SaveArtifactAnswersDto extends createZodDto(
+  SaveArtifactAnswersSchema,
+) {}
 
 /** Every team note of one run — see `RunTeamNotesWireSchema`. */
 export class RunTeamNotesDto extends createZodDto(RunTeamNotesWireSchema) {}

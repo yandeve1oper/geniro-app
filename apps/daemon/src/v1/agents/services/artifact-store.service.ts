@@ -2,12 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, NotFoundException } from '@packages/common';
@@ -19,8 +21,13 @@ import { atomicWriteSync } from '../../../utils/atomic-file';
 import { registerSecret } from '../../diagnostics/utils/redact';
 import {
   ARTIFACT_ID_PATTERN,
+  type ArtifactAnswersWire,
+  ArtifactAnswersWireSchema,
+  type ArtifactMediaFile,
   type ArtifactPatch,
   type HostArtifact,
+  type KeptArtifactAnswers,
+  MAX_ARTIFACT_ANSWERS_BYTES,
   MAX_ARTIFACT_HTML_BYTES,
   MAX_ARTIFACT_ID_LENGTH,
 } from '../chat.types';
@@ -30,10 +37,14 @@ import {
   ARTIFACT_IMAGE_FILE,
   ARTIFACT_IMAGE_MEDIA_TYPE,
   ARTIFACT_IMAGES_DIR,
+  ARTIFACT_MEDIA_DIR,
+  ARTIFACT_MEDIA_FILE,
+  ARTIFACT_MEDIA_TYPE,
   type ArtifactImageMediaType,
   imageTagsAreWhole,
   isArtifactImageExtension,
-  isLocalImageSource,
+  isArtifactMediaExtension,
+  isLocalSource,
   mapImageSources,
 } from '../utils/artifact-html-images';
 import {
@@ -43,6 +54,15 @@ import {
   megabytes,
   readArtifactImage,
 } from '../utils/artifact-image-policy';
+import {
+  copyPageMedia,
+  type MediaBase,
+  openPageMedia,
+  type PageMedia,
+  readStoredNames,
+  withStoredMedia,
+} from '../utils/artifact-page-media';
+import { fsErrorCode } from '../utils/fs-error-code';
 
 /** Constructor options — test seams, not user config. */
 export interface ArtifactStoreOptions {
@@ -100,9 +120,8 @@ interface PreparedPage {
   pictures: Map<string, string>;
 }
 
-interface PatchBase {
+interface PatchBase extends MediaBase {
   artifactId: string;
-  dir: string;
   version: number;
   pictures: ReadonlyMap<string, string>;
 }
@@ -194,9 +213,12 @@ export class ArtifactStoreService {
         reason: `the page is ${Math.floor(bytes / 1024)}KB, over the ${limit}KB limit — publish a smaller one`,
       };
     }
+    const roots = await this.rootsOf(runId);
     let page: PreparedPage;
+    let media: PageMedia;
     try {
-      page = await this.preparePage(runId, source, base);
+      page = this.preparePage(source, base, roots);
+      media = openPageMedia(page.html, roots, base);
     } catch (error) {
       if (
         error instanceof BadRequestException ||
@@ -209,24 +231,45 @@ export class ArtifactStoreService {
     // The cap is on the page the frame and the download carry, and that is the
     // stored form: each reference has grown from the path the agent wrote to the
     // name the page now holds, so the limit is checked again on the rewritten text.
-    const storedBytes = Buffer.byteLength(page.html, 'utf8');
+    const storedBytes = Buffer.byteLength(
+      withStoredMedia(page.html, media),
+      'utf8',
+    );
     if (storedBytes > MAX_ARTIFACT_HTML_BYTES) {
+      media.close();
       const limit = Math.floor(MAX_ARTIFACT_HTML_BYTES / 1024);
       return {
         ok: false,
-        reason: `the page is ${Math.floor(storedBytes / 1024)}KB once its pictures are referenced, over the ${limit}KB limit — publish fewer pictures, or a smaller page`,
+        reason: `the page is ${Math.floor(storedBytes / 1024)}KB once its pictures and media are referenced, over the ${limit}KB limit — publish fewer pictures, or a smaller page`,
       };
     }
-    // Nothing below awaits, so the run cannot be removed between this check and
-    // the writes that follow it.
     if (this.removedRuns.has(runId)) {
-      return {
-        ok: false,
-        reason: 'the run was deleted while its page was being published',
-      };
+      media.close();
+      return { ok: false, reason: RUN_REMOVED_REASON };
     }
     const artifactId = base?.artifactId ?? this.resolveId(artifact.id);
     const dir = join(this.root, runId, artifactId);
+    if (base !== null && this.readMeta(dir)?.version !== base.version) {
+      media.close();
+      return {
+        ok: false,
+        reason: staleBaseReason(
+          base.version,
+          this.readMeta(dir)?.version ?? null,
+        ),
+      };
+    }
+    const copied = await this.copyMedia(runId, dir, media);
+    if (!copied.ok) {
+      return copied;
+    }
+    const html = withStoredMedia(page.html, media, copied.names);
+    // Nothing below awaits, so the run cannot be removed, and no other publish of
+    // this artifact can land, between these reads and the writes that follow them.
+    if (this.removedRuns.has(runId)) {
+      rmSync(join(this.root, runId), { recursive: true, force: true });
+      return { ok: false, reason: RUN_REMOVED_REASON };
+    }
     const previous = this.readMeta(dir);
     if (base !== null && previous?.version !== base.version) {
       return {
@@ -234,7 +277,6 @@ export class ArtifactStoreService {
         reason: staleBaseReason(base.version, previous?.version ?? null),
       };
     }
-    mkdirSync(dir, { recursive: true });
     if (page.images.length > 0) {
       mkdirSync(join(dir, ARTIFACT_IMAGES_DIR), { recursive: true });
     }
@@ -257,23 +299,18 @@ export class ArtifactStoreService {
     // reused key is registered again — idempotent per (value, label) — because
     // the first read after a restart is the only chance this process gets.
     registerSecret(meta.key, 'artifact key');
-    writeFileSync(join(dir, `v${meta.version}.html`), page.html, 'utf8');
+    writeFileSync(join(dir, `v${meta.version}.html`), html, 'utf8');
     const sourcePath = join(dir, sourceFile(meta.version));
-    const picturesPath = join(dir, picturesFile(meta.version));
-    if (page.html !== source) {
+    if (html !== source) {
       writeFileSync(sourcePath, source, 'utf8');
     } else {
       rmSync(sourcePath, { force: true });
     }
-    if (page.pictures.size > 0) {
-      writeFileSync(
-        picturesPath,
-        JSON.stringify(Object.fromEntries(page.pictures)),
-        'utf8',
-      );
-    } else {
-      rmSync(picturesPath, { force: true });
-    }
+    writeMapFile(join(dir, picturesFile(meta.version)), page.pictures);
+    writeMapFile(
+      join(dir, mediaMapFile(meta.version)),
+      new Map([...copied.names].filter(([path]) => isAbsolute(path))),
+    );
     // The page lands BEFORE the meta that advertises it: a crash between the
     // two leaves an unreferenced file, where the reverse order would leave a
     // meta pointing at a version that does not exist.
@@ -314,7 +351,7 @@ export class ArtifactStoreService {
       return readFileSync(join(dir, `v${version}.html`), 'utf8');
     } catch (error) {
       this.logger.warn(
-        `could not read version ${version} of artifact ${artifactId}: ${codeOf(error)}`,
+        `could not read version ${version} of artifact ${artifactId}: ${fsErrorCode(error)}`,
       );
       return null;
     }
@@ -332,18 +369,46 @@ export class ArtifactStoreService {
     runId: string,
     artifactId: string,
   ): { version: number; key: string } | null {
-    if (
-      !UUID.test(runId) ||
-      !ARTIFACT_ID_PATTERN.test(artifactId) ||
-      artifactId.length > MAX_ARTIFACT_ID_LENGTH
-    ) {
+    const dir = this.artifactDir(runId, artifactId);
+    if (dir === null) {
       return null;
     }
-    const meta = this.readMeta(join(this.root, runId, artifactId));
+    const meta = this.readMeta(dir);
     if (meta !== null) {
       registerSecret(meta.key, 'artifact key');
     }
     return meta;
+  }
+
+  /**
+   * Where one stored audio or video file of a page lies on disk, its size and the
+   * type it is served under, or null when the request names nothing this store
+   * holds or presents the wrong key — the single null {@link readImage} answers,
+   * on the same checks. The route streams the file itself, a range at a time.
+   */
+  locateMedia(
+    runId: string,
+    artifactId: string,
+    key: string,
+    file: string,
+  ): ArtifactMediaFile | null {
+    if (!ARTIFACT_MEDIA_FILE.test(file)) {
+      return null;
+    }
+    const dir = this.locate(runId, artifactId, key);
+    const extension = file.slice(file.lastIndexOf('.') + 1);
+    if (dir === null || !isArtifactMediaExtension(extension)) {
+      return null;
+    }
+    const path = join(dir, ARTIFACT_MEDIA_DIR, file);
+    try {
+      const stat = statSync(path);
+      return stat.isFile()
+        ? { path, size: stat.size, mediaType: ARTIFACT_MEDIA_TYPE[extension] }
+        : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -379,10 +444,141 @@ export class ArtifactStoreService {
       };
     } catch (error) {
       this.logger.warn(
-        `could not read picture ${file} of artifact ${artifactId}: ${codeOf(error)}`,
+        `could not read picture ${file} of artifact ${artifactId}: ${fsErrorCode(error)}`,
       );
       return null;
     }
+  }
+
+  /**
+   * What the user picked on one page, or null when the run holds no such page.
+   * A page nobody answered yet answers no values and no time.
+   *
+   * For callers that already hold the run: the token-gated chat routes and the
+   * run's own agent. No key is asked for, and none may be: the page itself never
+   * reaches this, only its host.
+   */
+  readAnswers(runId: string, artifactId: string): ArtifactAnswersWire | null {
+    const dir = this.artifactDir(runId, artifactId);
+    if (dir === null || this.readMeta(dir) === null) {
+      return null;
+    }
+    return this.readAnswersIn(dir) ?? { values: {}, updatedAt: null };
+  }
+
+  /**
+   * Merge the answers a page changed into what was kept — null forgets one — and
+   * answer the whole set, or null when the run holds no such page, or `too-large`
+   * when the merged set would pass `MAX_ARTIFACT_ANSWERS_BYTES` (nothing is
+   * written then). Kept beside the page's versions, so every version reads them
+   * and they go with the run. Read and written with no await between, so two
+   * saves never interleave.
+   */
+  mergeAnswers(
+    runId: string,
+    artifactId: string,
+    changes: Record<string, unknown>,
+  ): ArtifactAnswersWire | 'too-large' | 'unreadable' | null {
+    const dir = this.artifactDir(runId, artifactId);
+    if (
+      dir === null ||
+      this.readMeta(dir) === null ||
+      this.removedRuns.has(runId)
+    ) {
+      return null;
+    }
+    const kept = this.readKeptAnswers(dir);
+    if (kept === 'unreadable') {
+      return kept;
+    }
+    const values = { ...kept };
+    for (const [name, value] of Object.entries(changes)) {
+      if (value === null) {
+        delete values[name];
+      } else {
+        values[name] = value;
+      }
+    }
+    if (JSON.stringify(values).length > MAX_ARTIFACT_ANSWERS_BYTES) {
+      return 'too-large';
+    }
+    const saved = { values, updatedAt: new Date().toISOString() };
+    atomicWriteSync(join(dir, ANSWERS_FILE), JSON.stringify(saved));
+    return saved;
+  }
+
+  /**
+   * The answers a merge starts from: none when the page has no answers file yet,
+   * `unreadable` when one is there but cannot be read or parsed — a merge then
+   * refuses rather than write over every answer it could not see.
+   */
+  private readKeptAnswers(dir: string): Record<string, unknown> | 'unreadable' {
+    let raw: string;
+    try {
+      raw = readFileSync(join(dir, ANSWERS_FILE), 'utf8');
+    } catch (error) {
+      if (fsErrorCode(error) === 'ENOENT') {
+        return {};
+      }
+      this.logger.warn(
+        `could not read the answers of an artifact: ${fsErrorCode(error)}`,
+      );
+      return 'unreadable';
+    }
+    try {
+      const parsed = ArtifactAnswersWireSchema.safeParse(JSON.parse(raw));
+      return parsed.success ? parsed.data.values : 'unreadable';
+    } catch {
+      return 'unreadable';
+    }
+  }
+
+  /** Every page of the run that has answers, newest answer first. */
+  listAnswers(runId: string): KeptArtifactAnswers[] {
+    if (!UUID.test(runId)) {
+      return [];
+    }
+    let names: string[];
+    try {
+      names = readdirSync(join(this.root, runId));
+    } catch {
+      return [];
+    }
+    const kept: KeptArtifactAnswers[] = [];
+    for (const artifactId of names) {
+      const dir = this.artifactDir(runId, artifactId);
+      const answers = dir === null ? null : this.readAnswersIn(dir);
+      if (answers?.updatedAt) {
+        kept.push({
+          artifactId,
+          values: answers.values,
+          updatedAt: answers.updatedAt,
+        });
+      }
+    }
+    return kept.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  private readAnswersIn(dir: string): ArtifactAnswersWire | null {
+    const raw = readOrNull(join(dir, ANSWERS_FILE));
+    if (raw === null) {
+      return null;
+    }
+    try {
+      const parsed = ArtifactAnswersWireSchema.safeParse(JSON.parse(raw));
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The artifact's directory when the ids are shapes this store mints, else null. */
+  private artifactDir(runId: string, artifactId: string): string | null {
+    return UUID.test(runId) &&
+      ARTIFACT_ID_PATTERN.test(artifactId) &&
+      artifactId.length <= MAX_ARTIFACT_ID_LENGTH
+      ? join(this.root, runId, artifactId)
+      : null;
   }
 
   /**
@@ -411,15 +607,8 @@ export class ArtifactStoreService {
     artifactId: string,
     key: string,
   ): string | null {
-    if (
-      !UUID.test(runId) ||
-      !ARTIFACT_ID_PATTERN.test(artifactId) ||
-      artifactId.length > MAX_ARTIFACT_ID_LENGTH
-    ) {
-      return null;
-    }
-    const dir = join(this.root, runId, artifactId);
-    const meta = this.readMeta(dir);
+    const dir = this.artifactDir(runId, artifactId);
+    const meta = dir === null ? null : this.readMeta(dir);
     if (meta === null || !safeEqual(meta.key, key)) {
       return null;
     }
@@ -438,26 +627,23 @@ export class ArtifactStoreService {
    * full. A spelling repeated on the page is read once; two spellings of one file
    * store one copy, since a copy is named by its bytes.
    */
-  private async preparePage(
-    runId: string,
+  private preparePage(
     html: string,
     base: PatchBase | null,
-  ): Promise<PreparedPage> {
+    roots: string[],
+  ): PreparedPage {
     if (!imageTagsAreWhole(html)) {
       throw new BadRequestException(
         'ARTIFACT_IMAGE_TAG_UNCLOSED',
         'an <img> tag in this page does not close, so a picture in it cannot be read — close every tag, and write a > inside an attribute value as &gt;',
       );
     }
-    const folder = await this.folderOf(runId);
-    const roots =
-      folder === null ? systemImageRoots() : [...systemImageRoots(), folder];
     const byPath = new Map<string, PageImage>();
     const images = new Map<string, PageImage>();
     const pictures = new Map<string, string>();
     let shown = 0;
     const rewritten = mapImageSources(html, (src) => {
-      if (!isLocalImageSource(src)) {
+      if (!isLocalSource(src)) {
         return src;
       }
       const stored = base === null ? null : storedImageName(src);
@@ -597,7 +783,14 @@ export class ArtifactStoreService {
         artifactId: requested,
         dir,
         version: meta.version,
-        pictures: this.readPictures(dir, meta.version),
+        pictures: readStoredNames(
+          readOrNull(join(dir, picturesFile(meta.version))),
+          ARTIFACT_IMAGE_FILE,
+        ),
+        media: readStoredNames(
+          readOrNull(join(dir, mediaMapFile(meta.version))),
+          ARTIFACT_MEDIA_FILE,
+        ),
       },
       source: edited.text,
     };
@@ -608,9 +801,9 @@ export class ArtifactStoreService {
       try {
         return readFileSync(join(dir, file), 'utf8');
       } catch (error) {
-        if (codeOf(error) !== 'ENOENT') {
+        if (fsErrorCode(error) !== 'ENOENT') {
           this.logger.warn(
-            `could not read ${file} of an artifact: ${codeOf(error)}`,
+            `could not read ${file} of an artifact: ${fsErrorCode(error)}`,
           );
           return null;
         }
@@ -619,34 +812,52 @@ export class ArtifactStoreService {
     return null;
   }
 
-  private readPictures(dir: string, version: number): Map<string, string> {
-    const pictures = new Map<string, string>();
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(
-        readFileSync(join(dir, picturesFile(version)), 'utf8'),
-      );
-    } catch {
-      return pictures;
-    }
-    if (typeof parsed !== 'object' || parsed === null) {
-      return pictures;
-    }
-    for (const [path, name] of Object.entries(parsed)) {
-      if (typeof name === 'string' && ARTIFACT_IMAGE_FILE.test(name)) {
-        pictures.set(path, name);
-      }
-    }
-    return pictures;
-  }
-
-  /** The run's working folder, or null when the run has none (or no run source). */
-  private async folderOf(runId: string): Promise<string | null> {
+  /** The folders a page's pictures and media may come from: the system temp ones and the run's own. */
+  private async rootsOf(runId: string): Promise<string[]> {
     if (this.runs === undefined) {
-      return null;
+      return systemImageRoots();
     }
     const run = await this.runs.getById(runId);
-    return run?.cwd ?? null;
+    const folder = run?.cwd ?? null;
+    return folder === null
+      ? systemImageRoots()
+      : [...systemImageRoots(), folder];
+  }
+
+  /**
+   * Makes the artifact's folder and copies the page's local audio and video into
+   * it, closing every file it opened whatever happens. A copy that fails refuses
+   * the page; the folder stays, since a publish of the same artifact running
+   * alongside may be writing into it.
+   */
+  private async copyMedia(
+    runId: string,
+    dir: string,
+    media: PageMedia,
+  ): Promise<
+    { ok: true; names: Map<string, string> } | { ok: false; reason: string }
+  > {
+    try {
+      mkdirSync(dir, { recursive: true });
+      if (media.sources.size === 0) {
+        return { ok: true, names: new Map() };
+      }
+      mkdirSync(join(dir, ARTIFACT_MEDIA_DIR), { recursive: true });
+      return { ok: true, names: await copyPageMedia(media, dir) };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        return { ok: false, reason: error.message };
+      }
+      this.logger.warn(
+        `could not store a page in run ${runId}: ${fsErrorCode(error)}`,
+      );
+      return {
+        ok: false,
+        reason: `the page could not be stored (${fsErrorCode(error)}) — publish it again`,
+      };
+    } finally {
+      media.close();
+    }
   }
 
   /**
@@ -703,6 +914,36 @@ function picturesFile(version: number): string {
   return `v${version}.images.json`;
 }
 
+function mediaMapFile(version: number): string {
+  return `v${version}.media.json`;
+}
+
+/** The file, beside an artifact's versions, its page's answers are kept in. */
+const ANSWERS_FILE = 'answers.json';
+
+const RUN_REMOVED_REASON =
+  'the run was deleted while its page was being published';
+
+/** A version's path → stored name map, written when it has entries and removed when it has none. */
+function writeMapFile(
+  path: string,
+  entries: ReadonlyMap<string, string>,
+): void {
+  if (entries.size > 0) {
+    writeFileSync(path, JSON.stringify(Object.fromEntries(entries)), 'utf8');
+  } else {
+    rmSync(path, { force: true });
+  }
+}
+
+function readOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 function storedImageName(src: string): string | null {
   const prefix = `${ARTIFACT_IMAGES_DIR}/`;
   const trimmed = src.trim();
@@ -717,10 +958,4 @@ function staleBaseReason(base: number, latest: number | null): string {
   return latest === null
     ? `the page these edits were written against is gone — publish the whole page with html`
     : `these edits were written against version ${base}, but the page is at version ${latest} now — publish the whole page with html, or send edits against version ${latest}`;
-}
-
-/** The system error code behind a failed read, for a log line. */
-function codeOf(error: unknown): string {
-  const code = (error as { code?: unknown }).code;
-  return typeof code === 'string' ? code : 'unknown error';
 }

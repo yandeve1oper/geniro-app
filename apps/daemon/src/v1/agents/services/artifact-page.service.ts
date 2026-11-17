@@ -1,10 +1,16 @@
+import { createReadStream } from 'node:fs';
+
 import { Injectable } from '@nestjs/common';
 
+import type { ArtifactMediaResponse } from '../chat.types';
 import {
+  ARTIFACT_RESPONSE_HEADERS,
   renderArtifactDocument,
   renderArtifactPage,
   withInlineImages,
+  withMediaRoute,
 } from '../utils/artifact-page';
+import { parseByteRange } from '../utils/byte-range';
 import { ArtifactStoreService } from './artifact-store.service';
 
 /**
@@ -35,7 +41,65 @@ export class ArtifactPageService {
     const html = this.store.read(runId, artifactId, version, key);
     return html === null
       ? null
-      : renderArtifactPage(this.inline(runId, artifactId, key, html));
+      : renderArtifactPage(
+          withMediaRoute(
+            this.inline(runId, artifactId, key, html),
+            runId,
+            artifactId,
+            key,
+          ),
+        );
+  }
+
+  /**
+   * What the media route answers for one audio or video file a page plays.
+   *
+   * Under the page's own key, with the page's single 404 for every failure. A
+   * media element asks for a byte range to start playing and another for every
+   * seek, so a range is answered `206` and a span past the end `416`; no range
+   * gets the whole file, all under {@link ARTIFACT_RESPONSE_HEADERS}.
+   */
+  mediaResponse(
+    runId: string,
+    artifactId: string,
+    key: string,
+    file: string,
+    range: string | undefined,
+  ): ArtifactMediaResponse {
+    const found = this.store.locateMedia(runId, artifactId, key, file);
+    if (found === null) {
+      return {
+        status: 404,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+        body: 'not found',
+      };
+    }
+    const headers: Record<string, string> = {
+      ...ARTIFACT_RESPONSE_HEADERS,
+      'accept-ranges': 'bytes',
+    };
+    const span = parseByteRange(range, found.size);
+    if (span === 'unsatisfiable') {
+      return {
+        status: 416,
+        headers: { ...headers, 'content-range': `bytes */${found.size}` },
+        body: '',
+      };
+    }
+    const { start, end } = span ?? { start: 0, end: found.size - 1 };
+    return {
+      status: span === null ? 200 : 206,
+      headers: {
+        ...headers,
+        ...(span === null
+          ? {}
+          : { 'content-range': `bytes ${start}-${end}/${found.size}` }),
+        'content-type': found.mediaType,
+        'content-length': String(Math.max(0, end - start + 1)),
+      },
+      body:
+        found.size === 0 ? '' : createReadStream(found.path, { start, end }),
+    };
   }
 
   /**

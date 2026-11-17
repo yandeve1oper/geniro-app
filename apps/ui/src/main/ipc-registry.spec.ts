@@ -157,6 +157,7 @@ const DENIED_CHANNEL_KEYS: (keyof typeof IPC)[] = [
   'saveKnowledgeExport',
   'openInTerminal',
   'revealPath',
+  'openArtifactPath',
   'getAppStorage',
   'removeStorageWorktree',
   'clearBrowserCache',

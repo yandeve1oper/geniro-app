@@ -393,6 +393,13 @@ export function createPreloadStub(
         reason: 'Storybook has no file manager to reveal in.',
       });
     },
+    openArtifactPath: () => {
+      note('openArtifactPath');
+      return Promise.resolve({
+        shown: null,
+        reason: 'Storybook has no file manager to open.',
+      });
+    },
     toggleDevTools: () => {
       note('toggleDevTools');
       return Promise.resolve();

@@ -110,7 +110,7 @@ Each card gets its own worktree and branch, and runs a chat or a team. Autopilot
 <td valign="top">
 
 <b>🎨 Artifacts</b><br>
-Agents publish live HTML pages that open next to the chat. Share one as an encrypted link to a bucket you own.
+Agents publish live HTML pages that open next to the chat, with audio, video, folder buttons, and answers the agent can read back. Share one as an encrypted link to a bucket you own.
 
 </td>
 <td valign="top">
@@ -284,7 +284,10 @@ A browser beside every chat, for your preview stands and any other page.
 Sometimes the right answer is a page, not a paragraph. Agents call `show_artifact` to publish an interactive HTML page: a dashboard, a report or a little tool. It opens beside the chat, goes full screen, and can be saved as a file.
 
 - **Revised in place.** Each revision is a new version of the same page, and every earlier version still opens from its own card. For a small change an agent sends only the edits, not the whole page again, and edits written against a version someone else has since replaced are refused.
-- **Sandboxed.** The page runs in a locked-down frame. It can show local pictures and load libraries from a short list of public CDNs, and that's it. A picture the page links to opens in Geniro's image viewer, and Escape closes the full-screen page even after you click into it.
+- **Sandboxed.** The page runs in a locked-down frame. It can show local pictures, play local audio and video, and load libraries from a short list of public CDNs, and that's it. A picture the page links to opens in Geniro's image viewer, and Escape closes the full-screen page even after you click into it.
+- **Audio and video.** An agent names a sound or a clip on your Mac in the page (`<audio>`, `<video>`), and Geniro copies it in and streams it, with seeking — a voice-over for a walkthrough, a screen recording of a bug. They play in the app; a saved or shared copy of the page leaves them out.
+- **Buttons that open a folder.** A button on the page can open a folder in Finder, or show a file selected in its folder. Nothing is ever launched from it: a file, an app or a package is only revealed.
+- **Your answers reach the agent.** Pick options, tick boxes or type into a page — approve or reject each line of a review, vote on alternatives — and Geniro keeps what you chose, puts it back when the page opens again, and the agent reads it with `artifact_answers`. No more copying a summary into the chat.
 - **Encrypted sharing.** Press share on the page and Geniro encrypts it (AES-256-GCM) and uploads it to a place *you* configured: Google Cloud Storage through `gcloud`, S3 through `aws`, or your own command. The key travels only in the link's `#fragment`, which browsers never send to a server.
 - **You stay in control.** Revoke a link, revoke them all, or have links expire after a set number of days. Agents may share pages too, but only if you turn that on (it is off by default).
 

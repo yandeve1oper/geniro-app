@@ -1,16 +1,28 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { stubResizeObserver } from '../__tests__/stub-resize-observer';
 import { pushEscapeLayer } from '../components/ui/escape-layers';
-import { ArtifactFrame } from './artifact-frame';
+import {
+  ANSWERS_RETRY_MS,
+  ANSWERS_SAVE_DELAY_MS,
+  ArtifactFrame,
+  MAX_ANSWER_NAME,
+  OPEN_PATH_GAP_MS,
+} from './artifact-frame';
 import {
   BrowserPaneContext,
   type BrowserPaneControls,
 } from './browser/browser-pane-context';
 import {
+  ArtifactAnswersContext,
+  type ArtifactAnswersStore,
+  artifactAnswersStore,
   ArtifactUrlContext,
   type PublishedArtifact,
 } from './published-artifact';
@@ -414,5 +426,336 @@ describe('ArtifactFrame — an Escape the page hands over', () => {
     await render();
     await post({ type: 'escape' });
     expect(close).not.toHaveBeenCalled();
+  });
+});
+
+describe('ArtifactFrame — a folder button on the page', () => {
+  let openArtifactPath: ReturnType<
+    typeof vi.fn<(path: string) => Promise<unknown>>
+  >;
+  let activation: { isActive: boolean };
+
+  beforeEach(() => {
+    openArtifactPath = vi.fn<(path: string) => Promise<unknown>>(() =>
+      Promise.resolve({ shown: 'opened' }),
+    );
+    (window as unknown as { geniro: unknown }).geniro = { openArtifactPath };
+    activation = { isActive: true };
+    Object.defineProperty(navigator, 'userActivation', {
+      configurable: true,
+      get: () => activation,
+    });
+  });
+
+  afterEach(() => {
+    delete (window as unknown as { geniro?: unknown }).geniro;
+    Reflect.deleteProperty(navigator, 'userActivation');
+  });
+
+  it('asks main to show the folder the user just clicked inside the page', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'open-path', path: '/Users/me/reports' });
+    expect(openArtifactPath).toHaveBeenCalledWith('/Users/me/reports');
+  });
+
+  it('shows nothing the page asks for without a fresh click, though it holds focus', async () => {
+    activation.isActive = false;
+    await render();
+    focusFrame();
+    await post({ type: 'open-path', path: '/Users/me/reports' });
+    expect(openArtifactPath).not.toHaveBeenCalled();
+  });
+
+  it('acts on one folder while a click stays fresh, so one click cannot open a burst of them', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    await render();
+    focusFrame();
+    await post({ type: 'open-path', path: '/a' });
+    now.mockReturnValue(1_000_000 + OPEN_PATH_GAP_MS - 1);
+    await post({ type: 'open-path', path: '/b' });
+    now.mockReturnValue(1_000_000 + OPEN_PATH_GAP_MS);
+    await post({ type: 'open-path', path: '/c' });
+    expect(openArtifactPath.mock.calls).toEqual([['/a'], ['/c']]);
+  });
+
+  it('shows nothing its own frame asks while the user is not in that frame', async () => {
+    await render();
+    await post({ type: 'open-path', path: '/Users/me/reports' });
+    expect(openArtifactPath).not.toHaveBeenCalled();
+  });
+
+  it('shows nothing for a path posted from anything that is not its own frame', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'open-path', path: '/Users/me/reports' }, window);
+    expect(openArtifactPath).not.toHaveBeenCalled();
+  });
+
+  it('shows nothing for a relative path, a NUL or something that is not a path', async () => {
+    await render();
+    focusFrame();
+    await post({ type: 'open-path', path: 'reports' });
+    await post({ type: 'open-path', path: '/tmp/a\u0000b' });
+    await post({ type: 'open-path', path: 42 });
+    expect(openArtifactPath).not.toHaveBeenCalled();
+  });
+
+  it('says under the page why a folder could not be shown, in its own words, never the page’s', async () => {
+    openArtifactPath.mockResolvedValueOnce({
+      shown: null,
+      reason: 'nothing is at that path',
+    });
+    await render();
+    focusFrame();
+    await post({ type: 'open-path', path: '/Users/me/Click here to update' });
+    expect(container.textContent).toContain(
+      'The page’s folder could not be shown: nothing is at that path'.replace(
+        '’',
+        "'",
+      ),
+    );
+    expect(container.textContent).not.toContain('Click here to update');
+  });
+});
+
+describe('ArtifactFrame — the page answers', () => {
+  let kept: Record<string, unknown>;
+  let chats: {
+    readArtifactAnswers: ReturnType<typeof vi.fn>;
+    saveArtifactAnswers: ReturnType<typeof vi.fn>;
+  };
+  let store: ArtifactAnswersStore;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    kept = { 'call-1': 'agree' };
+    chats = {
+      readArtifactAnswers: vi.fn(() =>
+        Promise.resolve({ values: { ...kept }, updatedAt: null }),
+      ),
+      saveArtifactAnswers: vi.fn(
+        ({
+          saveArtifactAnswersDto,
+        }: {
+          saveArtifactAnswersDto: { changes: Record<string, unknown> };
+        }) => {
+          for (const [name, value] of Object.entries(
+            saveArtifactAnswersDto.changes,
+          )) {
+            if (value === null) {
+              delete kept[name];
+            } else {
+              kept[name] = value;
+            }
+          }
+          return Promise.resolve({ values: { ...kept }, updatedAt: 'now' });
+        },
+      ),
+    };
+    store = artifactAnswersStore(
+      chats as unknown as Parameters<typeof artifactAnswersStore>[0],
+      'run-1',
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function renderWithAnswers(frames = 1): Promise<void> {
+    await act(async () => {
+      root.render(
+        <ArtifactUrlContext.Provider value={() => URL}>
+          <ArtifactAnswersContext.Provider value={store}>
+            {Array.from({ length: frames }, (_, i) => (
+              <ArtifactFrame key={i} artifact={ARTIFACT} />
+            ))}
+          </ArtifactAnswersContext.Provider>
+        </ArtifactUrlContext.Provider>,
+      );
+    });
+  }
+
+  const frames = (): HTMLIFrameElement[] => [
+    ...container.querySelectorAll('iframe'),
+  ];
+
+  async function settle(ms = ANSWERS_SAVE_DELAY_MS): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it('sends the kept answers into the page once it announces itself', async () => {
+    await renderWithAnswers();
+    const sent = vi.spyOn(frame()!.contentWindow!, 'postMessage');
+
+    await post({ type: 'ready' });
+    await settle(0);
+
+    expect(chats.readArtifactAnswers).toHaveBeenCalledWith({
+      runId: 'run-1',
+      artifactId: 'plan',
+    });
+    expect(sent).toHaveBeenCalledWith(
+      {
+        source: 'geniro-host',
+        type: 'answers',
+        values: { 'call-1': 'agree' },
+        confirmed: null,
+      },
+      '*',
+    );
+  });
+
+  it('holds answer names to the daemon’s own limit', () => {
+    const types = readFileSync(
+      join(__dirname, '../../../../daemon/src/v1/agents/chat.types.ts'),
+      'utf8',
+    );
+    expect(
+      Number(
+        /export const MAX_ARTIFACT_ANSWER_NAME_LENGTH = (\d+);/.exec(
+          types,
+        )?.[1],
+      ),
+    ).toBe(MAX_ANSWER_NAME);
+  });
+
+  it('saves only the answers the page changed, once they settle, so a pick never replaces the rest', async () => {
+    await renderWithAnswers();
+    focusFrame();
+
+    await post({ type: 'answer', name: 'call-2', value: 'agree', seq: 1 });
+    await post({ type: 'answer', name: 'call-2', value: 'disagree', seq: 2 });
+    await post({ type: 'answer', name: 'note', value: null, seq: 3 });
+    expect(chats.saveArtifactAnswers).not.toHaveBeenCalled();
+    await settle();
+
+    expect(chats.saveArtifactAnswers.mock.calls).toEqual([
+      [
+        {
+          runId: 'run-1',
+          artifactId: 'plan',
+          saveArtifactAnswersDto: {
+            changes: { 'call-2': 'disagree', note: null },
+          },
+        },
+      ],
+    ]);
+    expect(kept).toEqual({ 'call-1': 'agree', 'call-2': 'disagree' });
+  });
+
+  it('hands the saving page the merged set with the save counts it confirmed, so its own picks give way to newer ones', async () => {
+    await renderWithAnswers();
+    const sent = vi.spyOn(frame()!.contentWindow!, 'postMessage');
+    focusFrame();
+
+    await post({ type: 'answer', name: 'call-2', value: 'disagree', seq: 4 });
+    await settle();
+
+    expect(sent).toHaveBeenCalledWith(
+      {
+        source: 'geniro-host',
+        type: 'answers',
+        values: { 'call-1': 'agree', 'call-2': 'disagree' },
+        confirmed: { 'call-2': 4 },
+      },
+      '*',
+    );
+  });
+
+  it('sends a refused batch again, with what changed since, and says so under the page once it gives up', async () => {
+    chats.saveArtifactAnswers.mockRejectedValueOnce(new Error('daemon gone'));
+    await renderWithAnswers();
+    focusFrame();
+
+    await post({ type: 'answer', name: 'call-2', value: 'disagree', seq: 1 });
+    await settle();
+    await post({ type: 'answer', name: 'why', value: 'cost', seq: 2 });
+    await settle(ANSWERS_RETRY_MS);
+
+    expect(chats.saveArtifactAnswers.mock.calls.at(-1)?.[0]).toEqual({
+      runId: 'run-1',
+      artifactId: 'plan',
+      saveArtifactAnswersDto: {
+        changes: { 'call-2': 'disagree', why: 'cost' },
+      },
+    });
+    expect(kept).toEqual({
+      'call-1': 'agree',
+      'call-2': 'disagree',
+      why: 'cost',
+    });
+
+    chats.saveArtifactAnswers.mockRejectedValue(new Error('daemon gone'));
+    await post({ type: 'answer', name: 'x', value: 1, seq: 3 });
+    await settle();
+    await settle(ANSWERS_RETRY_MS);
+    await settle(ANSWERS_RETRY_MS);
+    expect(container.textContent).toContain(
+      'Your picks on this page were not saved: daemon gone',
+    );
+  });
+
+  it('hands what one frame of a page saved to its other frames, and not back to the one that saved', async () => {
+    await renderWithAnswers(2);
+    const [saving, other] = frames();
+    const toSaving = vi.spyOn(saving!.contentWindow!, 'postMessage');
+    const toOther = vi.spyOn(other!.contentWindow!, 'postMessage');
+    act(() => {
+      saving!.focus();
+    });
+
+    await post(
+      { type: 'answer', name: 'call-2', value: 'disagree' },
+      saving!.contentWindow,
+    );
+    await settle();
+
+    expect(toOther).toHaveBeenCalledWith(
+      {
+        source: 'geniro-host',
+        type: 'answers',
+        values: { 'call-1': 'agree', 'call-2': 'disagree' },
+        confirmed: null,
+      },
+      '*',
+    );
+    expect(
+      toSaving.mock.calls
+        .map(([message]) => message as { type?: string; confirmed?: unknown })
+        .filter((message) => message.type === 'answers')
+        .map((message) => message.confirmed),
+    ).toEqual([{}]);
+  });
+
+  it('keeps nothing its own frame sends while the user is not in it, or that names no answer', async () => {
+    await renderWithAnswers();
+    await post({ type: 'answer', name: 'forged', value: true });
+    focusFrame();
+    await post({ type: 'answer', name: '', value: true });
+    await post({
+      type: 'answer',
+      name: 'x'.repeat(MAX_ANSWER_NAME + 1),
+      value: true,
+    });
+    await post({ type: 'answer', name: '__proto__', value: true });
+    await post({ type: 'answer', name: 'other', value: true }, window);
+    await settle();
+
+    expect(chats.saveArtifactAnswers).not.toHaveBeenCalled();
+  });
+
+  it('keeps answers still settling when the frame goes away', async () => {
+    await renderWithAnswers();
+    focusFrame();
+    await post({ type: 'answer', name: 'why', value: 'fine' });
+
+    act(() => root.render(<p />));
+
+    expect(chats.saveArtifactAnswers).toHaveBeenCalledTimes(1);
+    expect(kept).toEqual({ 'call-1': 'agree', why: 'fine' });
   });
 });

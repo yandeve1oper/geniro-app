@@ -52,12 +52,67 @@ export const ARTIFACT_IMAGE_FILE = new RegExp(
 );
 
 /**
+ * The folder, under an artifact, that holds its audio and video. A stored page
+ * points at one as `media/<name>`, which the served page turns into the media route.
+ */
+export const ARTIFACT_MEDIA_DIR = 'media';
+
+/** The formats a stored audio or video file may be in, by file extension. */
+export const ARTIFACT_MEDIA_EXTENSIONS = [
+  'mp3',
+  'aac',
+  'm4a',
+  'mp4',
+  'mov',
+  'wav',
+  'ogg',
+  'flac',
+  'webm',
+] as const;
+
+export type ArtifactMediaExtension = (typeof ARTIFACT_MEDIA_EXTENSIONS)[number];
+
+/** The media type each stored audio or video file is served under, by its extension. */
+export const ARTIFACT_MEDIA_TYPE: Record<ArtifactMediaExtension, string> = {
+  mp3: 'audio/mpeg',
+  aac: 'audio/aac',
+  m4a: 'audio/mp4',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  webm: 'video/webm',
+};
+
+/** Whether a file extension is one of the formats a stored media file may be in. */
+export function isArtifactMediaExtension(
+  value: string,
+): value is ArtifactMediaExtension {
+  return (ARTIFACT_MEDIA_EXTENSIONS as readonly string[]).includes(value);
+}
+
+/** The file name a stored media file is kept under, as {@link ARTIFACT_IMAGE_FILE} is for a picture. */
+export const ARTIFACT_MEDIA_FILE = new RegExp(
+  `^[0-9a-f]{64}\\.(${ARTIFACT_MEDIA_EXTENSIONS.join('|')})$`,
+);
+
+/**
  * An `<img>` tag, from its `<img` to the first `>` after it. The name ends at
  * whitespace, `/` or `>`, so `<imgx` and `<img-x` are other tags. A `>` inside a
  * quoted value ends the match early, which is why imageTagsAreWhole refuses such a
  * page rather than rewriting half a tag.
  */
 const IMG_TAG = /<img(?=[\s/>])[^>]*>/gi;
+const IMG_OPENING = /<img(?=[\s/]|$)/i;
+
+/**
+ * An `<audio>`, `<video>` or `<source>` tag, read as {@link IMG_TAG} reads an
+ * image. A `<source>` inside a `<picture>` names its pictures with `srcset`, so the
+ * `src` this rewrites is a media element's.
+ */
+const MEDIA_TAG = /<(?:audio|video|source)(?=[\s/>])[^>]*>/gi;
+const MEDIA_OPENING = /<(?:audio|video|source)(?=[\s/]|$)/i;
 
 /**
  * The first `src` attribute of a tag that has a value. The leading `(^|\s)` keeps
@@ -143,9 +198,25 @@ export function mapImageSources(
   html: string,
   map: (src: string) => string,
 ): string {
+  return mapTagSources(html, IMG_TAG, map);
+}
+
+/** Every `<audio>`, `<video>` and `<source>` source, as {@link mapImageSources} maps an image's. */
+export function mapMediaSources(
+  html: string,
+  map: (src: string) => string,
+): string {
+  return mapTagSources(html, MEDIA_TAG, map);
+}
+
+function mapTagSources(
+  html: string,
+  tags: RegExp,
+  map: (src: string) => string,
+): string {
   const end = html.lastIndexOf('>') + 1;
   return (
-    html.slice(0, end).replace(IMG_TAG, (tag) => rewriteTag(tag, map)) +
+    html.slice(0, end).replace(tags, (tag) => rewriteTag(tag, map)) +
     html.slice(end)
   );
 }
@@ -156,25 +227,34 @@ export function mapImageSources(
  * refused with that reason. A `>` inside an attribute value is written as `&gt;`.
  */
 export function imageTagsAreWhole(html: string): boolean {
+  return tagsAreWhole(html, IMG_OPENING, IMG_TAG);
+}
+
+/** Whether every `<audio`, `<video` and `<source` closes, as {@link imageTagsAreWhole} asks of images. */
+export function mediaTagsAreWhole(html: string): boolean {
+  return tagsAreWhole(html, MEDIA_OPENING, MEDIA_TAG);
+}
+
+function tagsAreWhole(html: string, opening: RegExp, tags: RegExp): boolean {
   const end = html.lastIndexOf('>') + 1;
-  if (/<img(?=[\s/]|$)/i.test(html.slice(end))) {
+  if (opening.test(html.slice(end))) {
     return false;
   }
-  return (html.slice(0, end).match(IMG_TAG) ?? []).every(quotesClose);
+  return (html.slice(0, end).match(tags) ?? []).every(quotesClose);
 }
 
 /**
- * Whether an image source names a file on this machine, and so belongs to the
- * image policy. A source in another scheme (`data:`, `https:`, `blob:`) or a
+ * Whether an image or media source names a file on this machine, and so belongs to
+ * the file policy. A source in another scheme (`data:`, `https:`, `blob:`) or a
  * protocol-relative host (`//cdn…`) is left to the browser, and so is an empty one.
  * A `file:` address IS a file on this machine. A bare `#fragment` or `?query`
- * names the page itself, not a picture, and is left as written.
+ * names the page itself, not a file, and is left as written.
  *
  * Any other relative path is local on purpose: it then fails the policy's
  * absolute-path check with a reason the agent can act on, where leaving it alone
  * would ship a broken picture with no word about why.
  */
-export function isLocalImageSource(src: string): boolean {
+export function isLocalSource(src: string): boolean {
   const trimmed = src.trim();
   if (
     trimmed === '' ||

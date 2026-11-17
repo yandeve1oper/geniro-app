@@ -73,16 +73,22 @@ function forwardableHeaders(
  * back verbatim. The daemon's bearer token is attached HERE, never trusted
  * from the client — a phone that presented its own `Authorization` header
  * would otherwise be able to impersonate the daemon's own launch token by
- * simply sending one.
+ * simply sending one. `withToken: false` sends none, for a request the gateway
+ * admits without pairing.
  */
 export function proxyHttp(
   req: IncomingMessage,
   res: ServerResponse,
   handle: DaemonHandle,
-  responseTimeoutMs = DAEMON_RESPONSE_TIMEOUT_MS,
+  {
+    withToken = true,
+    responseTimeoutMs = DAEMON_RESPONSE_TIMEOUT_MS,
+  }: { withToken?: boolean; responseTimeoutMs?: number } = {},
 ): void {
   const headers = forwardableHeaders(req.headers);
-  headers.authorization = `Bearer ${handle.token}`;
+  if (withToken) {
+    headers.authorization = `Bearer ${handle.token}`;
+  }
   headers.host = `${handle.host}:${handle.port}`;
   headers[REMOTE_VIA_HEADER] = REMOTE_VIA_VALUE;
 

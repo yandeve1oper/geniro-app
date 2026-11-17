@@ -16,6 +16,7 @@ import {
   type ArtifactImageExtension,
   type ArtifactImageMediaType,
 } from './artifact-html-images';
+import { fsErrorCode } from './fs-error-code';
 import { isWithinDirectory } from './path-within';
 
 /** The largest single image one published page may reference. */
@@ -87,42 +88,10 @@ export function readArtifactImage(
   path: string,
   allowedRoots: readonly string[],
 ): ArtifactImage {
-  if (!isAbsolute(path)) {
-    throw new BadRequestException(
-      'IMAGE_PATH_NOT_ABSOLUTE',
-      `${path} is not an absolute path, and an artifact cannot resolve a relative image path`,
-    );
-  }
-  const folders = allowedFolders(allowedRoots);
-  if (!folders.some((folder) => isWithinDirectory(resolve(path), folder))) {
-    throw outsideFolders(path);
-  }
-  const real = resolveOrRefuse(path, () => realpathSync(path));
-  if (!folders.some((folder) => isWithinDirectory(real, folder))) {
-    throw outsideFolders(path);
-  }
-  const fd = resolveOrRefuse(path, () =>
-    openSync(
-      real,
-      fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | fsConstants.O_NOFOLLOW,
-    ),
-  );
+  const { fd, size } = openArtifactFile(path, allowedRoots, IMAGE_FILES);
   try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile()) {
-      throw new BadRequestException(
-        'IMAGE_NOT_A_FILE',
-        `${path} is not a file`,
-      );
-    }
-    if (stat.nlink > 1) {
-      throw new BadRequestException(
-        'IMAGE_SHARED_FILE',
-        `${path} is a hard link, so its contents may live outside the allowed folders`,
-      );
-    }
-    if (stat.size > MAX_ARTIFACT_IMAGE_BYTES) {
-      throw tooLarge(path, stat.size);
+    if (size > MAX_ARTIFACT_IMAGE_BYTES) {
+      throw tooLarge(path, size);
     }
     const bytes = readFileSync(fd);
     const extension = sniffImageExtension(bytes);
@@ -142,6 +111,80 @@ export function readArtifactImage(
   }
 }
 
+/**
+ * Which files a refusal is about: the prefix of its code and the words its message
+ * names them by.
+ */
+export interface ArtifactFileKind {
+  readonly code: 'IMAGE' | 'MEDIA';
+  readonly noun: string;
+  readonly plural: string;
+}
+
+const IMAGE_FILES: ArtifactFileKind = {
+  code: 'IMAGE',
+  noun: 'image',
+  plural: 'images',
+};
+
+/** A local file a page names, open for reading; the caller closes `fd`. */
+export interface OpenedArtifactFile {
+  readonly fd: number;
+  readonly size: number;
+}
+
+/**
+ * Opens one local file a page refers to, or refuses it with the reason, by the rules
+ * {@link readArtifactImage} describes: judged as written, then on its real path,
+ * opened without following a link or blocking, a regular file with one link. The
+ * caller owns the descriptor it gets back.
+ */
+export function openArtifactFile(
+  path: string,
+  allowedRoots: readonly string[],
+  kind: ArtifactFileKind,
+): OpenedArtifactFile {
+  if (!isAbsolute(path)) {
+    throw new BadRequestException(
+      `${kind.code}_PATH_NOT_ABSOLUTE`,
+      `${path} is not an absolute path, and an artifact cannot resolve a relative ${kind.noun} path`,
+    );
+  }
+  const folders = allowedFolders(allowedRoots);
+  if (!folders.some((folder) => isWithinDirectory(resolve(path), folder))) {
+    throw outsideFolders(path, kind);
+  }
+  const real = resolveOrRefuse(path, kind, () => realpathSync(path));
+  if (!folders.some((folder) => isWithinDirectory(real, folder))) {
+    throw outsideFolders(path, kind);
+  }
+  const fd = resolveOrRefuse(path, kind, () =>
+    openSync(
+      real,
+      fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | fsConstants.O_NOFOLLOW,
+    ),
+  );
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new BadRequestException(
+        `${kind.code}_NOT_A_FILE`,
+        `${path} is not a file`,
+      );
+    }
+    if (stat.nlink > 1) {
+      throw new BadRequestException(
+        `${kind.code}_SHARED_FILE`,
+        `${path} is a hard link, so its contents may live outside the allowed folders`,
+      );
+    }
+    return { fd, size: stat.size };
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
+}
+
 /** Each allowed root as written and in its canonical form, normalised. */
 function allowedFolders(roots: readonly string[]): string[] {
   return roots.flatMap((root) => {
@@ -152,28 +195,38 @@ function allowedFolders(roots: readonly string[]): string[] {
 
 /**
  * Runs a file-system call, and turns its failure into the refusal the agent can act
- * on: a path that names no file is IMAGE_NOT_FOUND, and any other failure is
- * IMAGE_UNREADABLE with the system's code, so the cause is not reported as "no file".
+ * on: a path that names no file is `<KIND>_NOT_FOUND`, and any other failure is
+ * `<KIND>_UNREADABLE` with the system's code, so the cause is not reported as "no file".
  */
-function resolveOrRefuse<T>(path: string, call: () => T): T {
+function resolveOrRefuse<T>(
+  path: string,
+  kind: ArtifactFileKind,
+  call: () => T,
+): T {
   try {
     return call();
   } catch (error) {
-    const code = (error as { code?: unknown }).code;
+    const code = fsErrorCode(error);
     if (code === 'ENOENT' || code === 'ENOTDIR') {
-      throw new NotFoundException('IMAGE_NOT_FOUND', `no file at ${path}`);
+      throw new NotFoundException(
+        `${kind.code}_NOT_FOUND`,
+        `no file at ${path}`,
+      );
     }
     throw new BadRequestException(
-      'IMAGE_UNREADABLE',
-      `${path} cannot be read (${String(code ?? 'unknown error')})`,
+      `${kind.code}_UNREADABLE`,
+      `${path} cannot be read (${code})`,
     );
   }
 }
 
-function outsideFolders(path: string): BadRequestException {
+function outsideFolders(
+  path: string,
+  kind: ArtifactFileKind,
+): BadRequestException {
   return new BadRequestException(
-    'IMAGE_OUTSIDE_ALLOWED_FOLDERS',
-    `${path} is outside the folders an artifact may draw images from`,
+    `${kind.code}_OUTSIDE_ALLOWED_FOLDERS`,
+    `${path} is outside the folders an artifact may draw ${kind.plural} from`,
   );
 }
 

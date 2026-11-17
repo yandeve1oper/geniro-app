@@ -18,6 +18,7 @@ import {
   type RemoteGatewayState,
 } from '../../shared/remote';
 import type { IpcRegistry } from '../ipc-registry';
+import { isArtifactMediaRequest } from './artifact-media-request';
 import {
   createCompressor,
   encodedHeaders,
@@ -492,8 +493,11 @@ export class RemoteGateway {
       // The pairing gate, on the surface that most needs it: `proxyHttp`
       // injects the daemon's bearer token, so an ungated arm here hands an
       // unpaired stranger the credential the daemon's own guard exists to
-      // demand — and `POST /v1/chats` starts an agent.
-      if (this.pairedDevice(req) === null) {
+      // demand — and `POST /v1/chats` starts an agent. The one exception is a
+      // page's own audio or video (`isArtifactMediaRequest`), which reaches the
+      // daemon without the token and is gated by the page's own key there.
+      const paired = this.pairedDevice(req) !== null;
+      if (!paired && !isArtifactMediaRequest(req.method, url)) {
         res.writeHead(401, { 'content-type': 'text/plain' });
         res.end('pair this device first');
         return;
@@ -504,7 +508,7 @@ export class RemoteGateway {
         res.end('daemon not available');
         return;
       }
-      proxyHttp(req, res, handle);
+      proxyHttp(req, res, handle, { withToken: paired });
       return;
     }
     this.serveStatic(req, res, url);

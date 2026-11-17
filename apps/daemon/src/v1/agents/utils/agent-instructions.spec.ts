@@ -9,6 +9,7 @@ import { CLAUDE_WITHHELD_TOOLS } from '../adapters/claude/claude.const';
 import { CodexAdapter } from '../adapters/codex/codex.adapter';
 import { CursorAcpAdapter } from '../adapters/cursor-acp/cursor-acp.adapter';
 import {
+  HOST_ARTIFACT_ANSWERS_TOOL,
   HOST_ARTIFACT_TOOL,
   HOST_BROWSER_CLICK_TOOL,
   HOST_BROWSER_OPEN_TOOL,
@@ -182,6 +183,7 @@ describe("GENIRO_UI_PREAMBLE — geniro's own tools", () => {
       HOST_COMPARISON_TOOL,
       HOST_GALLERY_TOOL,
       HOST_ARTIFACT_TOOL,
+      HOST_ARTIFACT_ANSWERS_TOOL,
       HOST_BROWSER_OPEN_TOOL,
       HOST_BROWSER_SNAPSHOT_TOOL,
       HOST_BROWSER_CLICK_TOOL,

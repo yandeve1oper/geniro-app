@@ -4,9 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ARTIFACT_ESCAPE_SETTLE_MS,
   ARTIFACT_FRAME_SOURCE,
+  ARTIFACT_HOST_SOURCE,
   ARTIFACT_PICTURE_SOURCE,
   ARTIFACT_WRAPPER_SCRIPT,
 } from './artifact-page';
+import {
+  ARTIFACT_ANSWER_EVENT,
+  ARTIFACT_ANSWERS_EVENT,
+} from './artifact-runtime';
 
 const PICTURE = 'data:image/png;base64,iVBORw0KGgo=';
 
@@ -235,5 +240,104 @@ describe('the frame wrapper — an Escape pressed inside the frame', () => {
     );
     await vi.advanceTimersByTimeAsync(ARTIFACT_ESCAPE_SETTLE_MS);
     expect(ofType('escape')).toEqual([]);
+  });
+});
+
+describe('the frame wrapper — a button that opens a folder', () => {
+  it('relays a click on an element naming a path, from inside it, as open-path', () => {
+    runWrapper(
+      '<button data-geniro-open=" /Users/me/reports "><span id="label">Open reports</span></button>',
+    );
+    const event = click(document.getElementById('label')!);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(ofType('open-path')).toEqual([
+      {
+        source: ARTIFACT_FRAME_SOURCE,
+        type: 'open-path',
+        path: '/Users/me/reports',
+      },
+    ]);
+  });
+
+  it('takes the folder button over a link around it, so the link is not also opened', () => {
+    runWrapper(
+      '<a href="https://example.com"><span id="go" data-geniro-open="/tmp/out">out</span></a>',
+    );
+    click(document.getElementById('go')!);
+
+    expect(ofType('open-path')).toHaveLength(1);
+    expect(ofType('link')).toEqual([]);
+  });
+
+  it('relays nothing for an empty path, and lets a link inside it work as a link', () => {
+    runWrapper(
+      '<div data-geniro-open="  "><a id="go" href="https://example.com/a">site</a></div>',
+    );
+    click(document.getElementById('go')!);
+
+    expect(ofType('open-path')).toEqual([]);
+    expect(ofType('link')).toHaveLength(1);
+  });
+});
+
+describe('the frame wrapper — the page answers', () => {
+  it('hands each answer the runtime saves to the host on its own, a forgotten one as null', () => {
+    runWrapper('<p>a page</p>');
+    window.dispatchEvent(
+      new CustomEvent(ARTIFACT_ANSWER_EVENT, {
+        detail: { name: 'call-1', value: 'agree', seq: 7 },
+      }),
+    );
+    window.dispatchEvent(
+      new CustomEvent(ARTIFACT_ANSWER_EVENT, {
+        detail: { name: 'note', seq: 8 },
+      }),
+    );
+    window.dispatchEvent(
+      new CustomEvent(ARTIFACT_ANSWER_EVENT, { detail: { value: 'nameless' } }),
+    );
+
+    expect(ofType('answer')).toEqual([
+      {
+        source: ARTIFACT_FRAME_SOURCE,
+        type: 'answer',
+        name: 'call-1',
+        value: 'agree',
+        seq: 7,
+      },
+      {
+        source: ARTIFACT_FRAME_SOURCE,
+        type: 'answer',
+        name: 'note',
+        value: null,
+        seq: 8,
+      },
+    ]);
+  });
+
+  it('hands the answers its parent kept to the runtime, and ignores them from anything else', () => {
+    runWrapper('<p>a page</p>');
+    const heard: unknown[] = [];
+    const listener = (event: Event): void => {
+      heard.push((event as CustomEvent).detail);
+    };
+    window.addEventListener(ARTIFACT_ANSWERS_EVENT, listener);
+    cleanups.push(() =>
+      window.removeEventListener(ARTIFACT_ANSWERS_EVENT, listener),
+    );
+    const message = {
+      source: ARTIFACT_HOST_SOURCE,
+      type: 'answers',
+      values: { why: 'fine' },
+      confirmed: { why: 2 },
+    };
+
+    window.dispatchEvent(new MessageEvent('message', { data: message }));
+    window.dispatchEvent(
+      new MessageEvent('message', { data: message, source: window.parent }),
+    );
+
+    expect(heard).toEqual([{ values: { why: 'fine' }, confirmed: { why: 2 } }]);
   });
 });

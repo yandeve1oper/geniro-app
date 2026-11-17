@@ -5,6 +5,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  MAX_ARTIFACT_ANSWER_NAME_LENGTH,
+  MAX_ARTIFACT_ANSWERS_BYTES,
+} from '../chat.types';
+import {
+  ARTIFACT_ANSWER_EVENT,
+  ARTIFACT_ANSWERS_EVENT,
   ARTIFACT_KIT_STYLE,
   ARTIFACT_LAYER_ORDER,
   ARTIFACT_RUNTIME_SCRIPT,
@@ -197,8 +203,14 @@ describe('the page runtime', () => {
   };
 
   let listeners: [string, EventListenerOrEventListenerObject][];
+  let documentListeners: [
+    string,
+    EventListenerOrEventListenerObject,
+    boolean,
+  ][];
   beforeEach(() => {
     listeners = [];
+    documentListeners = [];
     const add = window.addEventListener.bind(window);
     vi.spyOn(window, 'addEventListener').mockImplementation(((
       type: string,
@@ -207,6 +219,15 @@ describe('the page runtime', () => {
       listeners.push([type, handler]);
       add(type, handler);
     }) as typeof window.addEventListener);
+    const addToDocument = document.addEventListener.bind(document);
+    vi.spyOn(document, 'addEventListener').mockImplementation(((
+      type: string,
+      handler: EventListenerOrEventListenerObject,
+      capture?: boolean,
+    ) => {
+      documentListeners.push([type, handler, capture === true]);
+      addToDocument(type, handler, capture);
+    }) as typeof document.addEventListener);
   });
 
   afterEach(async () => {
@@ -216,6 +237,9 @@ describe('the page runtime', () => {
     vi.restoreAllMocks();
     for (const [type, handler] of listeners) {
       window.removeEventListener(type, handler);
+    }
+    for (const [type, handler, capture] of documentListeners) {
+      document.removeEventListener(type, handler, capture);
     }
     for (const name of GLOBALS) {
       Reflect.deleteProperty(win, name);
@@ -247,6 +271,266 @@ describe('the page runtime', () => {
     win.geniro = { mine: true };
     run();
     expect(win.geniro).toEqual({ mine: true });
+  });
+
+  describe('answers', () => {
+    interface Answers {
+      saveAnswer: (name: string, value: unknown) => boolean;
+      answers: () => Record<string, unknown>;
+      onAnswers: (cb: (answers: Record<string, unknown>) => void) => void;
+    }
+    const api = (): Answers => win.geniro as never;
+    let announced: Record<string, unknown>[];
+    const hear = (event: Event): void => {
+      announced.push((event as CustomEvent<Record<string, unknown>>).detail);
+    };
+    const restore = (
+      values: Record<string, unknown>,
+      confirmed: Record<string, number> | null = null,
+    ): void => {
+      window.dispatchEvent(
+        new CustomEvent(ARTIFACT_ANSWERS_EVENT, {
+          detail: { values, confirmed },
+        }),
+      );
+    };
+    const changed = (element: Element | null, type = 'change'): void => {
+      element?.dispatchEvent(new Event(type, { bubbles: true }));
+    };
+
+    beforeEach(() => {
+      announced = [];
+      window.addEventListener(ARTIFACT_ANSWER_EVENT, hear);
+    });
+
+    it('announces each answer it saves on its own, and forgets one saved as null', () => {
+      run();
+
+      expect(api().saveAnswer('call-1', 'agree')).toBe(true);
+      expect(api().saveAnswer('note', { why: 'cheaper' })).toBe(true);
+      api().saveAnswer('call-1', null);
+
+      expect(announced).toEqual([
+        { name: 'call-1', value: 'agree', seq: 1 },
+        { name: 'note', value: { why: 'cheaper' }, seq: 2 },
+        { name: 'call-1', value: null, seq: 3 },
+      ]);
+      expect(api().answers()).toEqual({ note: { why: 'cheaper' } });
+    });
+
+    it('refuses an answer that is not JSON, or one that takes the answers past their limit, and announces nothing', () => {
+      run();
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      expect(api().saveAnswer('n', 10n)).toBe(false);
+      expect(
+        api().saveAnswer('long', 'x'.repeat(MAX_ARTIFACT_ANSWERS_BYTES)),
+      ).toBe(false);
+      expect(api().saveAnswer('', 'x')).toBe(false);
+      expect(
+        api().saveAnswer('n'.repeat(MAX_ARTIFACT_ANSWER_NAME_LENGTH + 1), 'x'),
+      ).toBe(false);
+      expect(api().saveAnswer('__proto__', 'x')).toBe(false);
+
+      expect(announced).toEqual([]);
+      expect(api().answers()).toEqual({});
+    });
+
+    it('saves a marked control as the user changes it: a radio group by its choice, checkboxes as a list, one checkbox as true or false, a select and a text field by value', () => {
+      document.body.innerHTML = `
+        <input type="radio" name="c1" value="agree" data-geniro-answer="call-1">
+        <input type="radio" name="c1" value="disagree" data-geniro-answer="call-1" id="no">
+        <input type="checkbox" value="a" data-geniro-answer="picks" id="pa">
+        <input type="checkbox" value="b" data-geniro-answer="picks" id="pb">
+        <input type="checkbox" data-geniro-answer="ok" id="ok">
+        <select data-geniro-answer="size" id="size"><option value="s">S</option><option value="m">M</option></select>
+        <select multiple data-geniro-answer="tags" id="tags"><option value="x">X</option><option value="y">Y</option></select>
+        <textarea data-geniro-answer="why" id="why"></textarea>`;
+      run();
+
+      const no = document.getElementById('no') as HTMLInputElement;
+      no.checked = true;
+      changed(no);
+      (document.getElementById('pb') as HTMLInputElement).checked = true;
+      changed(document.getElementById('pb'));
+      (document.getElementById('ok') as HTMLInputElement).checked = true;
+      changed(document.getElementById('ok'));
+      (document.getElementById('size') as HTMLSelectElement).value = 'm';
+      changed(document.getElementById('size'));
+      const tags = document.getElementById('tags') as HTMLSelectElement;
+      tags.options[1]!.selected = true;
+      changed(tags);
+      (document.getElementById('why') as HTMLTextAreaElement).value =
+        'too slow';
+      changed(document.getElementById('why'), 'input');
+
+      expect(api().answers()).toEqual({
+        'call-1': 'disagree',
+        picks: ['b'],
+        ok: true,
+        size: 'm',
+        tags: ['y'],
+        why: 'too slow',
+      });
+    });
+
+    it('saves a marked button by its value when pressed, and marks it pressed among its group', () => {
+      document.body.innerHTML = `
+        <button value="agree" data-geniro-answer="row-1" id="yes">Agree</button>
+        <button value="disagree" data-geniro-answer="row-1" id="no">Disagree</button>
+        <button data-geniro-answer="row-2" id="text">Skip</button>`;
+      run();
+
+      (document.getElementById('no') as HTMLButtonElement).click();
+      (document.getElementById('text') as HTMLButtonElement).click();
+
+      expect(announced).toEqual([
+        { name: 'row-1', value: 'disagree', seq: 1 },
+        { name: 'row-2', value: 'Skip', seq: 2 },
+      ]);
+      expect(document.getElementById('no')!.getAttribute('aria-pressed')).toBe(
+        'true',
+      );
+      expect(document.getElementById('yes')!.getAttribute('aria-pressed')).toBe(
+        'false',
+      );
+    });
+
+    it('saves nothing for a click inside a marked container that is not itself a button', () => {
+      document.body.innerHTML = `
+        <div data-geniro-answer="row-1"><span>Call 1</span>
+          <button value="agree" id="yes">Agree</button></div>`;
+      run();
+
+      (document.getElementById('yes') as HTMLButtonElement).click();
+
+      expect(announced).toEqual([]);
+    });
+
+    it('lets its own pick give way, once the host confirms it, to a newer one another frame saved', () => {
+      document.body.innerHTML = `<input data-geniro-answer="why" id="why">`;
+      run();
+      restore({});
+      api().saveAnswer('why', 'mine');
+
+      restore({ why: 'mine' }, { why: 1 });
+      restore({ why: 'theirs' });
+
+      expect((document.getElementById('why') as HTMLInputElement).value).toBe(
+        'theirs',
+      );
+      expect(api().answers()).toEqual({ why: 'theirs' });
+    });
+
+    it('keeps a pick the host has not confirmed yet over a set another frame saved', () => {
+      document.body.innerHTML = `<input data-geniro-answer="why" id="why">`;
+      run();
+      restore({});
+      api().saveAnswer('why', 'first');
+      api().saveAnswer('why', 'second');
+
+      restore({ why: 'first' }, { why: 1 });
+
+      expect(api().answers()).toEqual({ why: 'second' });
+    });
+
+    it('keeps a pick made before the kept answers arrive, over them, and does not save it again', () => {
+      document.body.innerHTML = `
+        <input type="radio" name="c2" value="agree" data-geniro-answer="call-2" id="c2yes">
+        <input type="radio" name="c2" value="disagree" data-geniro-answer="call-2">`;
+      run();
+
+      api().saveAnswer('call-1', 'disagree');
+      api().saveAnswer('note', null);
+      restore({ 'call-1': 'agree', 'call-2': 'agree', note: 'old' });
+
+      expect(api().answers()).toEqual({
+        'call-1': 'disagree',
+        'call-2': 'agree',
+      });
+      expect(announced).toHaveLength(2);
+      expect(
+        (document.getElementById('c2yes') as HTMLInputElement).checked,
+      ).toBe(true);
+    });
+
+    it('restores the kept answers into every kind of marked control and to its listeners, without saving them again', async () => {
+      document.body.innerHTML = `
+        <input type="radio" name="c1" value="agree" data-geniro-answer="call-1" id="yes">
+        <input type="radio" name="c1" value="disagree" data-geniro-answer="call-1">
+        <input type="checkbox" value="a" data-geniro-answer="picks" id="pa">
+        <input type="checkbox" value="b" data-geniro-answer="picks" id="pb">
+        <select multiple data-geniro-answer="tags" id="tags"><option value="x">X</option><option value="y">Y</option></select>
+        <button value="later" data-geniro-answer="row-1" id="later">Later</button>
+        <input data-geniro-answer="why" id="why">`;
+      run();
+      const early: Record<string, unknown>[] = [];
+      api().onAnswers((answers) => early.push(answers));
+
+      const values = {
+        'call-1': 'agree',
+        picks: ['b'],
+        tags: ['x'],
+        'row-1': 'later',
+        why: 'fine',
+      };
+      restore(values);
+      const late: Record<string, unknown>[] = [];
+      api().onAnswers((answers) => late.push(answers));
+      await flush();
+
+      const tags = document.getElementById('tags') as HTMLSelectElement;
+      expect((document.getElementById('yes') as HTMLInputElement).checked).toBe(
+        true,
+      );
+      expect((document.getElementById('pa') as HTMLInputElement).checked).toBe(
+        false,
+      );
+      expect((document.getElementById('pb') as HTMLInputElement).checked).toBe(
+        true,
+      );
+      expect([tags.options[0]!.selected, tags.options[1]!.selected]).toEqual([
+        true,
+        false,
+      ]);
+      expect(
+        document.getElementById('later')!.getAttribute('aria-pressed'),
+      ).toBe('true');
+      expect((document.getElementById('why') as HTMLInputElement).value).toBe(
+        'fine',
+      );
+      expect(early).toEqual([values]);
+      expect(late).toEqual([values]);
+      expect(announced).toEqual([]);
+    });
+
+    it('fires change on a restored radio group only on the one that became checked, as the browser does', () => {
+      document.body.innerHTML = `
+        <input type="radio" name="c1" value="agree" data-geniro-answer="call-1" id="yes">
+        <input type="radio" name="c1" value="disagree" data-geniro-answer="call-1" id="no">`;
+      run();
+      const heard: string[] = [];
+      document.body.addEventListener('change', (event) => {
+        heard.push((event.target as HTMLInputElement).value);
+      });
+
+      restore({ 'call-1': 'agree' });
+
+      expect(heard).toEqual(['agree']);
+    });
+
+    it('takes a later set from another frame of the page in place of its own', () => {
+      document.body.innerHTML = `<input data-geniro-answer="why" id="why">`;
+      run();
+      restore({ why: 'first' });
+
+      restore({});
+
+      expect((document.getElementById('why') as HTMLInputElement).value).toBe(
+        '',
+      );
+      expect(api().answers()).toEqual({});
+    });
   });
 
   describe('geniro.chart (ECharts)', () => {

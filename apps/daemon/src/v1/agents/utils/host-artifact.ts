@@ -1,4 +1,4 @@
-import { HOST_ARTIFACT_TOOL } from '../chat.types';
+import { HOST_ARTIFACT_ANSWERS_TOOL, HOST_ARTIFACT_TOOL } from '../chat.types';
 import { isHostToolCall } from './host-tool';
 
 /**
@@ -25,4 +25,16 @@ export function isHostArtifactCall(
   toolName: string,
 ): boolean {
   return isHostToolCall(serverName, toolName, HOST_ARTIFACT_TOOL);
+}
+
+/**
+ * Whether a permission request names geniro's tool that reads back what the user
+ * picked on the run's pages. Auto-approved like the page tool itself: it reads
+ * only the calling run's own pages, and only what their user picked there.
+ */
+export function isHostArtifactAnswersCall(
+  serverName: string | null,
+  toolName: string,
+): boolean {
+  return isHostToolCall(serverName, toolName, HOST_ARTIFACT_ANSWERS_TOOL);
 }

@@ -53,6 +53,7 @@ import type { HostRowWire, HostWake } from '../../agents/chat.types';
 import {
   ChatApprovalModeSchema,
   type HistoryWindow,
+  HOST_ARTIFACT_ANSWERS_TOOL,
   HOST_BROWSER_OPEN_TOOL,
   HOST_MEMORY_SAVE_TOOL,
   HOST_PROJECT_INSTRUCTIONS_TOOL,
@@ -3786,6 +3787,37 @@ describe('TeamExecutorService', () => {
     );
     expect(claude.starts[0]!.respondApproval).toHaveBeenCalledTimes(1);
     expect(() => cardIdFor(approvals, run.id, 'req-other')).not.toThrow();
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it('approves an ask member’s read of the run’s page answers without a card', async () => {
+    const { service, claude, approvals } = setup();
+    const askFlow: Team = teamOf([member('a', { approval: 'ask' })], {
+      name: 'ask',
+    });
+    const run = await service.startRun({
+      slug: 'ask',
+      team: askFlow,
+      cwd: dir,
+      prompt: 'task',
+    });
+    await drain();
+
+    claude.starts[0]!.emit({
+      type: 'approval_request',
+      id: 'req-answers',
+      toolName: `mcp__${hostMcpServerName(run.id)}__${HOST_ARTIFACT_ANSWERS_TOOL}`,
+      input: {},
+    });
+    await drain();
+
+    expect(claude.starts[0]!.respondApproval).toHaveBeenCalledWith(
+      'req-answers',
+      true,
+      {},
+    );
+    expect(approvals.listByRun(run.id)).toEqual([]);
     completeTurn(claude.starts[0]!, 'done');
     await drain();
   });

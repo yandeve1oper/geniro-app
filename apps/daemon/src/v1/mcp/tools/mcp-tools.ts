@@ -4,6 +4,7 @@ import type { ArtifactBroker } from '../../agents/services/artifact.broker';
 import type { AttachmentStoreService } from '../../agents/services/attachment-store.service';
 import type { BrowserBroker } from '../../agents/services/browser.broker';
 import type { ChartBroker } from '../../agents/services/chart.broker';
+import type { ChatArtifactsService } from '../../agents/services/chat-artifacts.service';
 import type { ComparisonBroker } from '../../agents/services/comparison.broker';
 import type { FindingsReportBroker } from '../../agents/services/findings-report.broker';
 import type { GalleryBroker } from '../../agents/services/gallery.broker';
@@ -42,6 +43,7 @@ import type { TeamStoreService } from '../../teams/services/team-store.service';
 import type { ThreadDeliveryService } from '../../teams/services/thread-delivery.service';
 import type { McpTool } from '../mcp.types';
 import { AnswerAgentTool } from './answer-agent/answer-agent.tool';
+import { ArtifactAnswersTool } from './artifact-answers/artifact-answers.tool';
 import { AskUserQuestionTool } from './ask-user-question/ask-user-question.tool';
 import { AwaitAgentTool } from './await-agent/await-agent.tool';
 import { BackupTeamTool } from './backup-team/backup-team.tool';
@@ -107,6 +109,7 @@ export interface McpToolDeps {
   galleries: GalleryBroker;
   galleryImages: GalleryImageService;
   artifacts: ArtifactBroker;
+  artifactAnswers: ChatArtifactsService;
   browser: BrowserBroker;
   attachments: AttachmentStoreService;
   actions: ActionBroker;
@@ -178,6 +181,7 @@ function allMcpTools(deps: McpToolDeps): McpTool[] {
     new ShowComparisonTool(deps.comparisons),
     new ShowGalleryTool(deps.galleries, deps.galleryImages),
     new ShowArtifactTool(deps.artifacts, deps.shares),
+    new ArtifactAnswersTool(deps.artifacts, deps.artifactAnswers),
     ...createBrowserTools(deps.browser, deps.attachments),
     new ProposePatchTool(deps.patches),
     new ProposePlanTool(deps.plans),

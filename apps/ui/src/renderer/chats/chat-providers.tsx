@@ -52,6 +52,8 @@ import {
   NotSentMessagesContext,
 } from './not-sent-messages';
 import {
+  ArtifactAnswersContext,
+  type ArtifactAnswersStore,
   type ArtifactUrlBuilder,
   ArtifactUrlContext,
 } from './published-artifact';
@@ -126,6 +128,7 @@ export function ChatProviders({
   callChannel,
   artifactUrl,
   artifactSharing = null,
+  artifactAnswers = null,
   threadId,
   runSettledAt,
   loadAttachment = null,
@@ -183,6 +186,8 @@ export function ChatProviders({
    * `ArtifactShareContext`. Absent (or null) draws no Share control.
    */
   artifactSharing?: ArtifactSharing | null;
+  /** Where a page's answers are kept — see `ArtifactAnswersContext`. */
+  artifactAnswers?: ArtifactAnswersStore | null;
   /** Read images attached to this conversation. */
   loadAttachment?: AttachmentLoader | null;
   /**
@@ -252,66 +257,69 @@ export function ChatProviders({
                 <JumpMarkContext.Provider value={jumpMark}>
                   <CallMessageChannelContext.Provider value={callChannel}>
                     <ArtifactUrlContext.Provider value={artifactUrl}>
-                      <ArtifactShareContext.Provider value={artifactSharing}>
-                        <ThreadUiMemoryContext.Provider value={threadId}>
-                          <AttachmentLoaderContext.Provider
-                            value={loadAttachment}>
-                            <RunSettledContext.Provider value={runSettledAt}>
-                              <RecommendationsApplyContext.Provider
-                                value={applyRecommendations}>
-                                <MemberVerdictsContext.Provider
-                                  value={memberVerdicts}>
-                                  <NotSentMessagesContext.Provider
-                                    value={notSent}>
-                                    <ChatActionsContext.Provider
-                                      value={chatActions}>
-                                      <MemoryLoaderContext.Provider
-                                        value={loadMemory}>
-                                        <KnowledgeLoaderContext.Provider
-                                          value={loadKnowledge}>
-                                          <LessonsApiContext.Provider
-                                            value={lessonsApi}>
-                                            <LessonsKnowledgeApiContext.Provider
-                                              value={lessonsKnowledgeApi}>
-                                              <LessonsAgentsApiContext.Provider
-                                                value={lessonsAgentsApi}>
-                                                <LessonsJumpContext.Provider
-                                                  value={lessonsJump}>
-                                                  {children}
-                                                </LessonsJumpContext.Provider>
-                                              </LessonsAgentsApiContext.Provider>
-                                            </LessonsKnowledgeApiContext.Provider>
-                                          </LessonsApiContext.Provider>
-                                          {chatActions === null ? null : (
-                                            <CommandConfirmDialog
-                                              action={chatActions.confirming}
-                                              changed={
-                                                chatActions.confirming !==
-                                                  null &&
-                                                !chatActions.actions.some(
-                                                  (a) =>
-                                                    a.seq ===
-                                                    chatActions.confirming?.seq,
-                                                )
-                                              }
-                                              onCancel={
-                                                chatActions.cancelCommand
-                                              }
-                                              onConfirm={
-                                                chatActions.confirmCommand
-                                              }
-                                            />
-                                          )}
-                                        </KnowledgeLoaderContext.Provider>
-                                      </MemoryLoaderContext.Provider>
-                                    </ChatActionsContext.Provider>
-                                  </NotSentMessagesContext.Provider>
-                                </MemberVerdictsContext.Provider>
-                              </RecommendationsApplyContext.Provider>
-                            </RunSettledContext.Provider>
-                          </AttachmentLoaderContext.Provider>
-                        </ThreadUiMemoryContext.Provider>
-                      </ArtifactShareContext.Provider>
+                      <ArtifactAnswersContext.Provider value={artifactAnswers}>
+                        <ArtifactShareContext.Provider value={artifactSharing}>
+                          <ThreadUiMemoryContext.Provider value={threadId}>
+                            <AttachmentLoaderContext.Provider
+                              value={loadAttachment}>
+                              <RunSettledContext.Provider value={runSettledAt}>
+                                <RecommendationsApplyContext.Provider
+                                  value={applyRecommendations}>
+                                  <MemberVerdictsContext.Provider
+                                    value={memberVerdicts}>
+                                    <NotSentMessagesContext.Provider
+                                      value={notSent}>
+                                      <ChatActionsContext.Provider
+                                        value={chatActions}>
+                                        <MemoryLoaderContext.Provider
+                                          value={loadMemory}>
+                                          <KnowledgeLoaderContext.Provider
+                                            value={loadKnowledge}>
+                                            <LessonsApiContext.Provider
+                                              value={lessonsApi}>
+                                              <LessonsKnowledgeApiContext.Provider
+                                                value={lessonsKnowledgeApi}>
+                                                <LessonsAgentsApiContext.Provider
+                                                  value={lessonsAgentsApi}>
+                                                  <LessonsJumpContext.Provider
+                                                    value={lessonsJump}>
+                                                    {children}
+                                                  </LessonsJumpContext.Provider>
+                                                </LessonsAgentsApiContext.Provider>
+                                              </LessonsKnowledgeApiContext.Provider>
+                                            </LessonsApiContext.Provider>
+                                            {chatActions === null ? null : (
+                                              <CommandConfirmDialog
+                                                action={chatActions.confirming}
+                                                changed={
+                                                  chatActions.confirming !==
+                                                    null &&
+                                                  !chatActions.actions.some(
+                                                    (a) =>
+                                                      a.seq ===
+                                                      chatActions.confirming
+                                                        ?.seq,
+                                                  )
+                                                }
+                                                onCancel={
+                                                  chatActions.cancelCommand
+                                                }
+                                                onConfirm={
+                                                  chatActions.confirmCommand
+                                                }
+                                              />
+                                            )}
+                                          </KnowledgeLoaderContext.Provider>
+                                        </MemoryLoaderContext.Provider>
+                                      </ChatActionsContext.Provider>
+                                    </NotSentMessagesContext.Provider>
+                                  </MemberVerdictsContext.Provider>
+                                </RecommendationsApplyContext.Provider>
+                              </RunSettledContext.Provider>
+                            </AttachmentLoaderContext.Provider>
+                          </ThreadUiMemoryContext.Provider>
+                        </ArtifactShareContext.Provider>
+                      </ArtifactAnswersContext.Provider>
                     </ArtifactUrlContext.Provider>
                   </CallMessageChannelContext.Provider>
                 </JumpMarkContext.Provider>

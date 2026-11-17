@@ -1,6 +1,7 @@
 import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
+import { fsErrorCode } from './fs-error-code';
 import { isWithinDirectory } from './path-within';
 
 /**
@@ -79,11 +80,7 @@ function sharesItsFile(path: string): boolean {
     const stats = statSync(path);
     return stats.isFile() && stats.nlink > 1;
   } catch (error) {
-    const code =
-      typeof error === 'object' && error !== null && 'code' in error
-        ? error.code
-        : undefined;
-    return !(typeof code === 'string' && NOTHING_THERE.has(code));
+    return !NOTHING_THERE.has(fsErrorCode(error));
   }
 }
 

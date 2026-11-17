@@ -1,10 +1,15 @@
 import {
   ARTIFACT_IMAGE_FILE,
   ARTIFACT_IMAGES_DIR,
+  ARTIFACT_MEDIA_DIR,
+  ARTIFACT_MEDIA_FILE,
   type ArtifactImageMediaType,
   mapImageSources,
+  mapMediaSources,
 } from './artifact-html-images';
 import {
+  ARTIFACT_ANSWER_EVENT,
+  ARTIFACT_ANSWERS_EVENT,
   ARTIFACT_THEME_EVENT,
   themeVar,
   withArtifactRuntime,
@@ -50,6 +55,11 @@ import {
  * relative URL in the document, and without the second a form could POST the
  * page's contents somewhere even though script cannot.
  *
+ * This is the PORTABLE policy: the one a shared page's envelope and a saved file
+ * carry too, where the page's own origin is a bucket's host or a file. The app's
+ * framed page is served under {@link ARTIFACT_SERVED_PAGE_CSP}, this plus its
+ * media.
+ *
  * TWIN PARSER: `ARTIFACT_FILE_CSP` in
  * `apps/ui/src/renderer/chats/artifact-export.ts` restates this policy as the
  * `<meta>` a SAVED copy of the page carries — a file has no response header,
@@ -73,6 +83,41 @@ export const ARTIFACT_PAGE_CSP = [
   "form-action 'none'",
 ].join('; ');
 
+/**
+ * The policy the daemon serves the framed page under: {@link ARTIFACT_PAGE_CSP}
+ * with `'self'` added to `media-src`, for the audio and video the store copied in
+ * ({@link withMediaRoute}) — a film cannot travel inside the page as a picture
+ * does. In the sandbox the document's origin is opaque, but `'self'` is the origin
+ * of its URL: measured in this app's Electron, where a `media-src data:` page was
+ * refused the same file. Only a media element reaches that origin, and what it
+ * fetches the page's script cannot read. Never in a share envelope or a saved file,
+ * whose own origin is someone else's host or the disk.
+ */
+export const ARTIFACT_SERVED_PAGE_CSP = ARTIFACT_PAGE_CSP.replace(
+  'media-src data:',
+  "media-src data: 'self'",
+);
+
+/**
+ * The headers every answer from the artifact route carries, the page and its
+ * media alike:
+ *  - `cross-origin-resource-policy: cross-origin` — the page is framed by the
+ *    app's renderer and its media is played by a page in an opaque origin, both
+ *    cross-origin to this route;
+ *  - `x-content-type-options: nosniff` — a document or a film, never a sniffed
+ *    type its bytes could pass for;
+ *  - `referrer-policy: no-referrer` — the URL carries the per-artifact key, and
+ *    every CDN request the page makes would otherwise hand it on;
+ *  - `cache-control: no-store` — a version is immutable, but caching buys nothing
+ *    and a stale wrapper after an app update is a real cost.
+ */
+export const ARTIFACT_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
+  'cross-origin-resource-policy': 'cross-origin',
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
+  'cache-control': 'no-store',
+};
+
 /** The relative form a stored page refers to one of its images by. */
 const STORED_IMAGE_PREFIX = `${ARTIFACT_IMAGES_DIR}/`;
 
@@ -86,9 +131,9 @@ const STORED_IMAGE_PREFIX = `${ARTIFACT_IMAGES_DIR}/`;
  * back exactly as the agent wrote it.
  *
  * The pictures travel inside the page rather than from a route of their own on
- * purpose. A route would need its own origin in the page's policy, and that
- * origin would be the daemon's loopback address — a place the page could then
- * reach its other routes from. The page's policy admits no such origin.
+ * purpose: `img-src` admits no origin, so a picture needs nothing the page's
+ * script could reach the daemon with, and a saved or shared copy shows it too.
+ * Audio and video are too large to carry and take the media route instead.
  */
 export function withInlineImages(
   html: string,
@@ -120,12 +165,43 @@ export function withInlineImages(
   });
 }
 
+/** The relative form a stored page refers to one of its audio or video files by. */
+const STORED_MEDIA_PREFIX = `${ARTIFACT_MEDIA_DIR}/`;
+
+/**
+ * A stored page with each audio and video file it plays pointed at the media
+ * route, under the key the page itself was read with.
+ *
+ * The address is a path from the root rather than a whole URL, so it resolves
+ * against whichever origin served the page — this daemon, or the LAN gateway in
+ * front of it. Only the framed page is pointed there: a saved or shared copy has
+ * no route to reach, and keeps the stored name.
+ */
+export function withMediaRoute(
+  html: string,
+  runId: string,
+  artifactId: string,
+  key: string,
+): string {
+  return mapMediaSources(html, (src) => {
+    if (!src.startsWith(STORED_MEDIA_PREFIX)) {
+      return src;
+    }
+    const file = src.slice(STORED_MEDIA_PREFIX.length);
+    if (!ARTIFACT_MEDIA_FILE.test(file)) {
+      return src;
+    }
+    return `/v1/artifacts/${encodeURIComponent(runId)}/${encodeURIComponent(artifactId)}/${STORED_MEDIA_PREFIX}${file}?key=${encodeURIComponent(key)}`;
+  });
+}
+
 /**
  * The message `source` tags on this channel.
  *
  * TWIN PARSER: apps/ui/src/renderer/chats/artifact-frame.tsx — the host half of
- * the same channel. The frame sends `ready`, `height`, `link`, `picture` and
- * `escape`; the host sends `theme`. There is no generated type for a
+ * the same channel. The frame sends `ready`, `height`, `link`, `picture`,
+ * `escape`, `open-path` and `answer`; the host sends `theme` and `answers`.
+ * There is no generated type for a
  * `postMessage` payload, so these two files are the whole contract; a message or
  * field added to one must be added to the other.
  */
@@ -150,9 +226,22 @@ export const ARTIFACT_ESCAPE_SETTLE_MS = 50;
 
 /**
  * geniro's own script inside the page — the only code here the agent did not
- * write, and it does five things: it applies the theme, reports the height, relays
- * link clicks, hands over an Escape the page ignored, and announces itself to the
- * host once it runs.
+ * write, and it does seven things: it applies the theme, reports the height, relays
+ * link clicks and folder buttons, carries the page's answers both ways, hands over
+ * an Escape the page ignored, and announces itself to the host once it runs.
+ *
+ * It RELAYS a click on an element carrying `data-geniro-open="<absolute path>"` as
+ * `open-path`, which the host shows in Finder (a plain folder opens, anything else
+ * is revealed). The host acts on it only while the user's click is fresh
+ * (`navigator.userActivation`), so the page's script cannot open paths by itself.
+ *
+ * It CARRIES the page's answers (`geniro.saveAnswer`, `data-geniro-answer` controls):
+ * each answer the runtime saves goes to the host as `answer` (one name, its value —
+ * null when forgotten — and the page's save count), and the answers the host keeps
+ * come back as `answers` — once the page is ready, after each of its saves lands
+ * (naming the save counts it confirmed), and whenever another frame of it saves —
+ * handed to the runtime as a window event. The runtime itself never talks to the host, since it also ships
+ * in a saved file that has none.
  *
  * It APPLIES the theme: the host posts the resolved values of its own tokens
  * and this writes them onto `documentElement`, so a page that reached for
@@ -184,9 +273,9 @@ export const ARTIFACT_ESCAPE_SETTLE_MS = 50;
  * key in the page.
  *
  * It accepts a message only from its own parent (`event.source === parent`).
- * Nothing secret travels either way — colours out, a pixel height back — so
- * this is about a stray message from another frame confusing the page, not
- * about secrecy.
+ * Nothing secret travels either way — colours and the page's own answers out, a
+ * pixel height and the answers back — so this is about a stray message from
+ * another frame confusing the page, not about secrecy.
  */
 export const ARTIFACT_WRAPPER_SCRIPT = `
 (function () {
@@ -223,6 +312,24 @@ export const ARTIFACT_WRAPPER_SCRIPT = `
       window.dispatchEvent(new Event(${JSON.stringify(ARTIFACT_THEME_EVENT)}));
       report();
     }
+    if (data.type === 'answers' && data.values && typeof data.values === 'object') {
+      window.dispatchEvent(
+        new CustomEvent(${JSON.stringify(ARTIFACT_ANSWERS_EVENT)}, {
+          detail: { values: data.values, confirmed: data.confirmed || null }
+        })
+      );
+    }
+  });
+  window.addEventListener(${JSON.stringify(ARTIFACT_ANSWER_EVENT)}, function (event) {
+    var saved = event.detail;
+    if (saved && typeof saved.name === 'string') {
+      post({
+        type: 'answer',
+        name: saved.name,
+        value: saved.value === undefined ? null : saved.value,
+        seq: saved.seq
+      });
+    }
   });
   window.addEventListener('load', report);
   window.addEventListener('resize', report);
@@ -231,6 +338,13 @@ export const ARTIFACT_WRAPPER_SCRIPT = `
   // scrolling as it always did.
   document.addEventListener('click', function (event) {
     var node = event.target;
+    var opener = node && node.closest ? node.closest('[data-geniro-open]') : null;
+    var path = opener ? (opener.getAttribute('data-geniro-open') || '').trim() : '';
+    if (path && event.button === 0) {
+      event.preventDefault();
+      post({ type: 'open-path', path: path });
+      return;
+    }
     var anchor = node && node.closest ? node.closest('a[href], area[href]') : null;
     if (!anchor || event.button !== 0) return;
     var href = (anchor.getAttribute('href') || '').trim();

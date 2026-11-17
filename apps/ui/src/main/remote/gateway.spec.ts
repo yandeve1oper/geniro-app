@@ -678,6 +678,50 @@ describe('RemoteGateway: the pairing gate on the proxied surfaces', () => {
     expect(refused.status).toBe(401);
   });
 
+  it('lets a page’s own audio or video through without the paired cookie, and without the daemon’s token', async () => {
+    const seen: { path: string; auth: string | undefined }[] = [];
+    const daemon = createServer((req, res) => {
+      seen.push({ path: req.url ?? '', auth: req.headers.authorization });
+      res.writeHead(206, { 'content-type': 'video/mp4' });
+      res.end('bytes');
+    });
+    plainServers.push(daemon);
+    await new Promise<void>((resolve) =>
+      daemon.listen(0, '127.0.0.1', resolve),
+    );
+    const daemonPort = (daemon.address() as { port: number }).port;
+    const staticRoot = mkdtempSync(join(tmpdir(), 'geniro-gateway-static-'));
+    writeFileSync(join(staticRoot, 'index.html'), '<html></html>');
+    const gateway = new RemoteGateway(
+      makeGatewayOptions(staticRoot, {
+        daemonHandle: () => ({
+          host: '127.0.0.1',
+          port: daemonPort,
+          token: 'daemon-secret',
+          version: '1.0.0',
+          startedAt: new Date(0).toISOString(),
+        }),
+      }),
+    );
+    gateways.push(gateway);
+    await gateway.start();
+    const port = gateway.port()!;
+    const media = `/v1/artifacts/11111111-2222-4333-8444-555555555555/tour/media/${'a'.repeat(64)}.mp4?key=${'b'.repeat(64)}`;
+
+    const allowed = await requestWithCookie(port, {
+      path: media,
+      host: `${ALLOWED_HOST_NAME}:${port}`,
+    });
+    const page = await requestWithCookie(port, {
+      path: `/v1/artifacts/11111111-2222-4333-8444-555555555555/tour?key=${'b'.repeat(64)}`,
+      host: `${ALLOWED_HOST_NAME}:${port}`,
+    });
+
+    expect(allowed.status).toBe(206);
+    expect(page.status).toBe(401);
+    expect(seen).toEqual([{ path: media, auth: undefined }]);
+  });
+
   it('lets a paired device through to the daemon', async () => {
     const daemon = createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });

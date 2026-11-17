@@ -2244,15 +2244,24 @@ export type BrowserRunOutcome =
  * Everything else is the family's ordinary bargain: the payload is the card, the
  * call answers with a receipt, the row is the only copy, every chat is handed it,
  * and it auto-approves. The page itself reads nothing from this machine: the only
- * local files it ever shows are pictures the store copied at publish, from /tmp,
- * the system temp folder and the run's own folder, the places an agent writes its
- * screenshots. Those copies skip the per-read approval an `ask` run would otherwise
- * ask for, which is a choice made for those folders, not a reading of what the
- * agent could already reach. The page can load scripts and fonts from a fixed list
- * of library CDNs (see ARTIFACT_PAGE_CSP), and a link it posts is only offered to
- * the reader, who opens it with a press of their own.
+ * local files it ever shows are pictures, audio and video the store copied at
+ * publish, from /tmp, the system temp folder and the run's own folder, the places
+ * an agent writes its files. Those copies skip the per-read approval an `ask` run
+ * would otherwise ask for, which is a choice made for those folders, not a reading
+ * of what the agent could already reach. The page can load scripts and fonts from a
+ * fixed list of library CDNs (see ARTIFACT_PAGE_CSP), and hands the host only what
+ * the reader does on it: a link opened, a folder shown in Finder on a click, and
+ * the answers the reader picks, which its agent reads back with
+ * `HOST_ARTIFACT_ANSWERS_TOOL`.
  */
 export const HOST_ARTIFACT_TOOL = 'show_artifact';
+
+/**
+ * geniro's own tool that reads back what the user picked on the run's pages
+ * (`geniro.saveAnswer`, `data-geniro-answer` controls). Read-only and confined to
+ * the calling run, so it auto-approves like the page tool it serves.
+ */
+export const HOST_ARTIFACT_ANSWERS_TOOL = 'artifact_answers';
 
 /**
  * Caps on one artifact. Unlike the gallery's beside them these REFUSE rather than
@@ -2281,6 +2290,22 @@ export const MAX_ARTIFACT_SUMMARY_LENGTH = 200;
  */
 export const MAX_ARTIFACT_ID_LENGTH = 64;
 export const ARTIFACT_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * The most a page's saved answers may hold, as JSON text. The page refuses a save
+ * past it, and the route refuses a save that would take the merged set past it.
+ */
+export const MAX_ARTIFACT_ANSWERS_BYTES = 64 * 1024;
+
+/**
+ * The longest name one answer is saved under. The page runtime refuses a longer
+ * one, and so does the route.
+ *
+ * TWIN PARSER: `MAX_ANSWER_NAME` in `apps/ui/src/renderer/chats/artifact-frame.tsx`,
+ * which drops a longer one before it is sent; `artifact-frame.spec.tsx` reads this
+ * value out of this file and fails when the two disagree.
+ */
+export const MAX_ARTIFACT_ANSWER_NAME_LENGTH = 200;
 
 export interface ArtifactEdit {
   oldString: string;
@@ -3435,6 +3460,68 @@ export const RunArtifactsWireSchema = z.object({
   artifacts: z.array(RunArtifactSchema),
 });
 export type RunArtifactsWire = z.infer<typeof RunArtifactsWireSchema>;
+
+/**
+ * What the user picked on one published page, as the page saved it
+ * (`geniro.saveAnswer`, `data-geniro-answer` controls) — kept for every version of
+ * the artifact, read back by the page when it opens and by the agent's
+ * `artifact_answers` tool. The values are the page's own JSON.
+ *
+ * No `.meta({ id })` on this root, on `ChatTimelineWireSchema`'s rule.
+ */
+export const ArtifactAnswersWireSchema = z.object({
+  values: z
+    .record(z.string(), z.unknown())
+    .describe('each answer by the name the page saved it under'),
+  updatedAt: z
+    .string()
+    .nullable()
+    .describe('when they were last saved, ISO-8601; null when never'),
+});
+export type ArtifactAnswersWire = z.infer<typeof ArtifactAnswersWireSchema>;
+
+/**
+ * The answers a page changed, as the renderer saves them: each name to its new
+ * value, or to null when the page forgot it. Merged into what was kept, never
+ * replacing it, so a second frame of the page cannot undo the first one's picks.
+ */
+export const SaveArtifactAnswersSchema = z.object({
+  changes: z.record(
+    z
+      .string()
+      .min(1)
+      .max(MAX_ARTIFACT_ANSWER_NAME_LENGTH)
+      .refine((name) => name !== '__proto__'),
+    z.unknown(),
+  ),
+});
+export type SaveArtifactAnswers = z.infer<typeof SaveArtifactAnswersSchema>;
+
+/** One page's kept answers, as the store lists them for the agent. */
+export interface KeptArtifactAnswers {
+  artifactId: string;
+  values: Record<string, unknown>;
+  updatedAt: string;
+}
+
+/** {@link KeptArtifactAnswers} with the title the page's newest version carries. */
+export type TitledArtifactAnswers = KeptArtifactAnswers & {
+  title: string | null;
+};
+
+/** One stored audio or video file of a page: where it lies, its size, and its type. */
+export interface ArtifactMediaFile {
+  path: string;
+  size: number;
+  mediaType: string;
+}
+
+/** What the media route sends for one request: a status, its headers, and the bytes. */
+export interface ArtifactMediaResponse {
+  status: 200 | 206 | 404 | 416;
+  headers: Record<string, string>;
+  body: NodeJS.ReadableStream | string;
+}
 
 /**
  * How much of an agent-authored label this card carries.

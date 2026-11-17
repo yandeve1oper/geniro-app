@@ -24,6 +24,7 @@ import { cameViaRemote } from '../../../auth/remote-marker';
 import type {
   ActionPressWire,
   AppProcessesWire,
+  ArtifactAnswersWire,
   AttachmentDataWire,
   CallMessagesWire,
   ChatExportWire,
@@ -54,6 +55,7 @@ import {
   AnalyzeThreadDto,
   ApplyRecommendationsDto,
   AppProcessesDto,
+  ArtifactAnswersDto,
   AttachmentDataDto,
   CallMessagesDto,
   CallMessagesQueryDto,
@@ -88,6 +90,7 @@ import {
   RunStateDto,
   RunTeamNotesDto,
   RunWaterfallDto,
+  SaveArtifactAnswersDto,
   SearchChatQueryDto,
   SendMessageDto,
   SetRunNotesDto,
@@ -515,6 +518,29 @@ export class ChatController {
   @ZodResponse({ status: 200, type: RunArtifactsDto })
   readArtifacts(@Param('runId') runId: string): Promise<RunArtifactsWire> {
     return this.artifacts.read(runId);
+  }
+
+  /** What the user picked on one of this run's pages, for the page's host to restore. */
+  @Get(':runId/artifacts/:artifactId/answers')
+  @ApiOperation({ operationId: 'readArtifactAnswers' })
+  @ZodResponse({ status: 200, type: ArtifactAnswersDto })
+  readArtifactAnswers(
+    @Param('runId') runId: string,
+    @Param('artifactId') artifactId: string,
+  ): Promise<ArtifactAnswersWire> {
+    return this.artifacts.readAnswers(runId, artifactId);
+  }
+
+  /** Merge what the user changed on one of this run's pages into what is kept, for its agent to read. */
+  @Put(':runId/artifacts/:artifactId/answers')
+  @ApiOperation({ operationId: 'saveArtifactAnswers' })
+  @ZodResponse({ status: 200, type: ArtifactAnswersDto })
+  saveArtifactAnswers(
+    @Param('runId') runId: string,
+    @Param('artifactId') artifactId: string,
+    @Body() dto: SaveArtifactAnswersDto,
+  ): Promise<ArtifactAnswersWire> {
+    return this.artifacts.saveAnswers(runId, artifactId, dto.changes);
   }
 
   /**

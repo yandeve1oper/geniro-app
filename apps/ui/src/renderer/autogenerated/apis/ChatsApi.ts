@@ -19,6 +19,7 @@ import type {
   AnalyzeThreadDto,
   AppProcessesDto,
   ApplyRecommendationsDto,
+  ArtifactAnswersDto,
   AttachmentDataDto,
   CallMessagesDto,
   CancelledDto,
@@ -57,6 +58,7 @@ import type {
   RunStateDto,
   RunTeamNotesDto,
   RunWaterfallDto,
+  SaveArtifactAnswersDto,
   SendMessageDto,
   SetRunColorDto,
   SetRunGroupDto,
@@ -193,6 +195,11 @@ export interface ChatsApiPressChatActionRequest {
     pressActionDto: PressActionDto;
 }
 
+export interface ChatsApiReadArtifactAnswersRequest {
+    runId: string;
+    artifactId: string;
+}
+
 export interface ChatsApiReadChatAttachmentRequest {
     runId: string;
     attachmentId: string;
@@ -278,6 +285,12 @@ export interface ChatsApiReorderPinnedRunsRequest {
 
 export interface ChatsApiRetryChatRequest {
     runId: string;
+}
+
+export interface ChatsApiSaveArtifactAnswersRequest {
+    runId: string;
+    artifactId: string;
+    saveArtifactAnswersDto: SaveArtifactAnswersDto;
 }
 
 export interface ChatsApiSearchAllChatsRequest {
@@ -1648,6 +1661,59 @@ export class ChatsApi extends runtime.BaseAPI {
     /**
      * 
      */
+    async readArtifactAnswersRaw(requestParameters: ChatsApiReadArtifactAnswersRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ArtifactAnswersDto>> {
+        if (requestParameters['runId'] == null) {
+            throw new runtime.RequiredError(
+                'runId',
+                'Required parameter "runId" was null or undefined when calling readArtifactAnswers().'
+            );
+        }
+
+        if (requestParameters['artifactId'] == null) {
+            throw new runtime.RequiredError(
+                'artifactId',
+                'Required parameter "artifactId" was null or undefined when calling readArtifactAnswers().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/chats/{runId}/artifacts/{artifactId}/answers`;
+        urlPath = urlPath.replace(`{${"runId"}}`, encodeURIComponent(String(requestParameters['runId'])));
+        urlPath = urlPath.replace(`{${"artifactId"}}`, encodeURIComponent(String(requestParameters['artifactId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async readArtifactAnswers(requestParameters: ChatsApiReadArtifactAnswersRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ArtifactAnswersDto> {
+        const response = await this.readArtifactAnswersRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
     async readChatAttachmentRaw(requestParameters: ChatsApiReadChatAttachmentRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<AttachmentDataDto>> {
         if (requestParameters['runId'] == null) {
             throw new runtime.RequiredError(
@@ -2587,6 +2653,69 @@ export class ChatsApi extends runtime.BaseAPI {
      */
     async retryChat(requestParameters: ChatsApiRetryChatRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<RetriedDto> {
         const response = await this.retryChatRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * 
+     */
+    async saveArtifactAnswersRaw(requestParameters: ChatsApiSaveArtifactAnswersRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ArtifactAnswersDto>> {
+        if (requestParameters['runId'] == null) {
+            throw new runtime.RequiredError(
+                'runId',
+                'Required parameter "runId" was null or undefined when calling saveArtifactAnswers().'
+            );
+        }
+
+        if (requestParameters['artifactId'] == null) {
+            throw new runtime.RequiredError(
+                'artifactId',
+                'Required parameter "artifactId" was null or undefined when calling saveArtifactAnswers().'
+            );
+        }
+
+        if (requestParameters['saveArtifactAnswersDto'] == null) {
+            throw new runtime.RequiredError(
+                'saveArtifactAnswersDto',
+                'Required parameter "saveArtifactAnswersDto" was null or undefined when calling saveArtifactAnswers().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearer", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/v1/chats/{runId}/artifacts/{artifactId}/answers`;
+        urlPath = urlPath.replace(`{${"runId"}}`, encodeURIComponent(String(requestParameters['runId'])));
+        urlPath = urlPath.replace(`{${"artifactId"}}`, encodeURIComponent(String(requestParameters['artifactId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'PUT',
+            headers: headerParameters,
+            query: queryParameters,
+            body: requestParameters['saveArtifactAnswersDto'],
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response);
+    }
+
+    /**
+     * 
+     */
+    async saveArtifactAnswers(requestParameters: ChatsApiSaveArtifactAnswersRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ArtifactAnswersDto> {
+        const response = await this.saveArtifactAnswersRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

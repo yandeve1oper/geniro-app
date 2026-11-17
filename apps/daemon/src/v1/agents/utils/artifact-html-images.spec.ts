@@ -4,9 +4,60 @@ import {
   ARTIFACT_IMAGE_FILE,
   imageTagsAreWhole,
   isArtifactImageExtension,
-  isLocalImageSource,
+  isLocalSource,
   mapImageSources,
+  mapMediaSources,
+  mediaTagsAreWhole,
 } from './artifact-html-images';
+
+describe('mapMediaSources', () => {
+  it('maps the src of audio, video and source tags, and leaves images and srcset alone', () => {
+    const html =
+      '<audio src="/tmp/a.mp3"></audio><video controls src=/tmp/v.mp4></video>' +
+      '<video><source src="/tmp/w.webm" type="video/webm"></video>' +
+      '<img src="/tmp/p.png"><picture><source srcset="/tmp/s.png"></picture>' +
+      '<audiox src="/tmp/no.mp3">';
+    const seen: string[] = [];
+
+    const out = mapMediaSources(html, (src) => {
+      seen.push(src);
+      return `media/${seen.length}`;
+    });
+
+    expect(seen).toEqual(['/tmp/a.mp3', '/tmp/v.mp4', '/tmp/w.webm']);
+    expect(out).toBe(
+      '<audio src="media/1"></audio><video controls src=media/2></video>' +
+        '<video><source src="media/3" type="video/webm"></video>' +
+        '<img src="/tmp/p.png"><picture><source srcset="/tmp/s.png"></picture>' +
+        '<audiox src="/tmp/no.mp3">',
+    );
+  });
+
+  it('leaves image tags to mapImageSources', () => {
+    const html = '<img src="/tmp/p.png"><audio src="/tmp/a.mp3">';
+
+    expect(mapImageSources(html, () => 'images/x.png')).toBe(
+      '<img src="images/x.png"><audio src="/tmp/a.mp3">',
+    );
+  });
+});
+
+describe('mediaTagsAreWhole', () => {
+  it('accepts closed media tags and refuses an unclosed one or a `>` inside a quoted value', () => {
+    expect(mediaTagsAreWhole('<video src="/tmp/v.mp4" controls></video>')).toBe(
+      true,
+    );
+    expect(mediaTagsAreWhole('<audio src="/tmp/a.mp3">')).toBe(true);
+    expect(mediaTagsAreWhole('<audio title="a > b" src="/tmp/a.mp3">')).toBe(
+      false,
+    );
+    expect(mediaTagsAreWhole('<p>x</p><video src="/tmp/v.mp4')).toBe(false);
+  });
+
+  it('ignores an unclosed image tag, which imageTagsAreWhole judges', () => {
+    expect(mediaTagsAreWhole('<p>x</p><img src="/tmp/a.png')).toBe(true);
+  });
+});
 
 describe('mapImageSources', () => {
   it('replaces the src of every image tag, whatever its quoting', () => {
@@ -89,20 +140,20 @@ describe('mapImageSources', () => {
   });
 });
 
-describe('isLocalImageSource', () => {
+describe('isLocalSource', () => {
   it('admits absolute and relative paths, and refuses schemes, protocol-relative hosts and empty sources', () => {
-    expect(isLocalImageSource('/tmp/a.png')).toBe(true);
-    expect(isLocalImageSource('shots/a.png')).toBe(true);
-    expect(isLocalImageSource('data:image/png;base64,AAAA')).toBe(false);
-    expect(isLocalImageSource('https://example.com/a.png')).toBe(false);
-    expect(isLocalImageSource('//cdn.example.com/a.png')).toBe(false);
-    expect(isLocalImageSource('   ')).toBe(false);
+    expect(isLocalSource('/tmp/a.png')).toBe(true);
+    expect(isLocalSource('shots/a.png')).toBe(true);
+    expect(isLocalSource('data:image/png;base64,AAAA')).toBe(false);
+    expect(isLocalSource('https://example.com/a.png')).toBe(false);
+    expect(isLocalSource('//cdn.example.com/a.png')).toBe(false);
+    expect(isLocalSource('   ')).toBe(false);
   });
 
   it('takes a file: address as a local picture, and leaves a fragment or query alone', () => {
-    expect(isLocalImageSource('file:///tmp/a.png')).toBe(true);
-    expect(isLocalImageSource('#top')).toBe(false);
-    expect(isLocalImageSource('?v=2')).toBe(false);
+    expect(isLocalSource('file:///tmp/a.png')).toBe(true);
+    expect(isLocalSource('#top')).toBe(false);
+    expect(isLocalSource('?v=2')).toBe(false);
   });
 });
 

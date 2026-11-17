@@ -80,6 +80,7 @@ import { ArtifactBroker } from '../../agents/services/artifact.broker';
 import type { AttachmentStoreService } from '../../agents/services/attachment-store.service';
 import type { BrowserBroker } from '../../agents/services/browser.broker';
 import { ChartBroker } from '../../agents/services/chart.broker';
+import type { ChatArtifactsService } from '../../agents/services/chat-artifacts.service';
 import { ComparisonBroker } from '../../agents/services/comparison.broker';
 import { FindingsReportBroker } from '../../agents/services/findings-report.broker';
 import { GalleryBroker } from '../../agents/services/gallery.broker';
@@ -278,6 +279,7 @@ function service(
       galleries,
       galleryImages,
       artifacts,
+      artifactAnswers: {} as ChatArtifactsService,
       browser,
       attachments: {} as AttachmentStoreService,
       actions,
@@ -4714,6 +4716,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       galleries: new GalleryBroker(),
       galleryImages: {} as GalleryImageService,
       artifacts: new ArtifactBroker(),
+      artifactAnswers: {} as ChatArtifactsService,
       actions: new ActionBroker(),
       patches: new PatchBroker(),
       plans: new PlanBroker(),
@@ -4818,6 +4821,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       galleries: new GalleryBroker(),
       galleryImages: {} as GalleryImageService,
       artifacts: new ArtifactBroker(),
+      artifactAnswers: {} as ChatArtifactsService,
       actions: new ActionBroker(),
       patches: new PatchBroker(),
       plans: new PlanBroker(),
@@ -5131,6 +5135,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       galleries: new GalleryBroker(),
       galleryImages: {} as GalleryImageService,
       artifacts: new ArtifactBroker(),
+      artifactAnswers: {} as ChatArtifactsService,
       actions: new ActionBroker(),
       patches: new PatchBroker(),
       plans: new PlanBroker(),
@@ -5272,6 +5277,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
         galleries: new GalleryBroker(),
         galleryImages: {} as GalleryImageService,
         artifacts: new ArtifactBroker(),
+        artifactAnswers: {} as ChatArtifactsService,
         actions: new ActionBroker(),
         patches: new PatchBroker(),
         plans: new PlanBroker(),
@@ -5418,6 +5424,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
       galleries: new GalleryBroker(),
       galleryImages: {} as GalleryImageService,
       artifacts: new ArtifactBroker(),
+      artifactAnswers: {} as ChatArtifactsService,
       actions: new ActionBroker(),
       patches: new PatchBroker(),
       plans: new PlanBroker(),
@@ -5485,6 +5492,7 @@ describe('McpServerService — what the descriptions tell a model', () => {
         galleries: new GalleryBroker(),
         galleryImages: {} as GalleryImageService,
         artifacts: new ArtifactBroker(),
+        artifactAnswers: {} as ChatArtifactsService,
         actions: new ActionBroker(),
         patches: new PatchBroker(),
         plans: new PlanBroker(),

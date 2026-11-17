@@ -1,12 +1,17 @@
-import { Controller, Get, Param, Query, Res } from '@nestjs/common';
+import { Controller, Get, Headers, Param, Query, Res } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 
 import { ArtifactPageService } from '../services/artifact-page.service';
-import { ARTIFACT_PAGE_CSP } from '../utils/artifact-page';
+import {
+  ARTIFACT_PAGE_CSP,
+  ARTIFACT_RESPONSE_HEADERS,
+  ARTIFACT_SERVED_PAGE_CSP,
+} from '../utils/artifact-page';
 
 /**
- * The page one published artifact IS — the URL the renderer frames.
+ * The page one published artifact IS — the URL the renderer frames — and the
+ * audio and video that page plays, under the same key.
  *
  * Kept OUT of the OpenAPI document, like `McpController`: it answers with an
  * HTML document rather than a wire shape, so there is nothing for the generated
@@ -87,22 +92,38 @@ export class ArtifactsController {
     reply.raw.removeHeader('X-Frame-Options');
     void reply
       .code(200)
-      .header('cross-origin-resource-policy', 'cross-origin')
+      .headers(ARTIFACT_RESPONSE_HEADERS)
       .header('content-type', 'text/html; charset=utf-8')
       // The page's OWN policy, which is what makes agent-authored script safe
-      // to run: it does not inherit the embedder's. See ARTIFACT_PAGE_CSP.
-      .header('content-security-policy', ARTIFACT_PAGE_CSP)
-      // A document, never a sniffed type: without this a page whose bytes look
-      // like something else could be served as that instead.
-      .header('x-content-type-options', 'nosniff')
-      // The URL carries the per-artifact key, and the page may load libraries
-      // from public CDNs (see ARTIFACT_PAGE_CSP) — each of those requests would
-      // otherwise hand the key to the CDN as the referrer.
-      .header('referrer-policy', 'no-referrer')
-      // It is regenerated from the stored file on every request and a version
-      // is immutable once written, but caching buys nothing here and a stale
-      // wrapper after an app update is a real cost.
-      .header('cache-control', 'no-store')
+      // to run: it does not inherit the embedder's. See ARTIFACT_PAGE_CSP; the
+      // framed page adds its media route (ARTIFACT_SERVED_PAGE_CSP).
+      .header(
+        'content-security-policy',
+        wantsRaw ? ARTIFACT_PAGE_CSP : ARTIFACT_SERVED_PAGE_CSP,
+      )
       .send(html);
+  }
+
+  /**
+   * One audio or video file a page plays, a range at a time — see
+   * `ArtifactPageService.mediaResponse` for what is sent.
+   */
+  @Get(':runId/:artifactId/media/:file')
+  media(
+    @Param('runId') runId: string,
+    @Param('artifactId') artifactId: string,
+    @Param('file') file: string,
+    @Query('key') key: string | undefined,
+    @Headers('range') range: string | undefined,
+    @Res() reply: FastifyReply,
+  ): void {
+    const { status, headers, body } = this.pages.mediaResponse(
+      runId,
+      artifactId,
+      key ?? '',
+      file,
+      range,
+    );
+    void reply.code(status).headers(headers).send(body);
   }
 }

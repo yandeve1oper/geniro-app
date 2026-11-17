@@ -1,11 +1,22 @@
 import { EntityManager } from '@mikro-orm/sqlite';
 import { Injectable } from '@nestjs/common';
-import { NotFoundException } from '@packages/common';
+import {
+  BadRequestException,
+  InternalException,
+  NotFoundException,
+} from '@packages/common';
 
-import type { RunArtifactsWire, RunArtifactWire } from '../chat.types';
+import {
+  type ArtifactAnswersWire,
+  MAX_ARTIFACT_ANSWERS_BYTES,
+  type RunArtifactsWire,
+  type RunArtifactWire,
+  type TitledArtifactAnswers,
+} from '../chat.types';
 import { ItemDao } from '../dao/item.dao';
 import { RunDao } from '../dao/run.dao';
 import { parseJsonColumn } from '../utils/json-util';
+import { ArtifactStoreService } from './artifact-store.service';
 
 /**
  * The pages one run has published, newest first, one entry per artifact.
@@ -30,6 +41,7 @@ export class ChatArtifactsService {
     private readonly em: EntityManager,
     private readonly runDao: RunDao,
     private readonly itemDao: ItemDao,
+    private readonly store: ArtifactStoreService,
   ) {}
 
   async read(runId: string): Promise<RunArtifactsWire> {
@@ -51,6 +63,75 @@ export class ChatArtifactsService {
     }
     return { artifacts: [...newest.values()].sort((a, b) => b.seq - a.seq) };
   }
+
+  /** What the user picked on one of the run's pages — see `ArtifactAnswersWireSchema`. */
+  async readAnswers(
+    runId: string,
+    artifactId: string,
+  ): Promise<ArtifactAnswersWire> {
+    await this.requireRun(runId);
+    return this.store.readAnswers(runId, artifactId) ?? noSuchPage();
+  }
+
+  /**
+   * Merge what the user changed on one of the run's pages into what was kept,
+   * answering the whole set. Refused past `MAX_ARTIFACT_ANSWERS_BYTES`, the limit
+   * the page itself holds a save to.
+   */
+  async saveAnswers(
+    runId: string,
+    artifactId: string,
+    changes: Record<string, unknown>,
+  ): Promise<ArtifactAnswersWire> {
+    await this.requireRun(runId);
+    const kept = this.store.mergeAnswers(runId, artifactId, changes);
+    if (kept === 'too-large') {
+      throw new BadRequestException(
+        'ARTIFACT_ANSWERS_TOO_LARGE',
+        `a page's answers may hold ${MAX_ARTIFACT_ANSWERS_BYTES} characters of JSON`,
+      );
+    }
+    if (kept === 'unreadable') {
+      throw new InternalException(
+        'ARTIFACT_ANSWERS_UNREADABLE',
+        "this page's kept answers could not be read, so none were changed",
+      );
+    }
+    return kept ?? noSuchPage();
+  }
+
+  /**
+   * The answers kept for the run's pages — every page with any, or the one named —
+   * each with the title its newest version carries, for the run's agent to read.
+   */
+  async keptAnswers(
+    runId: string,
+    artifactId: string | null,
+  ): Promise<TitledArtifactAnswers[]> {
+    const titles = new Map(
+      (await this.read(runId)).artifacts.map((page) => [
+        page.artifactId,
+        page.title,
+      ]),
+    );
+    return this.store
+      .listAnswers(runId)
+      .filter((kept) => artifactId === null || kept.artifactId === artifactId)
+      .map((kept) => ({ ...kept, title: titles.get(kept.artifactId) ?? null }));
+  }
+
+  private async requireRun(runId: string): Promise<void> {
+    if ((await this.runDao.getById(runId, this.em.fork())) === null) {
+      throw new NotFoundException('RUN_NOT_FOUND', 'no such chat');
+    }
+  }
+}
+
+function noSuchPage(): never {
+  throw new NotFoundException(
+    'ARTIFACT_NOT_FOUND',
+    'this chat has no such page',
+  );
 }
 
 function text(value: unknown): string | null {

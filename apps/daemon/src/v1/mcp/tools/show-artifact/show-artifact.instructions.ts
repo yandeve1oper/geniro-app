@@ -5,6 +5,11 @@ import {
   MAX_ARTIFACT_PAGE_IMAGES,
   megabytes,
 } from '../../../agents/utils/artifact-image-policy';
+import {
+  MAX_ARTIFACT_MEDIA_BYTES,
+  MAX_ARTIFACT_PAGE_MEDIA,
+  MAX_ARTIFACT_PAGE_MEDIA_BYTES,
+} from '../../../agents/utils/artifact-media-policy';
 
 /**
  * What a model reads about `show_artifact`.
@@ -55,6 +60,28 @@ export function showArtifactInstructions(
     'folder. A picture that breaks any of that REFUSES the whole page, with the reason, rather than showing ' +
     'a broken one. Remote pictures do not load. Close every tag, and write a > inside an attribute value as ' +
     '&gt; — a page with a tag that does not close is refused. ' +
+    'AUDIO and VIDEO on this machine go in the same way, by absolute path in <audio controls src="…">, ' +
+    '<video controls src="…"> or a <source src="…"> inside either, from the same folders: the app copies ' +
+    'each file into the page and streams it from there. An mp3, aac, m4a, mp4, mov, wav, ogg, flac or webm, ' +
+    `judged by its contents, at most ${megabytes(MAX_ARTIFACT_MEDIA_BYTES)} MB each, ` +
+    `${megabytes(MAX_ARTIFACT_PAGE_MEDIA_BYTES)} MB and ${MAX_ARTIFACT_PAGE_MEDIA} files per page; a file that ` +
+    'breaks any of that refuses the page. They play in this app only — a saved or shared copy of the page ' +
+    'has no audio or video. ' +
+    'FOLDER BUTTONS: data-geniro-open="/absolute/path" (no ~) on a button or link shows that path in Finder when ' +
+    'the user clicks it — a plain folder opens; a file, an app or a folder whose name has a dot extension ' +
+    'is selected in its folder instead, never opened or launched. It works on the user’s own click only, ' +
+    'on this Mac only, and a path that is not there tells the user so under the page. ' +
+    'ANSWERS the user picks on the page are KEPT, so you can read them later with artifact_answers instead ' +
+    'of asking the user to copy them into the chat — never add a "copy for chat" button. Mark each control ' +
+    'with data-geniro-answer="<name>": a radio group saves the value picked, several checkboxes a list of ' +
+    'the ticked values, one checkbox true or false, a select or text field its value, and a button its ' +
+    'value attribute (else its text) when pressed — the pressed one of a group gets aria-pressed="true", so ' +
+    'style [aria-pressed="true"]; each is saved as the user changes it and put back when the page opens ' +
+    'again, in every version of it. From script, ' +
+    'geniro.saveAnswer(name, value) saves any JSON value (null forgets it), geniro.answers() returns them ' +
+    'all, and geniro.onAnswers(callback) hears the kept ones when the page opens and again whenever ' +
+    'another view of the page saves — keep it idempotent, and use it to redraw state your script derives ' +
+    'from them. Put data-geniro-answer on each control itself, never on the row or group around it. ' +
     'LIBRARIES load from public CDNs with a plain <script src> in <head> — these exact URLs ' +
     'are pinned and allowed: ' +
     'ECharts https://cdnjs.cloudflare.com/ajax/libs/echarts/6.1.0/echarts.min.js — draw every chart ' +

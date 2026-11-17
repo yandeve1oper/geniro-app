@@ -1,3 +1,7 @@
+import {
+  MAX_ARTIFACT_ANSWER_NAME_LENGTH,
+  MAX_ARTIFACT_ANSWERS_BYTES,
+} from '../chat.types';
 import { ARTIFACT_IMAGE_EXTENSIONS } from './artifact-html-images';
 
 /**
@@ -5,6 +9,22 @@ import { ARTIFACT_IMAGE_EXTENSIONS } from './artifact-html-images';
  * theme tokens onto the page — the one signal the runtime below re-themes on.
  */
 export const ARTIFACT_THEME_EVENT = 'geniro:theme';
+
+/**
+ * The window event the runtime fires when the page saves an answer, carrying the
+ * one it changed (`{name, value, seq}`, `value` null when it was forgotten, `seq`
+ * counting this page's saves); the frame wrapper hands it to the host, which keeps
+ * it for the agent.
+ */
+export const ARTIFACT_ANSWER_EVENT = 'geniro:answer';
+
+/**
+ * The window event the frame wrapper fires with the answers the host keeps for this
+ * page (`{values, confirmed}`): as the page opens, after each of this page's own
+ * saves lands — `confirmed` then names the `seq` each saved answer reached — and
+ * whenever another frame of the page saves one.
+ */
+export const ARTIFACT_ANSWERS_EVENT = 'geniro:answers';
 
 /**
  * A value naming a picture on the machine that published the page: an absolute
@@ -466,6 +486,231 @@ export const ARTIFACT_RUNTIME_SCRIPT = `
     attempt('picture paths', repointPicturePaths);
   });
 
+  // ---- Answers ----
+  // What the user picks on the page, kept by the app for the agent to read. A
+  // control marked data-geniro-answer="<name>" is saved as it changes (a marked
+  // button when it is pressed) and put back when the page opens; script saves with
+  // geniro.saveAnswer and hears the kept answers through geniro.onAnswers. Each
+  // save announces only the answer it changed, so two frames of one page never
+  // undo each other's picks. Without a host nothing is kept.
+  var ANSWER_EVENT = ${JSON.stringify(ARTIFACT_ANSWER_EVENT)};
+  var ANSWERS_EVENT = ${JSON.stringify(ARTIFACT_ANSWERS_EVENT)};
+  var MAX_ANSWERS = ${MAX_ARTIFACT_ANSWERS_BYTES};
+  var MAX_NAME = ${MAX_ARTIFACT_ANSWER_NAME_LENGTH};
+  var answers = {};
+  var unconfirmed = {};
+  var saves = 0;
+  var answersRestored = false;
+  var restoring = false;
+  var answerListeners = [];
+
+  function copyOf(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function saveAnswer(name, value) {
+    var key = String(name);
+    if (key === '' || key.length > MAX_NAME || key === '__proto__') {
+      console.warn('geniro: an answer needs a name of 1 to ' + MAX_NAME + ' characters');
+      return false;
+    }
+    var next = copyOf(answers);
+    var kept = null;
+    if (value !== undefined && value !== null) {
+      var text;
+      try {
+        text = JSON.stringify(value);
+      } catch (err) {
+        console.warn('geniro: an answer must be JSON', err);
+        return false;
+      }
+      if (text === undefined) return false;
+      kept = JSON.parse(text);
+      next[key] = kept;
+    } else {
+      delete next[key];
+    }
+    if (JSON.stringify(next).length > MAX_ANSWERS) {
+      console.warn('geniro: the answers are over ' + MAX_ANSWERS + ' characters; not saved');
+      return false;
+    }
+    answers = next;
+    saves += 1;
+    unconfirmed[key] = { value: kept, seq: saves };
+    window.dispatchEvent(new CustomEvent(ANSWER_EVENT, { detail: { name: key, value: kept, seq: saves } }));
+    return true;
+  }
+
+  function isFormControl(element) {
+    return element.tagName === 'INPUT' || element.tagName === 'SELECT' || element.tagName === 'TEXTAREA';
+  }
+
+  function controlsNamed(name) {
+    var all = document.querySelectorAll('[data-geniro-answer]');
+    var found = [];
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].getAttribute('data-geniro-answer') === name) found.push(all[i]);
+    }
+    return found;
+  }
+
+  function pressedValue(element) {
+    var value = element.getAttribute('value');
+    return value === null ? (element.textContent || '').trim() : value;
+  }
+
+  function readControls(controls) {
+    var first = controls[0];
+    if (first.type === 'radio') {
+      for (var i = 0; i < controls.length; i++) {
+        if (controls[i].checked) return controls[i].value;
+      }
+      return null;
+    }
+    if (first.type === 'checkbox') {
+      if (controls.length === 1) return first.checked;
+      var picked = [];
+      for (var j = 0; j < controls.length; j++) {
+        if (controls[j].checked) picked.push(controls[j].value);
+      }
+      return picked;
+    }
+    if (first.tagName === 'SELECT' && first.multiple) {
+      var chosen = [];
+      for (var k = 0; k < first.options.length; k++) {
+        if (first.options[k].selected) chosen.push(first.options[k].value);
+      }
+      return chosen;
+    }
+    return first.value;
+  }
+
+  function changed(control) {
+    control.dispatchEvent(new Event('input', { bubbles: true }));
+    control.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Sets each control to the answer, firing input and change only on a control
+  // whose state moved — on a radio group, the one that became checked — as the
+  // browser does for a user's pick.
+  function writeControls(controls, value) {
+    for (var i = 0; i < controls.length; i++) {
+      var control = controls[i];
+      if (!isFormControl(control)) {
+        control.setAttribute('aria-pressed', String(value !== undefined && value !== null && pressedValue(control) === value));
+      } else if (control.type === 'radio') {
+        var checked = control.value === value;
+        if (control.checked !== checked) {
+          control.checked = checked;
+          if (checked) changed(control);
+        }
+      } else if (control.type === 'checkbox') {
+        var ticked = Array.isArray(value) ? value.indexOf(control.value) !== -1 : value === true;
+        if (control.checked !== ticked) {
+          control.checked = ticked;
+          changed(control);
+        }
+      } else if (control.tagName === 'SELECT' && control.multiple) {
+        var picked = Array.isArray(value) ? value : [];
+        var moved = false;
+        for (var j = 0; j < control.options.length; j++) {
+          var selected = picked.indexOf(control.options[j].value) !== -1;
+          if (control.options[j].selected !== selected) {
+            control.options[j].selected = selected;
+            moved = true;
+          }
+        }
+        if (moved) changed(control);
+      } else {
+        var text = value === undefined || value === null ? '' : String(value);
+        if (control.value !== text) {
+          control.value = text;
+          changed(control);
+        }
+      }
+    }
+  }
+
+  function onControl(event) {
+    if (restoring) return;
+    var control = event.target;
+    var name = control && control.getAttribute ? control.getAttribute('data-geniro-answer') : null;
+    if (!name || !isFormControl(control)) return;
+    var choice = control.type === 'radio' || control.type === 'checkbox' || control.tagName === 'SELECT';
+    if (event.type === 'input' && choice) return;
+    var controls = controlsNamed(name).filter(isFormControl);
+    if (controls.length > 0) saveAnswer(name, readControls(controls));
+  }
+
+  // A press counts on a marked button-like element itself, never on a marked
+  // container: a row marked as a whole would save its own text, not a pick.
+  function onPress(event) {
+    var node = event.target;
+    var pressed = node && node.closest ? node.closest('button, a, [role="button"]') : null;
+    if (!pressed || !pressed.hasAttribute('data-geniro-answer') || event.button !== 0) return;
+    var name = pressed.getAttribute('data-geniro-answer');
+    var value = pressedValue(pressed);
+    if (saveAnswer(name, value)) writeControls(controlsNamed(name), value);
+  }
+
+  document.addEventListener('change', onControl, true);
+  document.addEventListener('input', onControl, true);
+  document.addEventListener('click', onPress, true);
+
+  // The kept answers, from the host as the page opens, after each of this page's
+  // saves lands, and whenever another frame of the page saves. A pick this page
+  // made that the host has not confirmed yet stays over them; one it confirmed
+  // gives way, so a newer pick from another frame shows.
+  window.addEventListener(ANSWERS_EVENT, function (event) {
+    var detail = event.detail;
+    var kept = detail && detail.values;
+    if (!kept || typeof kept !== 'object' || Array.isArray(kept)) return;
+    var confirmed = detail.confirmed && typeof detail.confirmed === 'object' ? detail.confirmed : {};
+    var merged = copyOf(kept);
+    for (var key in unconfirmed) {
+      if (typeof confirmed[key] === 'number' && confirmed[key] >= unconfirmed[key].seq) {
+        delete unconfirmed[key];
+      } else if (unconfirmed[key].value === null) {
+        delete merged[key];
+      } else {
+        merged[key] = unconfirmed[key].value;
+      }
+    }
+    var names = {};
+    for (var before in answers) names[before] = true;
+    for (var after in merged) names[after] = true;
+    answers = merged;
+    answersRestored = true;
+    restoring = true;
+    try {
+      for (var name in names) {
+        var controls = controlsNamed(name);
+        if (controls.length > 0) {
+          attempt('answer ' + name, function () {
+            writeControls(controls, answers[name]);
+          });
+        }
+      }
+    } finally {
+      restoring = false;
+    }
+    for (var i = 0; i < answerListeners.length; i++) {
+      var listener = answerListeners[i];
+      attempt('answers', function () {
+        listener(copyOf(answers));
+      });
+    }
+  });
+
+  function onAnswers(callback) {
+    answerListeners.push(callback);
+    if (answersRestored) {
+      setTimeout(function () {
+        callback(copyOf(answers));
+      }, 0);
+    }
+  }
+
   window.geniro = {
     token: token,
     theme: theme,
@@ -477,7 +722,12 @@ export const ARTIFACT_RUNTIME_SCRIPT = `
     echartsTheme: function () {
       return echartsTheme(theme());
     },
-    icons: icons
+    icons: icons,
+    saveAnswer: saveAnswer,
+    answers: function () {
+      return copyOf(answers);
+    },
+    onAnswers: onAnswers
   };
 })();
 `.trim();

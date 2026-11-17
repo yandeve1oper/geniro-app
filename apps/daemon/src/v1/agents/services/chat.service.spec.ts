@@ -12133,6 +12133,33 @@ describe('ChatService — approval modes (parity M1)', () => {
     expect(approvals.listByRun(run.id)).toEqual([]);
   });
 
+  it('auto-approves reading back a page’s answers on an ASK chat', async () => {
+    const { service, claude, approvals, itemDao } = setup();
+    const run = await service.createChat({
+      agentKind: 'claude',
+      cwd: dir,
+      approval: 'ask',
+    });
+    await service.sendMessage(run.id, 'hi');
+    claude.emit({
+      type: 'approval_request',
+      id: 'p-answers',
+      toolName: `mcp__${hostMcpServerName(run.id)}__artifact_answers`,
+      input: {},
+    });
+    await drain();
+
+    expect(claude.handles[0]!.respondApproval).toHaveBeenCalledWith(
+      'p-answers',
+      true,
+      {},
+    );
+    expect(itemDao.items.some((i) => i.kind === 'approval_request')).toBe(
+      false,
+    );
+    expect(approvals.listByRun(run.id)).toEqual([]);
+  });
+
   it('auto-approves a findings report on an ASK chat, under claude’s own spelling', async () => {
     // The NAME is the load-bearing half, and the counterweight is the ASK-mode
     // test directly below: claude spells an MCP tool `mcp__<server>__<tool>`,

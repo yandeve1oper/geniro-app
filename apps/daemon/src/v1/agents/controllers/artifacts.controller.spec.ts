@@ -1,8 +1,18 @@
-import type { FastifyReply } from 'fastify';
-import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Readable } from 'node:stream';
 
-import type { ArtifactPageService } from '../services/artifact-page.service';
-import { ARTIFACT_PAGE_CSP } from '../utils/artifact-page';
+import type { FastifyReply } from 'fastify';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ArtifactPageService } from '../services/artifact-page.service';
+import { ArtifactStoreService } from '../services/artifact-store.service';
+import {
+  ARTIFACT_PAGE_CSP,
+  ARTIFACT_SERVED_PAGE_CSP,
+} from '../utils/artifact-page';
 import { ArtifactsController } from './artifacts.controller';
 
 /** What the controller wrote, in the order it wrote it. */
@@ -42,6 +52,10 @@ function setup(page: string | null): {
     },
     header(name: string, value: string) {
       written.headers[name] = value;
+      return this;
+    },
+    headers(values: Record<string, string>) {
+      Object.assign(written.headers, values);
       return this;
     },
     // The RAW Node response, because that is where the express `helmet`
@@ -91,6 +105,16 @@ describe('ArtifactsController', () => {
     const { controller, reply, written } = setup('<p>x</p>');
 
     controller.page('run-1', 'plan', KEY, '1', undefined, reply);
+
+    expect(written.headers['content-security-policy']).toBe(
+      ARTIFACT_SERVED_PAGE_CSP,
+    );
+  });
+
+  it('serves the raw document for saving under the portable policy, with no media origin', () => {
+    const { controller, reply, written } = setup('<p>x</p>');
+
+    controller.page('run-1', 'plan', KEY, '1', '1', reply);
 
     expect(written.headers['content-security-policy']).toBe(ARTIFACT_PAGE_CSP);
   });
@@ -267,5 +291,150 @@ describe('ArtifactsController', () => {
 
       expect(written.headers).toEqual({});
     });
+  });
+});
+
+describe('ArtifactsController media', () => {
+  const RUN = '11111111-2222-4333-8444-555555555555';
+  const SONG = Buffer.concat([
+    Buffer.from('ID3\u0004', 'latin1'),
+    Buffer.from('0123456789abcdefghij'),
+  ]);
+  let root: string;
+  let controller: ArtifactsController;
+  let key: string;
+  let file: string;
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'geniro-artifact-media-route-'));
+    const store = new ArtifactStoreService({ root: join(root, 'store') });
+    controller = new ArtifactsController(new ArtifactPageService(store));
+    const song = join(root, 'song.mp3');
+    writeFileSync(song, SONG);
+    const published = await store.publish(RUN, {
+      id: 'tour',
+      title: 'Tour',
+      html: `<audio controls src="${song}"></audio>`,
+    });
+    if (!published.ok) {
+      throw new Error(published.reason);
+    }
+    key = published.stored.key;
+    file = `${createHash('sha256').update(SONG).digest('hex')}.mp3`;
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** A reply double that collects what is sent, reading a stream to its end. */
+  function streamingReply(): {
+    reply: FastifyReply;
+    written: {
+      code: number;
+      headers: Record<string, string>;
+      body: Promise<Buffer>;
+    };
+  } {
+    let resolveBody: (body: Buffer) => void = () => undefined;
+    const written = {
+      code: 200,
+      headers: {} as Record<string, string>,
+      body: new Promise<Buffer>((resolve) => {
+        resolveBody = resolve;
+      }),
+    };
+    const reply = {
+      code(value: number) {
+        written.code = value;
+        return this;
+      },
+      type(value: string) {
+        written.headers['content-type'] = value;
+        return this;
+      },
+      header(name: string, value: string) {
+        written.headers[name] = value;
+        return this;
+      },
+      headers(values: Record<string, string>) {
+        Object.assign(written.headers, values);
+        return this;
+      },
+      send(value: unknown) {
+        if (value instanceof Readable) {
+          const chunks: Buffer[] = [];
+          value.on('data', (chunk: Buffer) => chunks.push(chunk));
+          value.on('end', () => resolveBody(Buffer.concat(chunks)));
+        } else {
+          resolveBody(Buffer.from(typeof value === 'string' ? value : ''));
+        }
+        return this;
+      },
+    } as unknown as FastifyReply;
+    return { reply, written };
+  }
+
+  it('points the served page at the media route under the page key', () => {
+    const page = new ArtifactPageService(
+      new ArtifactStoreService({ root: join(root, 'store') }),
+    ).page(RUN, 'tour', 1, key);
+
+    expect(page).toContain(
+      `<audio controls src="/v1/artifacts/${RUN}/tour/media/${file}?key=${key}"></audio>`,
+    );
+  });
+
+  it('streams the whole file with its type when no range is asked for', async () => {
+    const { reply, written } = streamingReply();
+
+    controller.media(RUN, 'tour', file, key, undefined, reply);
+
+    expect(written.code).toBe(200);
+    expect(written.headers['content-type']).toBe('audio/mpeg');
+    expect(written.headers['content-length']).toBe(String(SONG.length));
+    expect(written.headers['accept-ranges']).toBe('bytes');
+    expect(written.headers['cross-origin-resource-policy']).toBe(
+      'cross-origin',
+    );
+    expect((await written.body).equals(SONG)).toBe(true);
+  });
+
+  it('answers a range with 206 and exactly those bytes', async () => {
+    const { reply, written } = streamingReply();
+
+    controller.media(RUN, 'tour', file, key, 'bytes=4-9', reply);
+
+    expect(written.code).toBe(206);
+    expect(written.headers['content-range']).toBe(`bytes 4-9/${SONG.length}`);
+    expect(written.headers['content-length']).toBe('6');
+    expect((await written.body).equals(SONG.subarray(4, 10))).toBe(true);
+  });
+
+  it('answers a span past the end with 416', () => {
+    const { reply, written } = streamingReply();
+
+    controller.media(RUN, 'tour', file, key, `bytes=${SONG.length}-`, reply);
+
+    expect(written.code).toBe(416);
+    expect(written.headers['content-range']).toBe(`bytes */${SONG.length}`);
+  });
+
+  it('keeps the key out of the document a saved file or a share is made from', () => {
+    const document = new ArtifactPageService(
+      new ArtifactStoreService({ root: join(root, 'store') }),
+    ).document(RUN, 'tour', 1, key);
+
+    expect(document).toContain(`<audio controls src="media/${file}"></audio>`);
+    expect(document).not.toContain(key);
+  });
+
+  it('answers 404 for a wrong key', async () => {
+    const { reply, written } = streamingReply();
+
+    controller.media(RUN, 'tour', file, 'wrong', 'bytes=0-', reply);
+
+    expect(written.code).toBe(404);
+    expect((await written.body).toString()).toBe('not found');
   });
 });

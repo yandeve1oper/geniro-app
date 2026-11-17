@@ -114,6 +114,28 @@ describe('proxyHttp', () => {
     );
   });
 
+  it('sends no token at all, and none the client sent, when asked to go without one', async () => {
+    let received: IncomingMessage | null = null;
+    const daemon = createServer((req, res) => {
+      received = req;
+      res.end();
+    });
+    servers.push(daemon);
+    const handle = makeHandle(await listen(daemon), 'real-daemon-token');
+    const gateway = createServer((req, res) =>
+      proxyHttp(req, res, handle, { withToken: false }),
+    );
+    servers.push(gateway);
+    const gatewayPort = await listen(gateway);
+
+    await fetch(`http://127.0.0.1:${gatewayPort}/v1/artifacts/x`, {
+      headers: { authorization: 'Bearer client-forged-token' },
+    });
+
+    expect(received).not.toBeNull();
+    expect(received!.headers.authorization).toBeUndefined();
+  });
+
   it('marks the request as from a paired device, replacing any mark the client forged', async () => {
     let received: IncomingMessage | null = null;
     const daemon = createServer((req, res) => {
@@ -247,7 +269,7 @@ describe('proxyHttp', () => {
     servers.push(daemon);
     const handle = makeHandle(await listen(daemon), 'token');
     const gateway = createServer((req, res) =>
-      proxyHttp(req, res, handle, 150),
+      proxyHttp(req, res, handle, { responseTimeoutMs: 150 }),
     );
     servers.push(gateway);
     const gatewayPort = await listen(gateway);

@@ -46,6 +46,7 @@ import {
   type RemotePolicy,
 } from './ipc-registry';
 import {
+  artifactPathSchema,
   artifactSaveSchema,
   branchNameSchema,
   browserAddressSchema,
@@ -96,6 +97,7 @@ import {
 import { applyTheme } from './native-appearance';
 import { openNotificationSettings } from './notifications/notification-settings';
 import { NotificationService } from './notifications/notifications.service';
+import { openArtifactPath } from './open-artifact-path';
 import { openInTerminal } from './open-terminal';
 import type { RemoteAccess } from './remote/remote-access';
 import { revealPath } from './reveal-path';
@@ -755,6 +757,13 @@ export function registerIpc(
     IPC.revealPath,
     denyRemotely('opens a Finder window on the computer running geniro'),
     (_event, path: unknown) => revealPath(revealPathSchema.parse(path)),
+  );
+
+  // A button on an agent's page: opens a plain folder, reveals anything else.
+  handle(
+    IPC.openArtifactPath,
+    denyRemotely('opens a Finder window on the computer running geniro'),
+    (_event, path: unknown) => openArtifactPath(artifactPathSchema.parse(path)),
   );
 
   // Settings → Storage. Every name is one segment the schema bounds, joined

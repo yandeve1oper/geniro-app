@@ -68,6 +68,7 @@ Smaller rules:
 - **Clear Agent Cache** runs in the focused renderer. It reloads only after the daemon has answered, and never on a failure. It acts on the press alone, with no confirmation strip.
 - **Component Catalog** appears only when `isDev` (`ELECTRON_RENDERER_URL`) is passed in, and is omitted otherwise. Its port is a twin of `apps/ui/package.json`'s `storybook` script. Main never starts Storybook.
 - `reveal-path.ts` reveals in Finder and never opens.
+- `open-artifact-path.ts` shows an artifact page's folder button in Finder: a plain folder opens, anything else (a file, a folder whose name has an extension — `.Tool.app` too — or that holds `Contents`, judged on the real path) is only revealed, so nothing launches. `denyRemotely`.
 - Settings → Storage (`app-storage.ts`): main sizes only the data-folder names the daemon's `GET /v1/storage` left `unclaimed`, through one `/usr/bin/du -sk` call (hard links counted once, symlinks not followed), and clears only the window's HTTP and code caches (`session.clearCache`, `clearCodeCaches`). Every name arrives through `storageEntryNameSchema` (one path segment). `geniro:restartDaemon` (`denyRemotely`) is the page's restart for a scheduled compaction, the same `restartAndNotify` a settings change uses, refused when `isServingWork` finds a live run (the marker then waits for the next start).
 - `open-terminal.ts` hands off to the user's own terminal through a 0700 `.command` file. `renderer/handoff-open.ts` is its one renderer helper, with one call site in `Chats.tsx`.
 - `navigation-policy.ts` keeps the top frame on the renderer document. `URL.origin` cannot decide this, because it is `null` for every `file:` URL.
@@ -108,6 +109,7 @@ Smaller rules:
 **LAN gateway** (`main/remote/`). The hard rules (daemon stays loopback-only, pairing gate, Origin check, injected token, Host guard, tunnel on a press only) are in the root `AGENTS.md` → _Constraints_. In code:
 
 - `gateway.ts` listens on `REMOTE_PREFERRED_PORT` (47616), with a free-port fallback. Routing order: its own routes, then `/v1/*` and `/health` proxied, then `/ws` upgraded, then the bundle, all behind one path-traversal guard.
+- The one unpaired `/v1` arm is an artifact page's audio or video (`artifact-media-request.ts`, a twin of the daemon's id and media-file shapes): exact path, `key` the only parameter, GET or HEAD, proxied with `proxyHttp(…, { withToken: false })`.
 - Match the upgrade as `/ws` or `/ws/…`. engine.io requests the trailing-slash form, so an exact match breaks live streaming while every unit test still passes.
 - `daemon-proxy.ts` drops any client `x-geniro-via` and stamps `x-geniro-via: remote` on every request and upgrade it forwards (twin of the daemon's `auth/remote-marker.ts`).
 - `host-guard.ts` matches a `*.suffix` at a label boundary.

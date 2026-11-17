@@ -150,6 +150,7 @@ import {
 } from '../../agents/utils/event-to-item';
 import { firstTurnWindow } from '../../agents/utils/first-turn-window';
 import { subagentsWouldBeCancelled } from '../../agents/utils/follow-up-background-work';
+import { isHostArtifactAnswersCall } from '../../agents/utils/host-artifact';
 import { isHostBrowserCall } from '../../agents/utils/host-browser';
 import { hostEndpointPath } from '../../agents/utils/host-endpoint';
 import { isHostKnowledgeCall } from '../../agents/utils/host-knowledge';
@@ -5979,6 +5980,10 @@ export class TeamExecutorService
               (isHostMemoryCall(hostMcpServerName(runId), event.toolName) ||
                 isHostQuestionCall(hostMcpServerName(runId), event.toolName) ||
                 isHostKnowledgeCall(hostMcpServerName(runId), event.toolName) ||
+                isHostArtifactAnswersCall(
+                  hostMcpServerName(runId),
+                  event.toolName,
+                ) ||
                 isHostBrowserCall(hostMcpServerName(runId), event.toolName) ||
                 isHostTeamProposalCall(
                   hostMcpServerName(runId),
@@ -5991,7 +5996,8 @@ export class TeamExecutorService
             ) {
               // The shared memory and the knowledge store, at every approval
               // level, as in a chat: their limits live in their services — see
-              // `isHostMemoryCall` and `isHostKnowledgeCall`. The lead's
+              // `isHostMemoryCall` and `isHostKnowledgeCall`; reading back the
+              // run's own page answers likewise (`isHostArtifactAnswersCall`). The lead's
               // `propose_team` and `save_project_instructions` write nothing:
               // their own card is the gate.
               handle.respondApproval(event.id, true, event.input);
@@ -6363,6 +6369,7 @@ export class TeamExecutorService
         isHostMemoryCall(hostMcpServerName(runId), request.toolName) ||
         isHostQuestionCall(hostMcpServerName(runId), request.toolName) ||
         isHostKnowledgeCall(hostMcpServerName(runId), request.toolName) ||
+        isHostArtifactAnswersCall(hostMcpServerName(runId), request.toolName) ||
         isHostBrowserCall(hostMcpServerName(runId), request.toolName) ||
         isHostTeamProposalCall(hostMcpServerName(runId), request.toolName) ||
         isHostProjectInstructionsCall(
