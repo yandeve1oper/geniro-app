@@ -9,6 +9,7 @@ import {
   readProcessStartTimes,
 } from '../../../utils/process-identity';
 import { ChildJournal, readChildJournal } from '../utils/child-journal';
+import type { RecordedGroup } from '../utils/process-descendants';
 import {
   StrandedChildReaper,
   type StrandedChildReaperOptions,
@@ -31,15 +32,25 @@ const silent = { log: vi.fn(), warn: vi.fn() };
 function reaper(options: StrandedChildReaperOptions = {}): {
   reaper: StrandedChildReaper;
   killed: [number, NodeJS.Signals][];
+  handed: [string, readonly RecordedGroup[]][];
 } {
   const killed: [number, NodeJS.Signals][] = [];
+  const handed: [string, readonly RecordedGroup[]][] = [];
   return {
     killed,
-    reaper: new StrandedChildReaper(path, {
-      logger: silent,
-      killGroup: (pid, signal) => killed.push([pid, signal]),
-      ...options,
-    }),
+    handed,
+    reaper: new StrandedChildReaper(
+      path,
+      (runId, groups) => {
+        handed.push([runId, groups]);
+        return Promise.resolve([]);
+      },
+      {
+        logger: silent,
+        killGroup: (pid, signal) => killed.push([pid, signal]),
+        ...options,
+      },
+    ),
   };
 }
 
@@ -48,14 +59,69 @@ function writeJournal(
   children: { pid: number; startedAt: number; command: string }[],
   ownerPid = process.pid,
   ownerStartedAt = 1,
+  commandGroups?: unknown[],
 ): void {
   writeFileSync(
     path,
-    JSON.stringify({ version: 2, ownerPid, ownerStartedAt, children }),
+    JSON.stringify({
+      version: 2,
+      ownerPid,
+      ownerStartedAt,
+      children,
+      ...(commandGroups === undefined ? {} : { commandGroups }),
+    }),
   );
 }
 
+const LEFT_GROUP = { pgid: 900, members: [{ pid: 901, startedAt: 7_000 }] };
+
 describe('StrandedChildReaper', () => {
+  it('hands each CLI’s journaled command groups to the stop, with its run, after the group kills', () => {
+    writeJournal(
+      [{ pid: 1, startedAt: 1_000, command: 'claude' }],
+      process.pid,
+      1,
+      [
+        { cliPid: 1, runId: 'run-a', groups: [LEFT_GROUP] },
+        {
+          cliPid: 2,
+          runId: null,
+          groups: [{ pgid: 950, members: [{ pid: 951, startedAt: 8_000 }] }],
+        },
+      ],
+    );
+    const order: string[] = [];
+    const r = new StrandedChildReaper(
+      path,
+      (runId) => {
+        order.push(`stop ${runId}`);
+        return Promise.resolve([]);
+      },
+      {
+        logger: silent,
+        startTimes: () => new Map([[1, 1_000]]),
+        killGroup: (pid) => order.push(`kill ${pid}`),
+      },
+    );
+
+    r.reap();
+
+    expect(order).toEqual(['kill 1', 'stop run-a', 'stop untagged']);
+    expect(readChildJournal(path)).toBeNull();
+  });
+
+  it('hands on the command groups of a journal with no live CLI left in it', () => {
+    writeJournal([], process.pid, 1, [
+      { cliPid: 1, runId: 'run-a', groups: [LEFT_GROUP] },
+    ]);
+    const { reaper: r, handed } = reaper({ startTimes: () => new Map() });
+
+    expect(r.reap()).toEqual([]);
+
+    expect(handed).toEqual([['run-a', [LEFT_GROUP]]]);
+    expect(readChildJournal(path)).toBeNull();
+  });
+
   it('kills a confirmed stray group and clears the journal', () => {
     writeJournal([
       { pid: 500, startedAt: 1_000, command: '/bin/cursor-agent' },
@@ -119,8 +185,13 @@ describe('StrandedChildReaper', () => {
       [{ pid: 600, startedAt: 1_000, command: 'a' }],
       424_242,
       5_000,
+      [{ cliPid: 600, runId: 'run-a', groups: [LEFT_GROUP] }],
     );
-    const { reaper: r, killed } = reaper({
+    const {
+      reaper: r,
+      killed,
+      handed,
+    } = reaper({
       startTimes: () =>
         new Map([
           [424_242, 5_000],
@@ -131,6 +202,7 @@ describe('StrandedChildReaper', () => {
     expect(r.reap()).toEqual([]);
 
     expect(killed).toEqual([]);
+    expect(handed).toEqual([]);
     // And the journal SURVIVES — it is the live daemon's, not ours to erase.
     expect(readChildJournal(path)?.children).toHaveLength(1);
   });

@@ -1,6 +1,7 @@
 import { readFileSync, rmSync } from 'node:fs';
 
 import { atomicWriteSync } from '../../../utils/atomic-file';
+import type { RecordedGroup } from './process-descendants';
 
 /**
  * The on-disk record of every process GROUP this daemon launch has spawned.
@@ -24,6 +25,12 @@ import { atomicWriteSync } from '../../../utils/atomic-file';
  * ({@link StrandedChildReaper}). The file is authoritative only about groups
  * this daemon started; identity is re-verified against the kernel before
  * anything is signalled (see `utils/process-identity`).
+ *
+ * A CLI's detached commands run in sessions of their own, out of reach of its
+ * group kill, so the groups its session records for them are written here too
+ * ({@link JournaledCommandGroups}): kept past the CLI's exit until the live
+ * daemon has stopped what it left, and handed to the same stop at the next boot
+ * when the daemon died first.
  */
 
 /** Journal file name under the userData dir. */
@@ -40,6 +47,14 @@ export interface JournaledChild {
   startedAt: number;
   /** The binary, for the reap log — a stray should be nameable, not just a pid. */
   command: string;
+}
+
+/** The command groups one CLI session last recorded, under that CLI's pid. */
+export interface JournaledCommandGroups {
+  cliPid: number;
+  /** The run the CLI was spawned for (its run tag), null for an untagged spawn. */
+  runId: string | null;
+  groups: RecordedGroup[];
 }
 
 /** The journal file's shape. */
@@ -68,6 +83,8 @@ export interface ChildJournalFile {
    */
   ownerStartedAt: number;
   children: JournaledChild[];
+  /** Absent in a file an older daemon wrote. */
+  commandGroups?: JournaledCommandGroups[];
 }
 
 const JOURNAL_VERSION = 2;
@@ -98,6 +115,8 @@ export interface ChildJournalLogger {
 export class ChildJournal {
   private readonly children = new Map<number, JournaledChild>();
 
+  private readonly commandGroups = new Map<number, JournaledCommandGroups>();
+
   private readonly ownerStartedAt = ownStartedAt();
 
   constructor(
@@ -121,6 +140,49 @@ export class ChildJournal {
     }
   }
 
+  /**
+   * Replace what `cliPid`'s session records of its commands' groups; none
+   * drops the entry. Writes the file only when the record changed, since a
+   * session re-reads its groups every few seconds while a command runs.
+   */
+  recordCommandGroups(
+    cliPid: number,
+    runId: string | null,
+    groups: readonly RecordedGroup[],
+  ): void {
+    const previous = this.commandGroups.get(cliPid);
+    if (groups.length === 0) {
+      this.forgetCommandGroups(cliPid);
+      return;
+    }
+    const entry: JournaledCommandGroups = {
+      cliPid,
+      runId,
+      groups: groups.map((group) => ({
+        pgid: group.pgid,
+        members: group.members.map(({ pid, startedAt }) => ({
+          pid,
+          startedAt,
+        })),
+      })),
+    };
+    if (
+      previous !== undefined &&
+      JSON.stringify(previous) === JSON.stringify(entry)
+    ) {
+      return;
+    }
+    this.commandGroups.set(cliPid, entry);
+    this.flush();
+  }
+
+  /** Drop `cliPid`'s command groups, once what they left has been dealt with. */
+  forgetCommandGroups(cliPid: number): void {
+    if (this.commandGroups.delete(cliPid)) {
+      this.flush();
+    }
+  }
+
   /** Groups this instance believes are live — the in-memory half. */
   live(): JournaledChild[] {
     return [...this.children.values()];
@@ -132,6 +194,7 @@ export class ChildJournal {
       ownerPid: process.pid,
       ownerStartedAt: this.ownerStartedAt,
       children: [...this.children.values()],
+      commandGroups: [...this.commandGroups.values()],
     };
     try {
       atomicWriteSync(this.path, JSON.stringify(file));
@@ -169,7 +232,7 @@ export function readChildJournal(
       );
       return null;
     }
-    return parsed;
+    return { ...parsed, commandGroups: commandGroupsOf(parsed, path, logger) };
   } catch (err) {
     logger?.warn(
       `could not parse the child journal at ${path}: ${errorText(err)} — ignoring it`,
@@ -198,6 +261,71 @@ function isChildJournalFile(value: unknown): value is ChildJournalFile {
     Array.isArray(children) &&
     children.every(isJournaledChild)
   );
+}
+
+/**
+ * The well-formed command-group entries of a journal. A malformed entry is
+ * dropped on its own: it must not cost the CLI groups beside it their reap.
+ */
+function commandGroupsOf(
+  file: ChildJournalFile,
+  path: string,
+  logger?: ChildJournalLogger,
+): JournaledCommandGroups[] {
+  const entries = (file as { commandGroups?: unknown }).commandGroups;
+  if (entries === undefined) {
+    return [];
+  }
+  if (!Array.isArray(entries)) {
+    logger?.warn(
+      `child journal at ${path} holds command groups in a shape this daemon does not understand — ignoring them`,
+    );
+    return [];
+  }
+  const valid = entries.filter(isJournaledCommandGroups);
+  if (valid.length < entries.length) {
+    logger?.warn(
+      `child journal at ${path} holds ${entries.length - valid.length} malformed command-group entries — ignoring them`,
+    );
+  }
+  return valid;
+}
+
+function isJournaledCommandGroups(
+  value: unknown,
+): value is JournaledCommandGroups {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const { cliPid, runId, groups } = value as Record<string, unknown>;
+  return (
+    isPositiveInteger(cliPid) &&
+    (runId === null || typeof runId === 'string') &&
+    Array.isArray(groups) &&
+    groups.every(isRecordedGroup)
+  );
+}
+
+function isRecordedGroup(value: unknown): value is RecordedGroup {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const { pgid, members } = value as Record<string, unknown>;
+  return (
+    isPositiveInteger(pgid) &&
+    Array.isArray(members) &&
+    members.every((member: unknown) => {
+      if (typeof member !== 'object' || member === null) {
+        return false;
+      }
+      const { pid, startedAt } = member as Record<string, unknown>;
+      return isPositiveInteger(pid) && typeof startedAt === 'number';
+    })
+  );
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
 
 function isJournaledChild(value: unknown): value is JournaledChild {

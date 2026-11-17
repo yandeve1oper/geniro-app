@@ -1,17 +1,28 @@
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { AgentEvent } from '../adapters/adapter.types';
+import {
+  type ChildJournalFile,
+  configureChildJournal,
+  resetChildJournal,
+} from '../utils/child-journal';
 import { scanPlainTable } from '../utils/run-process-scan';
 import { defaultSpawn, type SpawnFn } from '../utils/spawn-cli';
 import { SessionfulAdapter } from './__tests__/sessionful-adapter';
 import { ActionCommandRegistry } from './action-command.registry';
 import { AgentSessionRegistry } from './agent-session.registry';
 import { RunProcessAttribution } from './run-process-attribution.service';
-import { createRunProcessReaper } from './run-process-reaper.service';
+import {
+  createRunProcessReaper,
+  RunProcessReaper,
+} from './run-process-reaper.service';
+import { StrandedChildReaper } from './stranded-child-reaper.service';
 
 /** Unique per test process, so the table reads below never match a stranger. */
 const SECONDS = String(60_000 + (process.pid % 9_000));
@@ -137,5 +148,145 @@ describe('a CLI that dies without stopping its background commands', () => {
         }
       }
     }
+  }, 30_000);
+});
+
+describe('the command groups a CLI recorded, in the child journal', () => {
+  let dir: string | null = null;
+
+  afterEach(() => {
+    resetChildJournal();
+    for (const row of [...running(`sleep ${SECONDS}`), ...running(MCP_MARK)]) {
+      try {
+        process.kill(row.pid, 'SIGKILL');
+      } catch {
+        // Already gone.
+      }
+    }
+    if (dir !== null) {
+      rmSync(dir, { recursive: true, force: true });
+      dir = null;
+    }
+  });
+
+  function journalAt(): string {
+    dir = mkdtempSync(join(tmpdir(), 'geniro-left-'));
+    const path = join(dir, 'children.json');
+    configureChildJournal(path);
+    return path;
+  }
+
+  const read = (path: string): ChildJournalFile =>
+    JSON.parse(readFileSync(path, 'utf8')) as ChildJournalFile;
+
+  /**
+   * A CLI whose background command is running and journaled. With `wired`,
+   * the registry tells a reaper when the CLI dies, as a live daemon does;
+   * without it nothing does, as when the daemon itself is gone.
+   */
+  async function journaledCommand(path: string, wired: boolean) {
+    const registry = new AgentSessionRegistry();
+    if (wired) {
+      createRunProcessReaper(
+        new RunProcessAttribution('test-owner'),
+        registry,
+        [new ActionCommandRegistry()],
+      );
+    }
+    const adapter = new SessionfulAdapter(spawnFakeCli, {
+      listProcessGroupsFn: scanPlainTable,
+    });
+    registry.startTurn('run-1', adapter, { prompt: 'p', cwd: tmpdir() }, noop);
+    await waitFor(() => commandRows().length === 2, 10_000);
+    await waitFor(
+      () =>
+        (read(path).commandGroups ?? []).some((entry) =>
+          entry.groups.some((group) =>
+            group.members.some((member) =>
+              commandRows().some((row) => row.pid === member.pid),
+            ),
+          ),
+        ),
+      5_000,
+    );
+    const entry = read(path).commandGroups?.[0];
+    expect(entry?.runId).toBe('run-1');
+    return { registry, entry };
+  }
+
+  it('drops the entry once the live daemon has stopped what the dead CLI left', async () => {
+    const path = journalAt();
+    const { registry } = await journaledCommand(path, true);
+
+    process.kill(registry.peek('run-1')?.pid as number, 'SIGKILL');
+    await waitFor(
+      () =>
+        commandRows().length === 0 && read(path).commandGroups?.length === 0,
+      10_000,
+    );
+
+    expect(commandRows()).toEqual([]);
+    expect(read(path).commandGroups).toEqual([]);
+  }, 30_000);
+
+  it('has the next boot stop the commands of a daemon that died, after killing the CLI', async () => {
+    const path = journalAt();
+    await journaledCommand(path, false);
+    const left = read(path);
+    resetChildJournal();
+    // As the dead daemon left it: an owner the kernel no longer knows.
+    writeFileSync(path, JSON.stringify({ ...left, ownerStartedAt: 1 }));
+
+    new StrandedChildReaper(path, (runId, groups) =>
+      new RunProcessReaper(
+        new RunProcessAttribution('test-owner'),
+      ).stopLeftGroups(runId, groups),
+    ).reap();
+    await waitFor(
+      () => commandRows().length === 0 && running(MCP_MARK).length === 0,
+      10_000,
+    );
+
+    expect(commandRows()).toEqual([]);
+    expect(running(MCP_MARK)).toEqual([]);
+  }, 30_000);
+
+  it('leaves a journaled group alone once its recorded members are not the processes running now', async () => {
+    const path = journalAt();
+    const { registry } = await journaledCommand(path, false);
+    const left = read(path);
+    resetChildJournal();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...left,
+        ownerStartedAt: 1,
+        children: [],
+        commandGroups: left.commandGroups?.map((entry) => ({
+          ...entry,
+          groups: entry.groups.map((group) => ({
+            ...group,
+            members: group.members.map((member) => ({
+              ...member,
+              startedAt: member.startedAt - 3_600_000,
+            })),
+          })),
+        })),
+      }),
+    );
+    const stopped: (number[] | null)[] = [];
+
+    new StrandedChildReaper(path, async (runId, groups) => {
+      stopped.push(
+        await new RunProcessReaper(
+          new RunProcessAttribution('test-owner'),
+        ).stopLeftGroups(runId, groups),
+      );
+    }).reap();
+    await waitFor(() => stopped.length === 1, 10_000);
+
+    expect(stopped).toEqual([[]]);
+    expect(commandRows()).toHaveLength(2);
+    registry.closeAll();
   }, 30_000);
 });

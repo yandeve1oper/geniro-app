@@ -1,5 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  type ChildJournalFile,
+  configureChildJournal,
+  resetChildJournal,
+} from '../utils/child-journal';
 import { GROUP_KILL_GRACE_MS } from '../utils/kill-tree';
 import type { ProcessUsageRow } from '../utils/process-usage';
 import {
@@ -8,8 +17,11 @@ import {
   RUN_OWNER_ENV,
   type ScannedProcess,
 } from '../utils/run-process-scan';
+import type { StoppedCommands } from '../utils/spawn-cli';
+import type { AgentSessionRegistry } from './agent-session.registry';
 import { RunProcessAttribution } from './run-process-attribution.service';
 import {
+  createRunProcessReaper,
   isUnsignallable,
   RunProcessReaper,
   type RunProcessReaperOptions,
@@ -843,19 +855,19 @@ describe('RunProcessReaper.stopLeftGroups', () => {
     ]);
   });
 
-  it('stops nothing when the selection is over the cap or the table cannot be read', async () => {
+  it('stops nothing, and reports it could not act, when the selection is over the cap or the table cannot be read', async () => {
     const crowd = Array.from({ length: 300 }, (_, i) =>
       groupRow(1000 + i, 200, 200, 'worker'),
     );
     const over = leftBy([groupRow(200, 1, 200, 'sh'), ...crowd]);
-    expect(await over.reaper.stopLeftGroups(RUN, RECORDED)).toEqual([]);
+    expect(await over.reaper.stopLeftGroups(RUN, RECORDED)).toBeNull();
     expect(over.signals).toEqual([]);
     expect(over.logger.warn).toHaveBeenCalledWith(
       expect.stringContaining('more than a run can own — killed none'),
     );
 
     const unread = leftBy(null);
-    expect(await unread.reaper.stopLeftGroups(RUN, RECORDED)).toEqual([]);
+    expect(await unread.reaper.stopLeftGroups(RUN, RECORDED)).toBeNull();
     expect(unread.signals).toEqual([]);
     expect(unread.logger.warn).toHaveBeenCalledWith(
       `could not read the process table — left what run ${RUN}'s agent left running alone`,
@@ -875,7 +887,7 @@ describe('RunProcessReaper.stopLeftGroups', () => {
       { uid: null },
     );
 
-    expect(await subject.stopLeftGroups(RUN, RECORDED)).toEqual([]);
+    expect(await subject.stopLeftGroups(RUN, RECORDED)).toBeNull();
     expect(signals).toEqual([]);
     expect(logger.warn).toHaveBeenCalledWith(
       `could not tell which user the daemon runs as — left what run ${RUN}'s agent left running alone`,
@@ -892,7 +904,7 @@ describe('RunProcessReaper.stopLeftGroups', () => {
       listGroups: () => Promise.reject(new Error('ps exploded')),
     });
 
-    await expect(subject.stopLeftGroups(RUN, RECORDED)).resolves.toEqual([]);
+    await expect(subject.stopLeftGroups(RUN, RECORDED)).resolves.toBeNull();
     expect(signals).toEqual([]);
     expect(logger.warn).toHaveBeenCalledWith(
       `could not stop what run ${RUN}'s agent left running: ps exploded`,
@@ -906,5 +918,76 @@ describe('RunProcessReaper.stopLeftGroups', () => {
     expect(await subject.stopLeftGroups(RUN, [])).toEqual([]);
     expect(listGroups).not.toHaveBeenCalled();
     expect(waits).toEqual([]);
+  });
+});
+
+describe('createRunProcessReaper — the journaled record of what a dead CLI left', () => {
+  const GROUPS = [{ pgid: 200, members: [{ pid: 200, startedAt: 2000 }] }];
+  let dir: string;
+
+  afterEach(() => {
+    resetChildJournal();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function wired(options: RunProcessReaperOptions) {
+    dir = mkdtempSync(join(tmpdir(), 'geniro-reaper-journal-'));
+    const path = join(dir, 'children.json');
+    configureChildJournal(path).recordCommandGroups(42, RUN, GROUPS);
+    let tell: ((runId: string, left: StoppedCommands) => void) | null = null;
+    const sessions = {
+      onLeftCommands: (listener: NonNullable<typeof tell>) => {
+        tell = listener;
+      },
+      processRoots: () => [],
+    } as unknown as AgentSessionRegistry;
+    createRunProcessReaper(new RunProcessAttribution(OWNER), sessions, [], {
+      selfPid: SELF,
+      logger: { log: vi.fn(), warn: vi.fn() },
+      ...options,
+    });
+    const journaled = () =>
+      (JSON.parse(readFileSync(path, 'utf8')) as ChildJournalFile)
+        .commandGroups ?? [];
+    return {
+      journaled,
+      die: (pid?: number) =>
+        tell?.(RUN, { running: 1, commands: [], groups: GROUPS, pid }),
+    };
+  }
+
+  it('keeps the record while the stop runs, and drops it once the stop has run', async () => {
+    let graceOver: () => void = () => {};
+    const { journaled, die } = wired({
+      uid: UID,
+      wait: () =>
+        new Promise<void>((resolve) => {
+          graceOver = resolve;
+        }),
+      listGroups: () => Promise.resolve([]),
+    });
+
+    die(42);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(journaled().map((entry) => entry.cliPid)).toEqual([42]);
+
+    graceOver();
+    await vi.waitFor(() => expect(journaled()).toEqual([]));
+  });
+
+  it('keeps the record when the stop could not act, for the next boot', async () => {
+    const warn = vi.fn();
+    const { journaled, die } = wired({
+      uid: UID,
+      wait: () => Promise.resolve(),
+      listGroups: () => Promise.resolve(null),
+      logger: { log: vi.fn(), warn },
+    });
+
+    die(42);
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(journaled().map((entry) => entry.cliPid)).toEqual([42]);
   });
 });

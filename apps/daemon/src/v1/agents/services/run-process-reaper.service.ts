@@ -7,6 +7,7 @@ import {
   isSameProcess,
   parseStartTimes,
 } from '../../../utils/process-identity';
+import { currentChildJournal } from '../utils/child-journal';
 import { executableOf } from '../utils/command-text';
 import { GROUP_KILL_GRACE_MS } from '../utils/kill-tree';
 import { descendantsOf } from '../utils/process-descendants';
@@ -345,12 +346,14 @@ export class RunProcessReaper {
    * the groups were the agent's by structure when recorded, and codex runs its
    * commands on a pseudo-terminal of its own.
    *
-   * Never throws.
+   * Resolves to the pids it stopped, or null when it could not act at all
+   * (no uid, an unreadable table, a selection over the cap), so a caller
+   * keeping a record of the groups knows to keep it. Never throws.
    */
   async stopLeftGroups(
     runId: string,
     groups: readonly RecordedGroup[],
-  ): Promise<number[]> {
+  ): Promise<number[] | null> {
     if (groups.length === 0) {
       return [];
     }
@@ -362,14 +365,14 @@ export class RunProcessReaper {
         this.logger.warn(
           `could not tell which user the daemon runs as — left what run ${runId}'s agent left running alone`,
         );
-        return [];
+        return null;
       }
       const rows = await this.listGroups();
       if (rows === null) {
         this.logger.warn(
           `could not read the process table — left what run ${runId}'s agent left running alone`,
         );
-        return [];
+        return null;
       }
       const chain = daemonChain(rows, this.selfPid);
       const daemonGroup = rows.find((row) => row.pid === this.selfPid)?.pgid;
@@ -406,7 +409,7 @@ export class RunProcessReaper {
             .map((row) => `${row.pid} (${nameOf(row)})`)
             .join(', ')}`,
         );
-        return [];
+        return null;
       }
       return pidsOf(
         await this.stopTargets(
@@ -420,7 +423,7 @@ export class RunProcessReaper {
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return [];
+      return null;
     }
   }
 
@@ -694,7 +697,11 @@ export function createRunProcessReaper(
     ...options,
   });
   sessions.onLeftCommands((runId, left) => {
-    void reaper.stopLeftGroups(runId, left.groups);
+    void reaper.stopLeftGroups(runId, left.groups).then((stopped) => {
+      if (stopped !== null && left.pid !== undefined) {
+        currentChildJournal()?.forgetCommandGroups(left.pid);
+      }
+    });
   });
   return reaper;
 }

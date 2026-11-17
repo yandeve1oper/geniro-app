@@ -474,10 +474,12 @@ import { defaultSpawn } from './utils/spawn-cli';
       // Factory because the trailing options bag is a test seam, not a DI
       // token — and because the journal path is config, not a dependency.
       provide: StrandedChildReaper,
-      useFactory: () =>
+      useFactory: (reaper: RunProcessReaper) =>
         new StrandedChildReaper(
           join(environment.userDataDir, CHILD_JOURNAL_FILE_NAME),
+          (runId, groups) => reaper.stopLeftGroups(runId, groups),
         ),
+      inject: [RunProcessReaper],
     },
     {
       // Factories because the options bags are test seams, not DI tokens.

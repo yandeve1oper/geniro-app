@@ -49,6 +49,7 @@ describe('ChildJournal', () => {
       ownerPid: process.pid,
       ownerStartedAt: expect.any(Number),
       children: [{ pid: 4242, startedAt: 1_700, command: '/bin/claude' }],
+      commandGroups: [],
     });
   });
 
@@ -85,6 +86,73 @@ describe('ChildJournal', () => {
   });
 });
 
+describe('ChildJournal command groups', () => {
+  const group = { pgid: 300, members: [{ pid: 301, startedAt: 9_000 }] };
+
+  it('writes a session’s command groups under its CLI pid, with the run', () => {
+    const journal = new ChildJournal(path);
+    journal.record(30, 'claude');
+
+    journal.recordCommandGroups(30, 'run-a', [group]);
+
+    expect(readRaw().commandGroups).toEqual([
+      { cliPid: 30, runId: 'run-a', groups: [group] },
+    ]);
+    expect(readRaw().children.map((c) => c.pid)).toEqual([30]);
+  });
+
+  it('keeps a CLI’s command groups after the CLI itself is forgotten', () => {
+    const journal = new ChildJournal(path);
+    journal.record(30, 'claude');
+    journal.recordCommandGroups(30, 'run-a', [group]);
+
+    journal.forget(30);
+
+    expect(readRaw().children).toEqual([]);
+    expect(readRaw().commandGroups).toEqual([
+      { cliPid: 30, runId: 'run-a', groups: [group] },
+    ]);
+  });
+
+  it('replaces the record, and drops the entry when none are left', () => {
+    const journal = new ChildJournal(path);
+    const other = { pgid: 400, members: [{ pid: 401, startedAt: 1 }] };
+    journal.recordCommandGroups(30, null, [group]);
+
+    journal.recordCommandGroups(30, null, [other]);
+    expect(readRaw().commandGroups).toEqual([
+      { cliPid: 30, runId: null, groups: [other] },
+    ]);
+
+    journal.recordCommandGroups(30, null, []);
+    expect(readRaw().commandGroups).toEqual([]);
+  });
+
+  it('does not rewrite the file for a record that did not change', () => {
+    const journal = new ChildJournal(path);
+    journal.recordCommandGroups(30, 'run-a', [group]);
+    rmSync(path);
+
+    journal.recordCommandGroups(30, 'run-a', [
+      { pgid: 300, members: [{ pid: 301, startedAt: 9_000 }] },
+    ]);
+
+    expect(() => readRaw()).toThrow();
+  });
+
+  it('forgets a CLI’s command groups', () => {
+    const journal = new ChildJournal(path);
+    journal.recordCommandGroups(30, 'run-a', [group]);
+    journal.recordCommandGroups(31, 'run-b', [
+      { pgid: 500, members: [{ pid: 501, startedAt: 2 }] },
+    ]);
+
+    journal.forgetCommandGroups(30);
+
+    expect(readRaw().commandGroups?.map((entry) => entry.cliPid)).toEqual([31]);
+  });
+});
+
 describe('readChildJournal', () => {
   it('round-trips what a previous launch wrote', () => {
     new ChildJournal(path, undefined, () => 55).record(99, '/bin/cursor-agent');
@@ -94,7 +162,57 @@ describe('readChildJournal', () => {
       ownerPid: process.pid,
       ownerStartedAt: expect.any(Number),
       children: [{ pid: 99, startedAt: 55, command: '/bin/cursor-agent' }],
+      commandGroups: [],
     });
+  });
+
+  it('reads a journal an older daemon wrote, with no command groups', () => {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 2,
+        ownerPid: 1,
+        ownerStartedAt: 2,
+        children: [{ pid: 99, startedAt: 55, command: 'claude' }],
+      }),
+    );
+
+    expect(readChildJournal(path)).toEqual({
+      version: 2,
+      ownerPid: 1,
+      ownerStartedAt: 2,
+      children: [{ pid: 99, startedAt: 55, command: 'claude' }],
+      commandGroups: [],
+    });
+  });
+
+  it('drops a malformed command-group entry on its own, keeping the rest', () => {
+    const warn = vi.fn();
+    const good = {
+      cliPid: 7,
+      runId: 'run-1',
+      groups: [{ pgid: 70, members: [{ pid: 71, startedAt: 5 }] }],
+    };
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 2,
+        ownerPid: 1,
+        ownerStartedAt: 2,
+        children: [{ pid: 99, startedAt: 55, command: 'claude' }],
+        commandGroups: [good, { cliPid: 8, runId: 3, groups: [] }],
+      }),
+    );
+
+    const read = readChildJournal(path, { warn });
+
+    expect(read?.children).toEqual([
+      { pid: 99, startedAt: 55, command: 'claude' },
+    ]);
+    expect(read?.commandGroups).toEqual([good]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('1 malformed command-group entries'),
+    );
   });
 
   it('refuses a journal that does not say when its owner started', () => {

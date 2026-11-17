@@ -134,7 +134,7 @@ Bind, shutdown and config:
 
 - Binds `127.0.0.1` only, via the http-server extension's `host` / `portFallback` / `onListening` options. Preferred port `47615` (`DAEMON_PREFERRED_PORT`), falling back to a free port.
 - Shutdown is Nest-owned (`enableShutdownHooks`); `utils/pidfile.lifecycle.ts` clears the pidfile. Do not add signal handling to `main.ts`.
-- Config env, set by the UI: `GENIRO_USER_DATA` (fallback `~/.geniro`), `GENIRO_PORT`, `GENIRO_IDLE_EXIT_MS` (absent = never exit). The userData dir holds `geniro.db`, `daemon.json`, `daemon.lock`, `children.json`.
+- Config env, set by the UI: `GENIRO_USER_DATA` (fallback `~/.geniro`), `GENIRO_PORT`, `GENIRO_IDLE_EXIT_MS` (absent = never exit). The userData dir holds `geniro.db`, `daemon.json`, `daemon.lock`, `children.json` (the agent CLI groups this launch spawned and the command groups their sessions recorded, stopped at the next boot after a daemon death: `.claude/rules/daemon-run-processes.md`).
 - `GENIRO_SPEND_POLL_FLOOR_MS` is never set by the UI: start a dev or acceptance stand with it (e.g. `15000`; the supervisor's `...process.env` passes it on) so a thread read prices a cursor turn without the ten-minute floor of `PolledSpendService`. It replaces only the ambient floor, never under 5 s; absent or malformed keeps the ten minutes.
 
 Auth by prefix (`auth/token.guard.ts`): every route needs `Bearer <launch token>` except the public prefixes `/health` and `/v1/artifacts` (`PUBLIC_PREFIXES`, matched at segment boundaries).

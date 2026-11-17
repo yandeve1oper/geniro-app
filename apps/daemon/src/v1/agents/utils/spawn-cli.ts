@@ -14,7 +14,7 @@ import type {
 } from '../adapters/adapter.types';
 import { isUserQuestion } from './approval-answer';
 import { buildChildEnv } from './child-env';
-import { trackDetachedChild } from './child-journal';
+import { currentChildJournal, trackDetachedChild } from './child-journal';
 import { foldTurnComplete, foldUsage } from './fold-turn-complete';
 import { createGroupTerminator } from './kill-tree';
 import { MAX_BUFFERED_LINE_CHARS, NdjsonBuffer } from './ndjson-buffer';
@@ -30,7 +30,11 @@ import {
   recordedPidsRunning,
 } from './process-descendants';
 import { decodePsText } from './process-usage';
-import { type PlainProcess, scanPlainTable } from './run-process-scan';
+import {
+  type PlainProcess,
+  RUN_ID_ENV,
+  scanPlainTable,
+} from './run-process-scan';
 
 /**
  * The slice of a child process this module depends on. Narrower than node's
@@ -1302,6 +1306,22 @@ export function runCliSession(opts: CliSessionOptions): CliSession {
    * {@link recordCommandGroups}. A settle drops its entry.
    */
   const commandGroups = new Map<string, RecordedGroup[]>();
+  /**
+   * Mirror {@link commandGroups} into the child journal, so a daemon that dies
+   * leaves the next boot what to stop. Not once the process is gone: what
+   * was recorded then is the hand-over, dropped by whoever stops it.
+   */
+  const journalCommandGroups = (): void => {
+    const cliPid = child?.pid;
+    if (processGone || cliPid === undefined) {
+      return;
+    }
+    currentChildJournal()?.recordCommandGroups(
+      cliPid,
+      opts.env?.[RUN_ID_ENV] ?? null,
+      [...commandGroups.values()].flat(),
+    );
+  };
   let commandGroupTimer: ReturnType<typeof setTimeout> | null = null;
   let commandGroupRead: ReturnType<typeof setTimeout> | null = null;
   /** When {@link commandGroupRead} was armed — the burst's first ask. */
@@ -2662,6 +2682,7 @@ export function runCliSession(opts: CliSessionOptions): CliSession {
     ) {
       shellWork.delete(event.id);
       commandGroups.delete(event.id);
+      journalCommandGroups();
       return;
     }
     // A delegate's settle is the other twin's business — it is matched against
@@ -2678,6 +2699,7 @@ export function runCliSession(opts: CliSessionOptions): CliSession {
       delegateCommands.delete(event.id);
       delegateCommandCalls.delete(event.id);
       commandGroups.delete(event.id);
+      journalCommandGroups();
       for (const [call, unit] of unownedDelegateCommands) {
         if (unit === event.id) {
           unownedDelegateCommands.delete(call);
@@ -2694,6 +2716,7 @@ export function runCliSession(opts: CliSessionOptions): CliSession {
     }
     const wasRunning = runningShells.delete(event.id);
     commandGroups.delete(event.id);
+    journalCommandGroups();
     // ONCE per unit. A CLI is free to report one unit's end on both of its
     // terminal channels, and claude does: measured on a real background `sleep`
     // (2026-08-24, 2.1.237), `task_updated` and `task_notification` both landed
@@ -2915,6 +2938,7 @@ export function runCliSession(opts: CliSessionOptions): CliSession {
         // pruned here rather than growing for the life of the session.
         executeCalls.delete(id);
         commandGroups.delete(id);
+        journalCommandGroups();
         continue;
       }
       osDetachedShells.add(id);
@@ -3095,6 +3119,7 @@ export function runCliSession(opts: CliSessionOptions): CliSession {
         commandGroups.delete(workId);
       }
     }
+    journalCommandGroups();
   };
 
   /**
@@ -3782,6 +3807,7 @@ export function runCliSession(opts: CliSessionOptions): CliSession {
       running: runningShells.size + detachedDelegateCommands().length,
       commands: currentCommands(),
       groups: [...commandGroups.values()].flat(),
+      pid: child?.pid,
     };
     commandGroups.clear();
     osDetachedShells.clear();
@@ -4810,6 +4836,8 @@ export interface StoppedCommands {
    * their start times.
    */
   groups: readonly RecordedGroup[];
+  /** The CLI's pid: the key {@link groups} are journaled under until stopped. */
+  pid?: number;
 }
 
 export interface RunCliOptions {

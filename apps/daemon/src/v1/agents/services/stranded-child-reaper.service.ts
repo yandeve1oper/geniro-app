@@ -8,9 +8,20 @@ import {
 import {
   clearChildJournal,
   type JournaledChild,
+  type JournaledCommandGroups,
   readChildJournal,
 } from '../utils/child-journal';
 import { killProcessGroup } from '../utils/kill-tree';
+import type { RecordedGroup } from '../utils/process-descendants';
+
+/**
+ * Stops the groups a dead CLI's commands ran in, under the live rules
+ * (`RunProcessReaper.stopLeftGroups`). Never throws.
+ */
+export type LeftGroupStop = (
+  runId: string,
+  groups: readonly RecordedGroup[],
+) => Promise<unknown>;
 
 /** Test seams — the production factory passes nothing. */
 export interface StrandedChildReaperOptions {
@@ -20,7 +31,8 @@ export interface StrandedChildReaperOptions {
 }
 
 /**
- * Kill the process groups a previous daemon launch left running.
+ * Kill the process groups a previous daemon launch left running, and hand
+ * the groups its CLIs' commands ran in to {@link LeftGroupStop}.
  *
  * The counterpart to the child journal, and the ONLY mechanism that survives a
  * SIGKILL: `ProcessRegistry.onApplicationShutdown` reaps on the graceful path,
@@ -47,6 +59,7 @@ export class StrandedChildReaper {
 
   constructor(
     private readonly journalPath: string,
+    private readonly stopLeftGroups: LeftGroupStop,
     options: StrandedChildReaperOptions = {},
   ) {
     this.logger = options.logger ?? new Logger(StrandedChildReaper.name);
@@ -87,7 +100,9 @@ export class StrandedChildReaper {
       );
       return [];
     }
+    const left = journal.commandGroups ?? [];
     if (journal.children.length === 0) {
+      this.stopLeftCommands(left);
       clearChildJournal(this.journalPath);
       return [];
     }
@@ -114,7 +129,24 @@ export class StrandedChildReaper {
         `${skipped} journaled child group(s) were gone or could not be confirmed — left alone`,
       );
     }
+    this.stopLeftCommands(left);
     clearChildJournal(this.journalPath);
     return stranded;
+  }
+
+  /**
+   * Hand on the groups a previous launch's CLIs recorded their commands
+   * running in. Those run in sessions of their own, so the group kills above
+   * never reach them. Not awaited: the stop waits out a kill grace and reads
+   * the process table, and the boot must not wait on either.
+   */
+  private stopLeftCommands(left: readonly JournaledCommandGroups[]): void {
+    for (const entry of left) {
+      const runId = entry.runId ?? 'untagged';
+      this.logger.log(
+        `stopping what ${entry.groups.length} command group(s) of run ${runId}'s agent (pid ${entry.cliPid}) left running at a previous daemon launch`,
+      );
+      void this.stopLeftGroups(runId, entry.groups);
+    }
   }
 }

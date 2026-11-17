@@ -1,3 +1,7 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, type MockInstance, vi } from 'vitest';
 
 import { simulateSleep } from '../../../__tests__/simulate-sleep';
@@ -7,6 +11,11 @@ import type {
   CommandRecord,
   TurnIo,
 } from '../adapters/adapter.types';
+import {
+  type ChildJournalFile,
+  configureChildJournal,
+  resetChildJournal,
+} from './child-journal';
 import type { PlainProcess } from './run-process-scan';
 import {
   COMMAND_GROUP_READ_DELAY_MS,
@@ -6369,6 +6378,94 @@ describe('where a session’s detached commands run', () => {
     expect(groupsAtDeath(session, child)?.map((group) => group.pgid)).toEqual([
       200,
     ]);
+  });
+
+  describe('in the child journal', () => {
+    let dir: string;
+    let journalPath: string;
+
+    afterEach(() => {
+      resetChildJournal();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    function openJournaledSession(table: () => PlainProcess[]) {
+      dir = mkdtempSync(join(tmpdir(), 'geniro-journal-'));
+      journalPath = join(dir, 'children.json');
+      configureChildJournal(journalPath);
+      let reads = 0;
+      const { spawn, child } = fakeSpawn(new FakeChild(100));
+      const session = runCliSession({
+        command: 'claude',
+        args: [],
+        cwd: '/proj',
+        env: { GENIRO_RUN_ID: 'run-x' },
+        stdinLifetime: 'session',
+        mapper: resultOnDone,
+        spawn,
+        commandGroupReadDelayMs: 0,
+        listProcessGroups: () => {
+          reads += 1;
+          return Promise.resolve().then(table);
+        },
+      });
+      session.startTurn({ onEvent: () => {} });
+      return { session, child, reads: () => reads };
+    }
+
+    const journaled = () =>
+      (JSON.parse(readFileSync(journalPath, 'utf8')) as ChildJournalFile)
+        .commandGroups;
+
+    const TABLE = () => [
+      ...CLI_AND_MCP,
+      row(200, 100, 200, '/bin/sh -c sleep 600'),
+      row(201, 200, 200, 'sleep 600', 2_000_000),
+    ];
+
+    it('writes what a reading recorded under the CLI’s pid, with its run', async () => {
+      const { child, reads } = openJournaledSession(TABLE);
+      background(child, 'b1', 't1', 'sleep 600');
+      await afterReading(reads, 1);
+
+      expect(journaled()).toEqual([
+        {
+          cliPid: 100,
+          runId: 'run-x',
+          groups: [
+            {
+              pgid: 200,
+              members: [
+                { pid: 200, startedAt: 1_000_000 },
+                { pid: 201, startedAt: 2_000_000 },
+              ],
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('drops the entry once the CLI reports the command ended', async () => {
+      const { child, reads } = openJournaledSession(TABLE);
+      background(child, 'b1', 't1', 'sleep 600');
+      await afterReading(reads, 1);
+
+      line(child, { work: 'b1', phase: 'settled', unit: 'other' });
+
+      expect(journaled()).toEqual([]);
+    });
+
+    it('keeps the entry when the process dies, and names the CLI in the hand-over', async () => {
+      const { session, child, reads } = openJournaledSession(TABLE);
+      background(child, 'b1', 't1', 'sleep 600');
+      await afterReading(reads, 1);
+
+      child.emit('close', null, 'SIGKILL');
+      line(child, { work: 'b1', phase: 'settled', unit: 'other' });
+
+      expect(session.endedRunning?.pid).toBe(100);
+      expect(journaled()?.map((entry) => entry.cliPid)).toEqual([100]);
+    });
   });
 
   it('keeps a recorded group whose wrapper has exited, with what has joined it since', async () => {
