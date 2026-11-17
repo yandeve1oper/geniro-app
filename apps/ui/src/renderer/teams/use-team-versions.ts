@@ -8,18 +8,19 @@ import {
 
 /**
  * One team's versions table, read only while `slug` is set (the dialog is open)
- * and kept current after each recorded turn. Another team's table is never shown
- * under this one's name.
+ * and kept current after each recorded turn while the screen is on view
+ * (`active`). Another team's table is never shown under this one's name.
  */
 export function useTeamVersions(
   apis: DaemonApis | null,
   slug: string | null,
   client?: DaemonClient | null,
+  active = true,
 ): LiveDaemonRead<TeamVersionsDto> {
   return useLiveDaemonRead(
     apis,
     slug,
     (source) => source.stats.readTeamVersions({ slug: slug ?? '' }),
-    { client },
+    { client, active },
   );
 }

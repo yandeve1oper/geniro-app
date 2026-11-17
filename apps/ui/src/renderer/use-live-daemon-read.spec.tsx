@@ -39,12 +39,20 @@ function Probe(props: {
   read: (source: object) => Promise<string>;
   keepOnKeyChange?: boolean;
   liveClient?: DaemonClient | null;
+  active?: boolean;
 }): null {
   latest = useLiveDaemonRead(SOURCE, props.readKey, props.read, {
     client: props.liveClient ?? null,
     keepOnKeyChange: props.keepOnKeyChange,
+    active: props.active,
   });
   return null;
+}
+
+function recordTurn(): void {
+  act(() => {
+    recorded.forEach((listener) => listener());
+  });
 }
 
 /** A read whose answers the test releases by hand, one per call, in order. */
@@ -143,5 +151,113 @@ describe('useLiveDaemonRead', () => {
       vi.advanceTimersByTime(1);
     });
     expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  describe('while its screen is hidden', () => {
+    async function mountHidden(
+      read: (source: object) => Promise<string>,
+      live: DaemonClient,
+    ): Promise<void> {
+      await act(async () => {
+        root.render(<Probe readKey="dev-team" read={read} liveClient={live} />);
+      });
+      await act(async () => {
+        root.render(
+          <Probe
+            readKey="dev-team"
+            read={read}
+            liveClient={live}
+            active={false}
+          />,
+        );
+      });
+    }
+
+    async function show(
+      read: (source: object) => Promise<string>,
+      live: DaemonClient,
+    ): Promise<void> {
+      await act(async () => {
+        root.render(
+          <Probe readKey="dev-team" read={read} liveClient={live} active />,
+        );
+      });
+    }
+
+    it('does not read again on a recorded turn', async () => {
+      vi.useFakeTimers();
+      const read = vi.fn(async () => 'table');
+      const live = client();
+      await mountHidden(read, live);
+
+      recordTurn();
+      recordTurn();
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+
+      expect(read).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads once when shown again after turns it missed', async () => {
+      vi.useFakeTimers();
+      const read = vi.fn(async () => 'table');
+      const live = client();
+      await mountHidden(read, live);
+      recordTurn();
+      recordTurn();
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(read).toHaveBeenCalledTimes(1);
+
+      await show(read, live);
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+
+      expect(read).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads nothing when shown again with no turn missed', async () => {
+      vi.useFakeTimers();
+      const read = vi.fn(async () => 'table');
+      const live = client();
+      await mountHidden(read, live);
+
+      await show(read, live);
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+
+      expect(read).toHaveBeenCalledTimes(1);
+    });
+
+    it('holds a re-read whose beat ends after the screen was hidden', async () => {
+      vi.useFakeTimers();
+      const read = vi.fn(async () => 'table');
+      const live = client();
+      await act(async () => {
+        root.render(<Probe readKey="dev-team" read={read} liveClient={live} />);
+      });
+      recordTurn();
+      await act(async () => {
+        root.render(
+          <Probe
+            readKey="dev-team"
+            read={read}
+            liveClient={live}
+            active={false}
+          />,
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(read).toHaveBeenCalledTimes(1);
+
+      await show(read, live);
+      expect(read).toHaveBeenCalledTimes(2);
+    });
   });
 });

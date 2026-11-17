@@ -242,6 +242,7 @@ export function Teams({
     apis,
     versionsOpen ? activeSlug : null,
     client,
+    active,
   );
   const [renaming, setRenaming] = useState(false);
   // A delete in flight — suspends autosave (see `remove`).
@@ -283,7 +284,7 @@ export function Teams({
   } | null>(null);
   const [tab, setTab] = useState<TeamTab>('team');
   const [memoryQuery, setMemoryQuery] = useState('');
-  const teamStats = useTeamStats(apis, activeSlug, client);
+  const teamStats = useTeamStats(apis, activeSlug, client, active);
   const teamMemories = useTeamMemories(apis, activeSlug, memoryQuery, client);
   const appLessonsMode = useAppLessonsMode();
   /** A member just added, whose Name field takes the cursor. */

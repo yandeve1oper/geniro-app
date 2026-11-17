@@ -8,7 +8,7 @@ import type { DaemonClient } from './daemon-client';
  * team settles its nodes within a second or two of each other, each writing a
  * ledger row, so without it the last node would be the fifth refetch of one answer.
  */
-const LIVE_REFRESH_DEBOUNCE_MS = 750;
+export const LIVE_REFRESH_DEBOUNCE_MS = 750;
 
 export interface LiveDaemonRead<T> {
   data: T | null;
@@ -31,14 +31,22 @@ export interface LiveDaemonRead<T> {
  * (switching a period need not blank a page); without it a new key starts empty, so
  * one subject's figures are never shown under another's name. An answer that lands
  * after its key changed is dropped either way.
+ *
+ * `active` false (a screen kept mounted while hidden) holds every turn's re-read: a
+ * heavy figure read on each turn nobody looks at stalls the daemon for every other
+ * request. The screen reads once when shown again, and only if a turn was missed.
  */
 export function useLiveDaemonRead<S extends object, T>(
   source: S | null,
   key: string | null,
   read: (source: S) => Promise<T>,
-  options: { client?: DaemonClient | null; keepOnKeyChange?: boolean } = {},
+  options: {
+    client?: DaemonClient | null;
+    keepOnKeyChange?: boolean;
+    active?: boolean;
+  } = {},
 ): LiveDaemonRead<T> {
-  const { client, keepOnKeyChange = false } = options;
+  const { client, keepOnKeyChange = false, active = true } = options;
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -61,12 +69,16 @@ export function useLiveDaemonRead<S extends object, T>(
   // the key and the source, not every render that produced a new closure.
   const readRef = useRef(read);
   readRef.current = read;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const missedRef = useRef(false);
 
   useEffect(() => {
     if (!source || key === null) {
       return;
     }
     let cancelled = false;
+    missedRef.current = false;
     setError(null);
     readRef
       .current(source)
@@ -103,7 +115,11 @@ export function useLiveDaemonRead<S extends object, T>(
       }
       timer = setTimeout(() => {
         timer = null;
-        reloadRef.current();
+        if (activeRef.current) {
+          reloadRef.current();
+        } else {
+          missedRef.current = true;
+        }
       }, LIVE_REFRESH_DEBOUNCE_MS);
     });
     return () => {
@@ -113,6 +129,13 @@ export function useLiveDaemonRead<S extends object, T>(
       }
     };
   }, [client, reading]);
+
+  useEffect(() => {
+    if (active && missedRef.current) {
+      missedRef.current = false;
+      reloadRef.current();
+    }
+  }, [active]);
 
   return { data, loading, error, reload, dismiss };
 }

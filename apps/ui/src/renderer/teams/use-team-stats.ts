@@ -8,18 +8,19 @@ import {
 
 /**
  * One team's statistics, read only while `slug` is set and kept current after
- * each recorded turn. Another team's figures are never shown under this one's
- * name.
+ * each recorded turn while the screen is on view (`active`). Another team's
+ * figures are never shown under this one's name.
  */
 export function useTeamStats(
   apis: DaemonApis | null,
   slug: string | null,
   client?: DaemonClient | null,
+  active = true,
 ): LiveDaemonRead<TeamStatsDto> {
   return useLiveDaemonRead(
     apis,
     slug,
     (source) => source.stats.readTeamStats({ slug: slug ?? '' }),
-    { client },
+    { client, active },
   );
 }
