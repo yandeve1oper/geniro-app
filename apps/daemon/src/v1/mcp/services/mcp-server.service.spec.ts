@@ -126,6 +126,7 @@ import { hostEndpointPath } from '../../agents/utils/host-endpoint';
 import { MAX_HOST_QUESTION_TITLE_LENGTH } from '../../agents/utils/host-question';
 import { RemoteImageError } from '../../agents/utils/remote-image';
 import type { BrowserOp } from '../../browser/browser.types';
+import { BROWSER_NO_WINDOW_REASON } from '../../browser/services/browser-bridge.service';
 import type { KnowledgeService } from '../../knowledge/services/knowledge.service';
 import type { LessonCheckService } from '../../lessons/services/lesson-check.service';
 import type { LessonFilingService } from '../../lessons/services/lesson-filing.service';
@@ -7025,16 +7026,17 @@ describe('McpServerService — the in-app browser tools', () => {
   });
 
   it('answers at once when no window is registered', async () => {
-    const closed =
-      "Geniro's window on the Mac is closed — the browser is unavailable.";
-    const { subject } = browserService({ status: 'failed', reason: closed });
+    const { subject } = browserService({
+      status: 'failed',
+      reason: BROWSER_NO_WINDOW_REASON,
+    });
 
     const answer = await callTool(subject, HOST_BROWSER_SNAPSHOT_TOOL, {
       tab: 't1',
     });
 
     expect(answer).toEqual({
-      content: [{ type: 'text', text: closed }],
+      content: [{ type: 'text', text: BROWSER_NO_WINDOW_REASON }],
       isError: true,
     });
   });

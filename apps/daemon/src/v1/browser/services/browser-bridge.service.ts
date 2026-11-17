@@ -10,8 +10,10 @@ import {
   type BrowserRequest,
 } from '../browser.types';
 
-export const BROWSER_WINDOW_CLOSED_REASON =
-  "Geniro's window on the Mac is closed — the browser is unavailable.";
+export const BROWSER_NO_WINDOW_REASON =
+  "No Geniro window on the Mac is connected to the daemon — open or reload Geniro's window, then try again.";
+export const BROWSER_WINDOW_DISCONNECTED_REASON =
+  "Geniro's window disconnected before the browser answered — try again.";
 export const BROWSER_TIMEOUT_REASON = `The browser did not answer within ${BROWSER_REQUEST_TIMEOUT_MS / 1000} s.`;
 export const BROWSER_CANCELLED_REASON = 'The call was cancelled.';
 
@@ -29,15 +31,15 @@ interface PendingRequest {
 
 /**
  * The daemon's one line to the Mac's window: a browser operation goes out as
- * `browser_request` to the single socket that registered itself, and its
- * `browser_reply` settles the promise. Never a room, because the operation acts
- * with the Mac's own browser.
+ * `browser_request` to the most recent desktop socket that offered to host it
+ * and is still connected, and its `browser_reply` settles the promise. Never a
+ * room, because the operation acts with the Mac's own browser.
  */
 @Injectable()
 export class BrowserBridgeService {
   private readonly logger = new Logger(BrowserBridgeService.name);
   private emitter: BrowserRequestEmitter | null = null;
-  private hostSocketId: string | null = null;
+  private readonly hostSocketIds: string[] = [];
   private readonly pending = new Map<string, PendingRequest>();
 
   attachEmitter(emit: BrowserRequestEmitter): void {
@@ -45,34 +47,34 @@ export class BrowserBridgeService {
   }
 
   register(socketId: string): void {
-    this.hostSocketId = socketId;
+    this.forget(socketId);
+    this.hostSocketIds.push(socketId);
   }
 
   unregister(socketId: string): void {
-    if (this.hostSocketId !== socketId) {
+    if (!this.forget(socketId)) {
       return;
     }
-    this.hostSocketId = null;
     this.failWhere(
       (entry) => entry.socketId === socketId,
-      BROWSER_WINDOW_CLOSED_REASON,
+      BROWSER_WINDOW_DISCONNECTED_REASON,
     );
   }
 
   hasHost(): boolean {
-    return this.hostSocketId !== null && this.emitter !== null;
+    return this.hostSocketId() !== null && this.emitter !== null;
   }
 
   request(
     req: Omit<BrowserRequest, 'id'>,
     signal?: AbortSignal,
   ): Promise<BrowserOutcome> {
-    const socketId = this.hostSocketId;
+    const socketId = this.hostSocketId();
     const emit = this.emitter;
     if (socketId === null || emit === null) {
       return Promise.resolve({
         status: 'failed',
-        reason: BROWSER_WINDOW_CLOSED_REASON,
+        reason: BROWSER_NO_WINDOW_REASON,
       });
     }
     if (signal?.aborted) {
@@ -106,13 +108,16 @@ export class BrowserBridgeService {
         this.logger.warn(
           `failed to send browser_request: ${err instanceof Error ? err.message : String(err)}`,
         );
-        settle({ status: 'failed', reason: BROWSER_WINDOW_CLOSED_REASON });
+        settle({
+          status: 'failed',
+          reason: BROWSER_WINDOW_DISCONNECTED_REASON,
+        });
       }
     });
   }
 
   reply(socketId: string, raw: unknown): void {
-    if (socketId !== this.hostSocketId) {
+    if (!this.hostSocketIds.includes(socketId)) {
       this.logger.debug('ignored a browser_reply from an unregistered socket');
       return;
     }
@@ -141,6 +146,19 @@ export class BrowserBridgeService {
 
   rejectRun(runId: string, reason: string): void {
     this.failWhere((entry) => entry.runId === runId, reason);
+  }
+
+  private hostSocketId(): string | null {
+    return this.hostSocketIds.at(-1) ?? null;
+  }
+
+  private forget(socketId: string): boolean {
+    const index = this.hostSocketIds.indexOf(socketId);
+    if (index === -1) {
+      return false;
+    }
+    this.hostSocketIds.splice(index, 1);
+    return true;
   }
 
   private failWhere(
