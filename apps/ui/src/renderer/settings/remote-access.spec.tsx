@@ -173,7 +173,7 @@ describe('RemoteAccess', () => {
     expect(labels()).toHaveLength(5);
 
     const toggle = container.querySelector(
-      '[data-slot="devices-show-all"]',
+      '[data-slot="show-all"]',
     ) as HTMLButtonElement;
     expect(toggle.textContent).toBe('Show all 7 devices');
     await act(async () => toggle.click());
@@ -703,5 +703,52 @@ describe('RemoteAccess — staying current without a press', () => {
     expect(container.textContent).toContain(
       'remote access is not wired for this launch',
     );
+  });
+});
+
+describe('RemoteAccess — explanations', () => {
+  const aboutTrigger = (label: string): Element | null =>
+    container.querySelector(`button[aria-label="About ${label}"]`);
+
+  it('explains the switch while off', async () => {
+    await mount();
+    expect(aboutTrigger('Remote access')).not.toBeNull();
+  });
+
+  it('explains every block once listening, and titles its buttons', async () => {
+    geniro.getRemoteAccess.mockResolvedValue(LISTENING);
+    await mount();
+
+    for (const label of [
+      'Links',
+      'Internet address',
+      'Pairing code',
+      'Paired devices',
+      'Devices',
+    ]) {
+      expect(aboutTrigger(label), label).not.toBeNull();
+    }
+    const regenerate = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Regenerate'),
+    )!;
+    expect(regenerate.title).toContain('Replace the pairing code');
+    const tunnel = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Get an address'),
+    )!;
+    expect(tunnel.title).toContain('Start a tunnel');
+  });
+
+  it('counts the paired devices it lists', async () => {
+    const [device] = LISTENING.devices;
+    geniro.getRemoteAccess.mockResolvedValue({
+      ...LISTENING,
+      devices: Array.from({ length: 7 }, (_, index) => ({
+        ...device!,
+        id: `device-${index}`,
+        label: `Phone ${index}`,
+      })),
+    });
+    await mount();
+    expect(container.textContent).toContain('7 devices are paired.');
   });
 });

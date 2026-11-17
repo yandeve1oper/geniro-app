@@ -2214,3 +2214,58 @@ describe('Settings — sections as separate pages on a phone', () => {
     expect(back()).toBeNull();
   });
 });
+
+describe('Settings explains itself', () => {
+  it('gives every labelled setting on General a "?" with its explanation', async () => {
+    await mount('general');
+
+    const labels = [
+      ...container.querySelectorAll('[data-slot="settings-panel-row"] label'),
+    ].map((label) => label.textContent ?? '');
+    expect(labels.length).toBeGreaterThan(8);
+    for (const label of labels) {
+      expect(
+        container.querySelector(`button[aria-label="About ${label}"]`),
+        label,
+      ).not.toBeNull();
+    }
+  });
+
+  it('names each General group, with its own "?"', async () => {
+    await mount('general');
+
+    const groups = [
+      ...container.querySelectorAll('[data-slot="settings-group"]'),
+    ].map((group) => group.getAttribute('aria-label'));
+    expect(groups).toEqual([
+      'Agents',
+      'Notifications',
+      'Appearance',
+      'Archive',
+      'Transcript',
+      'Custom instructions',
+      'Updates',
+      'Diagnostics',
+    ]);
+    for (const group of groups) {
+      expect(
+        container.querySelector(`button[aria-label="About ${group}"]`),
+      ).not.toBeNull();
+    }
+  });
+
+  it('marks every section in the nav with an icon', async () => {
+    await mount('general');
+
+    const items = [
+      ...container.querySelectorAll(
+        'nav[aria-label="Settings sections"] button',
+      ),
+    ];
+    expect(items).toHaveLength(7);
+    for (const item of items) {
+      // The section's own icon, beside the phone-only chevron.
+      expect(item.querySelectorAll('svg[aria-hidden="true"]')).toHaveLength(2);
+    }
+  });
+});

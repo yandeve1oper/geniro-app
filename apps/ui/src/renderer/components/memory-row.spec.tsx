@@ -344,4 +344,25 @@ describe('MemoryRow', () => {
         .hasAttribute('data-focused'),
     ).toBe(true);
   });
+
+  it('explains Approve with a title and every menu item with a sublabel', async () => {
+    const el = row('pending');
+
+    expect(
+      [...el.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Approve',
+      )?.title,
+    ).toBe('Approve it: from now on agents can find this entry.');
+    el.querySelector<HTMLButtonElement>(
+      'button[aria-label^="Actions for"]',
+    )!.click();
+    await act(async () => undefined);
+    const subs = [
+      ...document.querySelectorAll('[data-slot="menu-item-sublabel"]'),
+    ].map((node) => node.textContent);
+    expect(subs).toEqual([
+      'Change its title, text or scope.',
+      'Hide it from agents. Restore brings it back.',
+    ]);
+  });
 });

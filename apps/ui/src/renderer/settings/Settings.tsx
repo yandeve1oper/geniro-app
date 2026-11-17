@@ -1,5 +1,24 @@
 import { cva } from 'class-variance-authority';
-import { Check, ChevronRight } from 'lucide-react';
+import {
+  Archive,
+  Bell,
+  BookOpen,
+  Bot,
+  Brain,
+  Bug,
+  Check,
+  ChevronRight,
+  Download,
+  HardDrive,
+  type LucideIcon,
+  MessageSquareText,
+  Palette,
+  ScrollText,
+  Share2,
+  SlidersHorizontal,
+  Smartphone,
+  Zap,
+} from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { DaemonHandle } from '../../shared/contracts';
@@ -39,6 +58,7 @@ import { AgentConfigList } from '../components/agent-config-list';
 import { ErrorText } from '../components/error-text';
 import { ExpandableTextarea } from '../components/expandable-textarea';
 import { InstructionPreview } from '../components/instruction-preview';
+import { SettingsGroup, SettingsGroups } from '../components/settings-group';
 import { SettingsPanel, SettingsPanelRow } from '../components/settings-panel';
 import { ThemePicker } from '../components/theme-picker';
 import { Badge } from '../components/ui/badge';
@@ -226,6 +246,29 @@ const sectionCountVariants = cva(
     },
   },
 );
+
+const SECTION_ICON: Record<SettingsSection, LucideIcon> = {
+  general: SlidersHorizontal,
+  'fast-actions': Zap,
+  'remote-access': Smartphone,
+  sharing: Share2,
+  memory: Brain,
+  knowledge: BookOpen,
+  storage: HardDrive,
+};
+
+function SectionIcon({
+  section,
+  className,
+}: {
+  section: SettingsSection;
+  className?: string;
+}): React.JSX.Element {
+  const Icon = SECTION_ICON[section];
+  return (
+    <Icon aria-hidden="true" className={cn('size-4 shrink-0', className)} />
+  );
+}
 
 const SECTION_LABEL: Record<SettingsSection, string> = {
   general: 'General',
@@ -1314,13 +1357,17 @@ export function Settings({
               onSectionOpenChange?.(true);
             }}
             className={cn(
-              'flex w-full items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors',
+              'group/section flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-sm transition-colors',
               // A full-width row a thumb can hit, leading to its page.
               'max-sm:px-3 max-sm:py-3 max-sm:text-base',
               section === key
                 ? 'bg-sidebar-accent font-medium text-foreground max-sm:bg-transparent max-sm:font-normal'
                 : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground max-sm:text-foreground',
             )}>
+            <SectionIcon
+              section={key}
+              className={cn(section === key && 'text-primary')}
+            />
             {SECTION_LABEL[key]}
             {key === 'general' && cliUpdatesAvailable > 0 ? (
               <span
@@ -1356,20 +1403,27 @@ export function Settings({
           !sectionOpen && 'max-sm:hidden',
         )}
         style={{ scrollbarGutter: 'stable' }}>
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-6 py-8 max-sm:gap-5 max-sm:px-4 max-sm:py-5">
-          <header className="flex flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <h1 className="text-2xl">{SECTION_LABEL[section]}</h1>
-              {savedFlash && !error ? (
-                <span className="flex items-center gap-1.5 text-sm text-success">
-                  <Check className="size-4" />
-                  Saved
-                </span>
-              ) : null}
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-8 py-8 max-sm:gap-5 max-sm:px-4 max-sm:py-5">
+          <header className="flex items-start gap-4 border-b border-border pb-6 max-sm:pb-4">
+            <span
+              aria-hidden="true"
+              className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary max-sm:hidden">
+              <SectionIcon section={section} className="size-5" />
+            </span>
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <div className="flex items-center justify-between gap-3">
+                <h1 className="text-2xl">{SECTION_LABEL[section]}</h1>
+                {savedFlash && !error ? (
+                  <span className="flex items-center gap-1.5 text-sm text-success">
+                    <Check className="size-4" />
+                    Saved
+                  </span>
+                ) : null}
+              </div>
+              <p className="max-w-3xl text-sm text-muted-foreground">
+                {SECTION_NOTE[section]}
+              </p>
             </div>
-            <p className="text-sm text-muted-foreground">
-              {SECTION_NOTE[section]}
-            </p>
           </header>
 
           {section === 'general' && onOpenOnboarding ? (
@@ -1380,7 +1434,10 @@ export function Settings({
                   Revisit agent setup, profiles, and your first team.
                 </p>
               </div>
-              <Button variant="outline" onClick={onOpenOnboarding}>
+              <Button
+                variant="outline"
+                title="Open the guide that walks you through installing and signing in to agents, profiles and your first team. Nothing you already set is changed."
+                onClick={onOpenOnboarding}>
                 Open setup guide
               </Button>
             </div>
@@ -1426,80 +1483,105 @@ export function Settings({
                 </ErrorText>
               ) : null}
 
-              <section className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-medium">Agents</h2>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void recheckClis()}>
-                    Re-check
-                  </Button>
-                </div>
-                <AgentConfigList
-                  clis={clis}
-                  open={open}
-                  onToggle={toggle}
-                  binaryPaths={binaryPaths}
-                  onBinaryPathChange={(kind, value) => {
-                    setBinaryPaths((prev) => ({ ...prev, [kind]: value }));
-                    schedulePathPersist();
-                  }}
-                  onBrowse={(kind) => void browse(kind)}
-                  // Withheld until the daemon answers: `AgentConfigList` renders no
-                  // control for an absent handler, which is the honest state on a slow
-                  // launch. Passed unconditionally, the button would resolve nothing
-                  // and report nothing — `signInToCli` cannot even set an error,
-                  // because it has no transport to fail on.
-                  onSignIn={apis ? (kind) => void signInToCli(kind) : undefined}
-                  onSignOut={
-                    apis ? (kind) => void signOutFromCli(kind) : undefined
+              <SettingsGroups>
+                <SettingsGroup
+                  icon={<Bot />}
+                  title="Agents"
+                  description="The coding agents Geniro runs for you, and how long they stay ready."
+                  hint={
+                    <>
+                      <p>
+                        Geniro does not have its own AI. It drives the agent
+                        programs installed on this Mac, listed below, and each
+                        one uses your own account with its vendor.
+                      </p>
+                      <p>
+                        Each card shows whether that program is installed, its
+                        version and whether you are signed in. Open a card to
+                        install, update, sign in, or point Geniro at a specific
+                        copy of the program.
+                      </p>
+                    </>
                   }
-                  // The press is answered before the daemon replies. That reply is
-                  // held until the CLI prints its URL — measured at 4001ms — and the
-                  // panel below only appears once it lands, so without this the
-                  // button sits unchanged while a browser tab opens behind the
-                  // window.
-                  signingIn={
-                    login.starting?.server === null ? login.starting.kind : null
-                  }
-                  // Needs no daemon, unlike the account controls above: this
-                  // runs the user's own binary through main, so it works on a
-                  // launch where the daemon has not answered yet.
-                  onUpdate={(kind) => void cliUpdates.update(kind)}
-                  updating={cliUpdates.updating}
-                  updateResults={cliUpdates.results}
-                  // Like Update, needs no daemon: main runs the vendor's
-                  // installer. Only the sign-in that follows does.
-                  onInstall={(kind) => void cliInstall.install(kind)}
-                  installing={cliInstall.installing}
-                  installResults={cliInstall.results}
-                  profileScopedKinds={profileScopedKinds}
-                  // Whatever is true of ONE CLI lives on that CLI's card —
-                  // built from `GET /v1/capabilities` `options[]`, never a
-                  // hand-written switch per CLI — so a CLI's settings are
-                  // never split between its card and a section elsewhere.
-                  agentSettings={Object.fromEntries(
-                    CLI_KINDS.map((kind) => [
-                      kind,
-                      <Fragment key={kind}>
-                        {(agentOptionsByAgent.get(kind) ?? []).map((option) => (
-                          <AgentSetting
-                            key={option.id}
-                            id={`settings-agent-option-${kind}-${option.id}`}
-                            checked={
-                              agentOptions[kind]?.[option.id] ??
-                              option.defaultValue
-                            }
-                            onCheckedChange={(next) =>
-                              onToggleAgentOption(kind, option.id, next)
-                            }
-                            label={option.label}
-                            note={option.description}
-                          />
-                        ))}
-                        {/* Asked for HERE rather than as a section of its own
+                  actions={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      title="Look for each agent program on this Mac again: whether it is installed, its version and whether you are signed in. Use it after installing or signing in from a terminal."
+                      onClick={() => void recheckClis()}>
+                      Re-check
+                    </Button>
+                  }>
+                  <AgentConfigList
+                    clis={clis}
+                    open={open}
+                    onToggle={toggle}
+                    binaryPaths={binaryPaths}
+                    onBinaryPathChange={(kind, value) => {
+                      setBinaryPaths((prev) => ({ ...prev, [kind]: value }));
+                      schedulePathPersist();
+                    }}
+                    onBrowse={(kind) => void browse(kind)}
+                    // Withheld until the daemon answers: `AgentConfigList` renders no
+                    // control for an absent handler, which is the honest state on a slow
+                    // launch. Passed unconditionally, the button would resolve nothing
+                    // and report nothing — `signInToCli` cannot even set an error,
+                    // because it has no transport to fail on.
+                    onSignIn={
+                      apis ? (kind) => void signInToCli(kind) : undefined
+                    }
+                    onSignOut={
+                      apis ? (kind) => void signOutFromCli(kind) : undefined
+                    }
+                    // The press is answered before the daemon replies. That reply is
+                    // held until the CLI prints its URL — measured at 4001ms — and the
+                    // panel below only appears once it lands, so without this the
+                    // button sits unchanged while a browser tab opens behind the
+                    // window.
+                    signingIn={
+                      login.starting?.server === null
+                        ? login.starting.kind
+                        : null
+                    }
+                    // Needs no daemon, unlike the account controls above: this
+                    // runs the user's own binary through main, so it works on a
+                    // launch where the daemon has not answered yet.
+                    onUpdate={(kind) => void cliUpdates.update(kind)}
+                    updating={cliUpdates.updating}
+                    updateResults={cliUpdates.results}
+                    // Like Update, needs no daemon: main runs the vendor's
+                    // installer. Only the sign-in that follows does.
+                    onInstall={(kind) => void cliInstall.install(kind)}
+                    installing={cliInstall.installing}
+                    installResults={cliInstall.results}
+                    profileScopedKinds={profileScopedKinds}
+                    // Whatever is true of ONE CLI lives on that CLI's card —
+                    // built from `GET /v1/capabilities` `options[]`, never a
+                    // hand-written switch per CLI — so a CLI's settings are
+                    // never split between its card and a section elsewhere.
+                    agentSettings={Object.fromEntries(
+                      CLI_KINDS.map((kind) => [
+                        kind,
+                        <Fragment key={kind}>
+                          {(agentOptionsByAgent.get(kind) ?? []).map(
+                            (option) => (
+                              <AgentSetting
+                                key={option.id}
+                                id={`settings-agent-option-${kind}-${option.id}`}
+                                checked={
+                                  agentOptions[kind]?.[option.id] ??
+                                  option.defaultValue
+                                }
+                                onCheckedChange={(next) =>
+                                  onToggleAgentOption(kind, option.id, next)
+                                }
+                                label={option.label}
+                                note={option.description}
+                              />
+                            ),
+                          )}
+                          {/* Asked for HERE rather than as a section of its own
                             ("should be in claude settings menu"), which is also
                             the rule the switches above already follow. Rendered
                             on every card whose CLI can actually take a config
@@ -1507,199 +1589,206 @@ export function Settings({
                             allowlisted name — which is what withholds it on a
                             card whose picker `configDirReasonFor` already
                             renders inert. */}
-                        {configDirCapability.unavailableReasonFor(kind) ===
-                        null ? (
-                          <ConfigProfileList
-                            agent={kind}
-                            profiles={configProfiles.filter(
-                              (profile) => profile.agent === kind,
-                            )}
-                            onChange={(next) =>
-                              persistConfigProfiles(
-                                [
-                                  ...configProfiles.filter(
-                                    (profile) => profile.agent !== kind,
-                                  ),
-                                  ...next,
-                                ],
-                                configProfiles,
-                              )
-                            }
-                            onPickDirectory={() =>
-                              window.geniro.pickProjectFolder()
-                            }
-                            // Withheld until the daemon answers, on the card's
-                            // own rule above: an absent handler renders no
-                            // control, which is the honest state on a slow launch.
-                            onSignIn={
-                              apis
-                                ? (dir) => void signInToCli(kind, dir)
-                                : undefined
-                            }
-                            onSignOut={
-                              apis
-                                ? (dir) => void signOutFromCli(kind, dir)
-                                : undefined
-                            }
-                            onCreateNew={
-                              apis && !remote
-                                ? () => setNewConfigFor(kind)
-                                : undefined
-                            }
-                            signingIn={login.starting?.configDir ?? null}
-                            // The progress panel is the CARD's, drawn under this
-                            // list for every sign-in on it — so a flow still
-                            // RUNNING there blocks a row as much as one starting.
-                            // A FINISHED one does not: the panel stays up until
-                            // Dismiss, so blocking on it would leave every row
-                            // dead after the first sign-in succeeded.
-                            busy={
-                              login.starting !== null ||
-                              (login.login !== null &&
-                                !isLoginOver(login.login.session))
-                            }
-                            logins={
-                              clis?.find((cli) => cli.kind === kind)
-                                ?.profileLogins
-                            }
-                          />
-                        ) : null}
-                      </Fragment>,
-                    ]),
-                  )}
-                  login={
-                    login.login
-                      ? {
-                          kind: login.login.kind,
-                          session: login.login.session,
-                          error: login.error,
-                          onSubmitCode: (code) => void login.submitCode(code),
-                          onCancel: () => void login.cancel(),
-                          onDismiss: login.dismiss,
-                        }
-                      : null
-                  }
-                />
-                {newConfigFor !== null ? (
-                  <NewConfigProfileDialog
-                    agent={newConfigFor}
-                    open
-                    sources={newConfigSources}
-                    readSource={readNewConfigSource}
-                    onCreate={(request) =>
-                      createConfiguration(newConfigFor, request)
+                          {configDirCapability.unavailableReasonFor(kind) ===
+                          null ? (
+                            <ConfigProfileList
+                              agent={kind}
+                              profiles={configProfiles.filter(
+                                (profile) => profile.agent === kind,
+                              )}
+                              onChange={(next) =>
+                                persistConfigProfiles(
+                                  [
+                                    ...configProfiles.filter(
+                                      (profile) => profile.agent !== kind,
+                                    ),
+                                    ...next,
+                                  ],
+                                  configProfiles,
+                                )
+                              }
+                              onPickDirectory={() =>
+                                window.geniro.pickProjectFolder()
+                              }
+                              // Withheld until the daemon answers, on the card's
+                              // own rule above: an absent handler renders no
+                              // control, which is the honest state on a slow launch.
+                              onSignIn={
+                                apis
+                                  ? (dir) => void signInToCli(kind, dir)
+                                  : undefined
+                              }
+                              onSignOut={
+                                apis
+                                  ? (dir) => void signOutFromCli(kind, dir)
+                                  : undefined
+                              }
+                              onCreateNew={
+                                apis && !remote
+                                  ? () => setNewConfigFor(kind)
+                                  : undefined
+                              }
+                              signingIn={login.starting?.configDir ?? null}
+                              // The progress panel is the CARD's, drawn under this
+                              // list for every sign-in on it — so a flow still
+                              // RUNNING there blocks a row as much as one starting.
+                              // A FINISHED one does not: the panel stays up until
+                              // Dismiss, so blocking on it would leave every row
+                              // dead after the first sign-in succeeded.
+                              busy={
+                                login.starting !== null ||
+                                (login.login !== null &&
+                                  !isLoginOver(login.login.session))
+                              }
+                              logins={
+                                clis?.find((cli) => cli.kind === kind)
+                                  ?.profileLogins
+                              }
+                            />
+                          ) : null}
+                        </Fragment>,
+                      ]),
+                    )}
+                    login={
+                      login.login
+                        ? {
+                            kind: login.login.kind,
+                            session: login.login.session,
+                            error: login.error,
+                            onSubmitCode: (code) => void login.submitCode(code),
+                            onCancel: () => void login.cancel(),
+                            onDismiss: login.dismiss,
+                          }
+                        : null
                     }
-                    onClose={() => setNewConfigFor(null)}
                   />
-                ) : null}
-                {/* Beside the cards rather than in one: the window is the same
-                    for every CLI, and for a card's run as for a chat. */}
-                <SettingsPanel>
-                  <SettingsPanelRow
-                    label="Keep an idle agent running for"
-                    hint="How long an agent's process, with its MCP servers, stays open after its last message. Within this time the next message starts at once and keeps its prompt cache; after it the process closes, and dev servers and similar processes its agents left running stop with it, so the next message starts them again, cold. Longer keeps chats quick but holds their memory longer; shorter frees it sooner.">
-                    <Stepper
-                      value={keptSessionIdleMinutes}
-                      min={MIN_KEPT_SESSION_IDLE_MINUTES}
-                      max={MAX_KEPT_SESSION_IDLE_MINUTES}
-                      step={5}
-                      onChange={onKeptSessionIdleChange}
-                      aria-label="Minutes to keep an idle agent running"
-                    />
-                    <span className="text-sm text-muted-foreground">min</span>
-                  </SettingsPanelRow>
-                  {remote ? null : (
-                    <SettingsPanelRow
-                      label="Agents kept running at once"
-                      hint={
-                        <>
-                          Each chat, and each agent of a team, keeps its process
-                          open between messages so the next one starts at once.
-                          When a new one needs room past this number, an agent
-                          that was only called by another closes first, then the
-                          one idle the longest, and the next message there
-                          starts cold, about 10–15 s slower. A chat used
-                          recently, or an agent still working, is never closed
-                          for room: Geniro goes over the number instead. More
-                          keeps more chats quick and takes more memory.
-                          {keptSessionFigures === null
-                            ? null
-                            : ` "Recently" is the last ${keptSessionFigures.recentlyUsedMinutes} minutes. Automatic picks ${keptSessionFigures.automaticLimit} for this Mac, from an eighth of its memory.`}
-                        </>
+                  {newConfigFor !== null ? (
+                    <NewConfigProfileDialog
+                      agent={newConfigFor}
+                      open
+                      sources={newConfigSources}
+                      readSource={readNewConfigSource}
+                      onCreate={(request) =>
+                        createConfiguration(newConfigFor, request)
                       }
-                      description={
-                        keptSessionFigures === null ||
-                        shownKeptSessionLimit === null ? undefined : (
-                          <span
-                            className="font-medium text-foreground"
-                            data-testid="kept-session-memory-estimate">
-                            {`Up to ≈ ${formatBytes(shownKeptSessionLimit * keptSessionFigures.sessionMemoryBytes)} of this Mac's ${formatBytes(keptSessionFigures.totalMemoryBytes)}, at about ${formatBytes(keptSessionFigures.sessionMemoryBytes)} per agent.`}
-                          </span>
-                        )
-                      }>
-                      {shownKeptSessionLimit === null ? null : (
-                        <Stepper
-                          value={shownKeptSessionLimit}
-                          min={MIN_KEPT_SESSION_LIMIT}
-                          max={MAX_KEPT_SESSION_LIMIT}
-                          onChange={onKeptSessionLimitChange}
-                          aria-label="Agents to keep running at once"
-                        />
-                      )}
-                      {keptSessionLimit === null ? (
-                        <span className="text-sm text-muted-foreground">
-                          Automatic
-                        </span>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onKeptSessionLimitChange(null)}>
-                          Use automatic
-                        </Button>
-                      )}
-                    </SettingsPanelRow>
-                  )}
-                  <SettingsPanelRow
-                    label="Keep the Mac awake while agents work"
-                    htmlFor="settings-prevent-sleep"
-                    hint="While an agent works the Mac does not go to idle sleep; while it only waits for you, it may. A command an agent left running counts as work for an hour after its last turn. The display still turns off, and closing the lid still sleeps the Mac. Off, the Mac sleeps on its usual schedule and a working agent stops until it wakes.">
-                    <Switch
-                      id="settings-prevent-sleep"
-                      checked={preventSleepWhileWorking}
-                      onCheckedChange={onTogglePreventSleep}
+                      onClose={() => setNewConfigFor(null)}
                     />
-                  </SettingsPanelRow>
-                </SettingsPanel>
-              </section>
-
-              <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-medium">Notifications</h2>
-                <SettingsPanel>
-                  <SettingsPanelRow
-                    label="Show system notifications"
-                    htmlFor="settings-notifications"
-                    description="Banners when an agent asks something and when a turn ends; clicking one opens that chat. Never for the chat you are watching, or a turn you stopped.">
-                    <Switch
-                      id="settings-notifications"
-                      checked={notificationsEnabled}
-                      onCheckedChange={onToggleNotifications}
-                    />
-                  </SettingsPanelRow>
-                  {remote ? null : (
+                  ) : null}
+                  {/* Beside the cards rather than in one: the window is the same
+                    for every CLI, and for a card's run as for a chat. */}
+                  <SettingsPanel>
                     <SettingsPanelRow
-                      label="Warn about memory and disk use"
-                      htmlFor="settings-resource-alerts"
-                      description="The strip at the top of the window and a notification when a chat's processes use too much memory or keep growing, or the Mac runs low on memory or disk. Off stops Geniro reading those figures at all.">
+                      label="Keep an idle agent running for"
+                      hint="How long an agent's process, with its MCP servers, stays open after its last message. Within this time the next message starts at once and keeps its prompt cache; after it the process closes, and dev servers and similar processes its agents left running stop with it, so the next message starts them again, cold. Longer keeps chats quick but holds their memory longer; shorter frees it sooner.">
+                      <Stepper
+                        value={keptSessionIdleMinutes}
+                        min={MIN_KEPT_SESSION_IDLE_MINUTES}
+                        max={MAX_KEPT_SESSION_IDLE_MINUTES}
+                        step={5}
+                        onChange={onKeptSessionIdleChange}
+                        aria-label="Minutes to keep an idle agent running"
+                      />
+                      <span className="text-sm text-muted-foreground">min</span>
+                    </SettingsPanelRow>
+                    {remote ? null : (
+                      <SettingsPanelRow
+                        label="Agents kept running at once"
+                        hint={
+                          <>
+                            Each chat, and each agent of a team, keeps its
+                            process open between messages so the next one starts
+                            at once. When a new one needs room past this number,
+                            an agent that was only called by another closes
+                            first, then the one idle the longest, and the next
+                            message there starts cold, about 10–15 s slower. A
+                            chat used recently, or an agent still working, is
+                            never closed for room: Geniro goes over the number
+                            instead. More keeps more chats quick and takes more
+                            memory.
+                            {keptSessionFigures === null
+                              ? null
+                              : ` "Recently" is the last ${keptSessionFigures.recentlyUsedMinutes} minutes. Automatic picks ${keptSessionFigures.automaticLimit} for this Mac, from an eighth of its memory.`}
+                          </>
+                        }
+                        description={
+                          keptSessionFigures === null ||
+                          shownKeptSessionLimit === null ? undefined : (
+                            <span
+                              className="font-medium text-foreground"
+                              data-testid="kept-session-memory-estimate">
+                              {`Up to ≈ ${formatBytes(shownKeptSessionLimit * keptSessionFigures.sessionMemoryBytes)} of this Mac's ${formatBytes(keptSessionFigures.totalMemoryBytes)}, at about ${formatBytes(keptSessionFigures.sessionMemoryBytes)} per agent.`}
+                            </span>
+                          )
+                        }>
+                        {shownKeptSessionLimit === null ? null : (
+                          <Stepper
+                            value={shownKeptSessionLimit}
+                            min={MIN_KEPT_SESSION_LIMIT}
+                            max={MAX_KEPT_SESSION_LIMIT}
+                            onChange={onKeptSessionLimitChange}
+                            aria-label="Agents to keep running at once"
+                          />
+                        )}
+                        {keptSessionLimit === null ? (
+                          <span className="text-sm text-muted-foreground">
+                            Automatic
+                          </span>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            title="Let Geniro choose the number from this Mac's memory again, instead of the number you set."
+                            onClick={() => onKeptSessionLimitChange(null)}>
+                            Use automatic
+                          </Button>
+                        )}
+                      </SettingsPanelRow>
+                    )}
+                    <SettingsPanelRow
+                      label="Keep the Mac awake while agents work"
+                      htmlFor="settings-prevent-sleep"
+                      hint="While an agent works the Mac does not go to idle sleep; while it only waits for you, it may. A command an agent left running counts as work for an hour after its last turn. The display still turns off, and closing the lid still sleeps the Mac. Off, the Mac sleeps on its usual schedule and a working agent stops until it wakes.">
                       <Switch
-                        id="settings-resource-alerts"
-                        checked={resourceAlerts.enabled}
-                        onCheckedChange={onToggleResourceAlerts}
+                        id="settings-prevent-sleep"
+                        checked={preventSleepWhileWorking}
+                        onCheckedChange={onTogglePreventSleep}
                       />
                     </SettingsPanelRow>
-                  )}
-                  {/* The one control here that PROVES something rather than sets it.
+                  </SettingsPanel>
+                </SettingsGroup>
+
+                <SettingsGroup
+                  icon={<Bell />}
+                  title="Notifications"
+                  description="How Geniro tells you an agent needs you, even when the window is in the background."
+                  hint="Notifications are the macOS banners Geniro posts when an agent asks you something, finishes, or a chat starts using too much memory. They come through macOS, so Focus modes and System Settings can still hold them back — Send a test shows whether they get through.">
+                  <SettingsPanel>
+                    <SettingsPanelRow
+                      label="Show system notifications"
+                      htmlFor="settings-notifications"
+                      hint="On, macOS shows a banner when an agent asks you a question or finishes its turn; clicking the banner opens that chat. You get none for the chat you are looking at, or for a turn you stopped yourself. Off, Geniro posts nothing and you see news only when you look at the app."
+                      description="Banners when an agent asks something and when a turn ends; clicking one opens that chat. Never for the chat you are watching, or a turn you stopped.">
+                      <Switch
+                        id="settings-notifications"
+                        checked={notificationsEnabled}
+                        onCheckedChange={onToggleNotifications}
+                      />
+                    </SettingsPanelRow>
+                    {remote ? null : (
+                      <SettingsPanelRow
+                        label="Warn about memory and disk use"
+                        htmlFor="settings-resource-alerts"
+                        hint="Geniro watches how much memory each chat's processes (the agent, its tools, servers it started) take, how fast that grows, and how much memory and disk the Mac has left. Past a limit it shows a strip at the top of the window and posts a notification naming the chat, so you can stop it before the Mac slows down. Off, Geniro stops reading these figures at all."
+                        description="The strip at the top of the window and a notification when a chat's processes use too much memory or keep growing, or the Mac runs low on memory or disk. Off stops Geniro reading those figures at all.">
+                        <Switch
+                          id="settings-resource-alerts"
+                          checked={resourceAlerts.enabled}
+                          onCheckedChange={onToggleResourceAlerts}
+                        />
+                      </SettingsPanelRow>
+                    )}
+                    {/* The one control here that PROVES something rather than sets it.
               macOS asks for permission the first time an app posts and consumes
               that banner to do it, so without a deliberate test the first
               notification anyone should have seen is always the one they never
@@ -1711,22 +1800,37 @@ export function Settings({
               cell beside the switch: it does not SET the setting above, it
               checks whether the OS is honouring it, and the result line has
               somewhere to land that is not under an unrelated description. */}
-                  <SettingsPanelRow
-                    label="Delivery"
-                    description={
-                      notificationTestResult ? (
-                        <span
-                          data-slot="notification-test-result"
-                          className={
-                            notificationTest === 'shown'
-                              ? 'text-success'
-                              : undefined
-                          }>
-                          {notificationTestResult}
-                        </span>
-                      ) : undefined
-                    }>
-                    {/* Beside the test rather than behind its result, and always
+                    <SettingsPanelRow
+                      label="Delivery"
+                      hint={
+                        <>
+                          <p>
+                            Send a test posts one banner right now, so you can
+                            see whether macOS lets Geniro show notifications.
+                            The first time, macOS may ask for permission instead
+                            of showing it.
+                          </p>
+                          <p>
+                            If nothing appears, macOS settings opens the place
+                            where Geniro's notifications are allowed or
+                            silenced.
+                          </p>
+                        </>
+                      }
+                      description={
+                        notificationTestResult ? (
+                          <span
+                            data-slot="notification-test-result"
+                            className={
+                              notificationTest === 'shown'
+                                ? 'text-success'
+                                : undefined
+                            }>
+                            {notificationTestResult}
+                          </span>
+                        ) : undefined
+                      }>
+                      {/* Beside the test rather than behind its result, and always
                 present: the test says whether the OS is holding the app, and
                 this is the only place the user can do anything about it. It
                 used to be a SENTENCE naming that place — "System Settings ›
@@ -1734,146 +1838,179 @@ export function Settings({
                 some button that will automatically open settings for us"): a
                 destination the app knows how to reach, printed as directions
                 for the user to follow by hand. */}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        void window.geniro.openNotificationSettings()
-                      }>
-                      macOS settings
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={notificationTest === 'testing'}
-                      onClick={onTestNotification}>
-                      {notificationTest === 'testing'
-                        ? 'Sending…'
-                        : 'Send a test'}
-                    </Button>
-                  </SettingsPanelRow>
-                </SettingsPanel>
-              </section>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        title="Open the macOS Notifications settings for Geniro, where its banners are allowed or silenced."
+                        onClick={() =>
+                          void window.geniro.openNotificationSettings()
+                        }>
+                        macOS settings
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={notificationTest === 'testing'}
+                        title="Post one notification now to check that macOS shows Geniro's banners."
+                        onClick={onTestNotification}>
+                        {notificationTest === 'testing'
+                          ? 'Sending…'
+                          : 'Send a test'}
+                      </Button>
+                    </SettingsPanelRow>
+                  </SettingsPanel>
+                </SettingsGroup>
 
-              <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-medium">Appearance</h2>
-                <SettingsPanel>
-                  <SettingsPanelRow
-                    layout="block"
-                    label="Theme"
-                    description="System follows your macOS appearance and changes with it.">
-                    <ThemePicker value={theme} onSelect={onThemeChange} />
-                  </SettingsPanelRow>
-                </SettingsPanel>
-              </section>
+                <SettingsGroup
+                  icon={<Palette />}
+                  title="Appearance"
+                  description="How the app looks."
+                  hint="The colour theme of the whole app. It changes only how Geniro looks, never what agents do.">
+                  <SettingsPanel>
+                    <SettingsPanelRow
+                      layout="block"
+                      label="Theme"
+                      hint="Pick a colour theme for the whole app. System follows the light or dark appearance of macOS and switches with it, for example at sunset."
+                      description="System follows your macOS appearance and changes with it.">
+                      <ThemePicker value={theme} onSelect={onThemeChange} />
+                    </SettingsPanelRow>
+                  </SettingsPanel>
+                </SettingsGroup>
 
-              <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-medium">Archive</h2>
-                <SettingsPanel>
-                  {/* The description says the ONE thing a reader cannot guess
+                <SettingsGroup
+                  icon={<Archive />}
+                  title="Archive"
+                  description="What happens to chats you archived."
+                  hint="Archiving a chat moves it out of the list but keeps everything, so you can read or restore it later. This setting can also delete archived chats for good once they are old enough — off by default.">
+                  <SettingsPanel>
+                    {/* The description says the ONE thing a reader cannot guess
                       from the row: that this is the permanent delete rather
                       than a tidier archive. */}
-                  <SettingsPanelRow
-                    layout="block"
-                    label="Archived chats"
-                    htmlFor="settings-archive-retention"
-                    description="Deleting is permanent — the conversation, its files and its history go, exactly as Delete in the archive does. Counted from when you archived the chat, not from when you last used it.">
-                    <Select
-                      id="settings-archive-retention"
-                      className="w-56"
-                      groups={ARCHIVE_RETENTION_OPTIONS}
-                      value={
-                        archiveRetentionDays === null
-                          ? KEEP_ARCHIVE_FOR_EVER
-                          : String(archiveRetentionDays)
-                      }
-                      onValueChange={onArchiveRetentionChange}
-                      aria-label="How long to keep archived chats"
-                    />
-                  </SettingsPanelRow>
-                </SettingsPanel>
-              </section>
-
-              <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-medium">Transcript</h2>
-                <SettingsPanel>
-                  <SettingsPanelRow
-                    label="Keep intermediate steps collapsed"
-                    htmlFor="settings-collapse-tool-steps"
-                    description="A turn's tool calls start folded, file edits included. Every row is still there — one press opens it, and the group header still counts them.">
-                    <Switch
-                      id="settings-collapse-tool-steps"
-                      checked={collapseToolSteps}
-                      onCheckedChange={onToggleCollapseToolSteps}
-                    />
-                  </SettingsPanelRow>
-                  <SettingsPanelRow
-                    label="Items loaded at a time"
-                    htmlFor="settings-history-page-size"
-                    description="How much of a long chat opens at once, and how much more each scroll up brings; a paired phone takes at most 250. Badges, chips and the agents panel always count the whole conversation.">
-                    <Select
-                      id="settings-history-page-size"
-                      className="w-56"
-                      groups={HISTORY_PAGE_OPTIONS}
-                      value={String(historyPageSize)}
-                      onValueChange={onHistoryPageSizeChange}
-                      aria-label="Transcript items loaded at a time"
-                    />
-                  </SettingsPanelRow>
-                </SettingsPanel>
-              </section>
-
-              <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-medium">Custom instructions</h2>
-                <SettingsPanel>
-                  <SettingsPanelRow
-                    label="Reply language"
-                    htmlFor="settings-reply-language"
-                    description="Every agent answers you in this language, even when the task, files and tools around it are in English. Empty lets the agent choose.">
-                    {/* One column, so an error wraps under the field instead
-                        of widening the control and squeezing the label. */}
-                    <div className="flex w-56 flex-col gap-1">
-                      <Input
-                        id="settings-reply-language"
-                        className="w-full"
-                        value={replyLanguage}
-                        maxLength={REPLY_LANGUAGE_MAX_LENGTH}
-                        onChange={(event) =>
-                          onReplyLanguageChange(event.target.value)
+                    <SettingsPanelRow
+                      layout="block"
+                      label="Archived chats"
+                      htmlFor="settings-archive-retention"
+                      hint="Archived chats are kept until you delete them. Pick a period here and Geniro deletes each archived chat for good once it has been archived that long — its conversation, files and history. Keep for ever never deletes anything on its own. The clock starts when you archived the chat, not when you last used it."
+                      description="Deleting is permanent — the conversation, its files and its history go, exactly as Delete in the archive does. Counted from when you archived the chat, not from when you last used it.">
+                      <Select
+                        id="settings-archive-retention"
+                        className="w-56"
+                        groups={ARCHIVE_RETENTION_OPTIONS}
+                        value={
+                          archiveRetentionDays === null
+                            ? KEEP_ARCHIVE_FOR_EVER
+                            : String(archiveRetentionDays)
                         }
-                        placeholder="e.g. Russian"
-                        aria-invalid={
-                          isReplyLanguage(replyLanguage) ? undefined : true
-                        }
+                        onValueChange={onArchiveRetentionChange}
+                        aria-label="How long to keep archived chats"
                       />
-                      {isReplyLanguage(replyLanguage) ? null : (
+                    </SettingsPanelRow>
+                  </SettingsPanel>
+                </SettingsGroup>
+
+                <SettingsGroup
+                  icon={<ScrollText />}
+                  title="Transcript"
+                  description="How a chat's conversation is shown."
+                  hint="The transcript is the conversation you see in a chat: your messages, the agent's replies and every step it took. These settings change only how it is displayed, never what the agent does.">
+                  <SettingsPanel>
+                    <SettingsPanelRow
+                      label="Keep intermediate steps collapsed"
+                      htmlFor="settings-collapse-tool-steps"
+                      hint="While an agent works it runs many small steps: reading files, running commands, editing code. On, those steps start folded so you see the agent's words first; one press opens any group. Off, every step is shown open. Nothing is hidden or lost either way."
+                      description="A turn's tool calls start folded, file edits included. Every row is still there — one press opens it, and the group header still counts them.">
+                      <Switch
+                        id="settings-collapse-tool-steps"
+                        checked={collapseToolSteps}
+                        onCheckedChange={onToggleCollapseToolSteps}
+                      />
+                    </SettingsPanelRow>
+                    <SettingsPanelRow
+                      label="Items loaded at a time"
+                      htmlFor="settings-history-page-size"
+                      hint="A long chat is not loaded all at once. This is how many items open with the chat, and how many more arrive each time you scroll to the top. Bigger shows more history right away but opens long chats more slowly. Counts and badges always cover the whole chat, whatever you pick."
+                      description="How much of a long chat opens at once, and how much more each scroll up brings; a paired phone takes at most 250. Badges, chips and the agents panel always count the whole conversation.">
+                      <Select
+                        id="settings-history-page-size"
+                        className="w-56"
+                        groups={HISTORY_PAGE_OPTIONS}
+                        value={String(historyPageSize)}
+                        onValueChange={onHistoryPageSizeChange}
+                        aria-label="Transcript items loaded at a time"
+                      />
+                    </SettingsPanelRow>
+                  </SettingsPanel>
+                </SettingsGroup>
+
+                <SettingsGroup
+                  icon={<MessageSquareText />}
+                  title="Custom instructions"
+                  description="Words every agent reads before your first message."
+                  hint={
+                    <>
+                      <p>
+                        Text you write here is handed to every agent at the
+                        start of every new chat and team run, before your first
+                        message — a good place for how you like to work ("prefer
+                        small diffs", "answer briefly").
+                      </p>
+                      <p>
+                        A chat that is already running keeps what it started
+                        with. Remove from existing chats takes it out of those
+                        too.
+                      </p>
+                    </>
+                  }>
+                  <SettingsPanel>
+                    <SettingsPanelRow
+                      label="Reply language"
+                      htmlFor="settings-reply-language"
+                      hint="Agents usually answer in the language of your message. Write a language here, such as Russian, and every agent answers you in it even when the code, files and tools around it are in English. Leave it empty to let the agent choose."
+                      description="Every agent answers you in this language, even when the task, files and tools around it are in English. Empty lets the agent choose.">
+                      {/* One column, so an error wraps under the field instead
+                        of widening the control and squeezing the label. */}
+                      <div className="flex w-56 flex-col gap-1">
+                        <Input
+                          id="settings-reply-language"
+                          className="w-full"
+                          value={replyLanguage}
+                          maxLength={REPLY_LANGUAGE_MAX_LENGTH}
+                          onChange={(event) =>
+                            onReplyLanguageChange(event.target.value)
+                          }
+                          placeholder="e.g. Russian"
+                          aria-invalid={
+                            isReplyLanguage(replyLanguage) ? undefined : true
+                          }
+                        />
+                        {isReplyLanguage(replyLanguage) ? null : (
+                          <ErrorText>
+                            Contains a line break or an invisible character —
+                            not saved. Type the language's name.
+                          </ErrorText>
+                        )}
+                      </div>
+                    </SettingsPanelRow>
+                    <SettingsPanelRow layout="block">
+                      <ExpandableTextarea
+                        id="settings-custom-instructions"
+                        title="Custom instructions"
+                        value={customInstructions}
+                        onChange={onCustomInstructionsChange}
+                        rows={6}
+                        placeholder="e.g. Always answer in British English. Prefer small, reviewable diffs."
+                      />
+                      {hasControlChars ? (
                         <ErrorText>
-                          Contains a line break or an invisible character — not
-                          saved. Type the language's name.
+                          Contains invisible control characters — not saved.
+                          Pasting from a word processor can add them; retype it
+                          or paste as plain text.
                         </ErrorText>
-                      )}
-                    </div>
-                  </SettingsPanelRow>
-                  <SettingsPanelRow layout="block">
-                    <ExpandableTextarea
-                      id="settings-custom-instructions"
-                      title="Custom instructions"
-                      value={customInstructions}
-                      onChange={onCustomInstructionsChange}
-                      rows={6}
-                      placeholder="e.g. Always answer in British English. Prefer small, reviewable diffs."
-                    />
-                    {hasControlChars ? (
-                      <ErrorText>
-                        Contains invisible control characters — not saved.
-                        Pasting from a word processor can add them; retype it or
-                        paste as plain text.
-                      </ErrorText>
-                    ) : null}
-                  </SettingsPanelRow>
-                  {/* The note and the button share ONE row. They were two, with the
+                      ) : null}
+                    </SettingsPanelRow>
+                    {/* The note and the button share ONE row. They were two, with the
               second row's only content pushed right by `ml-auto` — which read
               as an orphan the moment the note above it shrank from two
               paragraphs to one, since the button then had nothing to sit
@@ -1881,197 +2018,211 @@ export function Settings({
               is also the only place it fits: "Contains invisible control
               characters — not saved. Pasting from a word processor can add
               them…" does not sit next to anything. */}
-                  <SettingsPanelRow layout="block">
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="min-w-0 text-xs text-muted-foreground">
-                        Handed to every agent at the start of each new chat or
-                        team run — one already running keeps what it started
-                        with.
-                      </p>
+                    <SettingsPanelRow layout="block">
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="min-w-0 text-xs text-muted-foreground">
+                          Handed to every agent at the start of each new chat or
+                          team run — one already running keeps what it started
+                          with.
+                        </p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0"
+                          disabled={forgetting || apis === null}
+                          title="Take these instructions out of chats and team runs that already started with them. New chats always get the current text."
+                          onClick={() => void forgetExistingInstructions()}>
+                          {forgetting
+                            ? 'Removing…'
+                            : 'Remove from existing chats'}
+                        </Button>
+                      </div>
+                      {forgetResult ? (
+                        <p className="text-xs text-muted-foreground">
+                          {forgetResult}
+                        </p>
+                      ) : null}
+                    </SettingsPanelRow>
+                    {hostPreamble ? (
+                      <SettingsPanelRow layout="block">
+                        <details data-slot="host-preamble">
+                          <summary className="cursor-pointer text-xs text-muted-foreground">
+                            Geniro already tells every agent this first
+                          </summary>
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            The CLIs are built for a terminal and say so in
+                            their own system prompt, so geniro corrects that
+                            before your instructions. You cannot edit it — it
+                            describes how this app actually renders a reply.
+                          </p>
+                          <InstructionPreview text={hostPreamble} />
+                          {backgroundWorkNotes.length > 0 ? (
+                            <p className="mt-3 text-xs text-muted-foreground">
+                              Then each CLI is told what happens to work it
+                              leaves running when its turn ends:
+                            </p>
+                          ) : null}
+                          {backgroundWorkNotes.map((entry) => (
+                            <InstructionPreview
+                              key={entry.agent}
+                              caption={agentDisplayName(
+                                capabilities?.agents ?? [],
+                                entry.agent,
+                              )}
+                              text={entry.note}
+                            />
+                          ))}
+                        </details>
+                      </SettingsPanelRow>
+                    ) : null}
+                  </SettingsPanel>
+                </SettingsGroup>
+
+                <SettingsGroup
+                  icon={<Download />}
+                  title="Updates"
+                  description="Keeping Geniro itself up to date."
+                  hint="Geniro checks for its own new versions. Nothing is downloaded or installed without your press, and the app restarts only when you press Restart now. Agent programs are updated from their own cards under Agents.">
+                  <SettingsPanel>
+                    <SettingsPanelRow
+                      label="Check for updates automatically"
+                      htmlFor="settings-check-updates"
+                      hint="On, Geniro asks its public release page whether a newer version exists when it starts and every few minutes after, and tells you when one does. It never installs or restarts by itself: you press Update now, then Restart now. Off, it checks only when you press Check now."
+                      description="Checks GitHub Releases on launch and every few minutes. Nothing is installed until you press Update now, and nothing restarts until you press Restart now.">
+                      <Switch
+                        id="settings-check-updates"
+                        checked={checkForUpdates}
+                        onCheckedChange={onToggleUpdates}
+                      />
+                    </SettingsPanelRow>
+                    {/* The status line is this row's DESCRIPTION rather than a paragraph
+              under the section: it is what the buttons beside it are about, and
+              as a loose line it read as a third note among the two above it. */}
+                    <SettingsPanelRow
+                      label="Status"
+                      hint="Where Geniro's own update stands: up to date, a new version available, downloading, or ready to restart. Check now asks right away; Update now downloads and installs the new version; Restart now closes Geniro, with every running agent, and opens the new version."
+                      description={
+                        update.state && updateLine ? (
+                          <span
+                            className={
+                              update.state.phase === 'error'
+                                ? 'text-destructive'
+                                : undefined
+                            }>
+                            {updateLine}
+                          </span>
+                        ) : undefined
+                      }>
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="shrink-0"
-                        disabled={forgetting || apis === null}
-                        onClick={() => void forgetExistingInstructions()}>
-                        {forgetting
-                          ? 'Removing…'
-                          : 'Remove from existing chats'}
+                        disabled={updateBusy}
+                        title="Ask right now whether a newer version of Geniro exists. Nothing is installed."
+                        onClick={() => void update.check()}>
+                        {update.state?.phase === 'checking'
+                          ? 'Checking…'
+                          : 'Check now'}
                       </Button>
-                    </div>
-                    {forgetResult ? (
-                      <p className="text-xs text-muted-foreground">
-                        {forgetResult}
-                      </p>
-                    ) : null}
-                  </SettingsPanelRow>
-                  {hostPreamble ? (
-                    <SettingsPanelRow layout="block">
-                      <details data-slot="host-preamble">
-                        <summary className="cursor-pointer text-xs text-muted-foreground">
-                          Geniro already tells every agent this first
-                        </summary>
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          The CLIs are built for a terminal and say so in their
-                          own system prompt, so geniro corrects that before your
-                          instructions. You cannot edit it — it describes how
-                          this app actually renders a reply.
-                        </p>
-                        <InstructionPreview text={hostPreamble} />
-                        {backgroundWorkNotes.length > 0 ? (
-                          <p className="mt-3 text-xs text-muted-foreground">
-                            Then each CLI is told what happens to work it leaves
-                            running when its turn ends:
-                          </p>
-                        ) : null}
-                        {backgroundWorkNotes.map((entry) => (
-                          <InstructionPreview
-                            key={entry.agent}
-                            caption={agentDisplayName(
-                              capabilities?.agents ?? [],
-                              entry.agent,
-                            )}
-                            text={entry.note}
-                          />
-                        ))}
-                      </details>
-                    </SettingsPanelRow>
-                  ) : null}
-                </SettingsPanel>
-              </section>
-
-              <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-medium">Updates</h2>
-                <SettingsPanel>
-                  <SettingsPanelRow
-                    label="Check for updates automatically"
-                    htmlFor="settings-check-updates"
-                    description="Checks GitHub Releases on launch and every few minutes. Nothing is installed until you press Update now, and nothing restarts until you press Restart now.">
-                    <Switch
-                      id="settings-check-updates"
-                      checked={checkForUpdates}
-                      onCheckedChange={onToggleUpdates}
-                    />
-                  </SettingsPanelRow>
-                  {/* The status line is this row's DESCRIPTION rather than a paragraph
-              under the section: it is what the buttons beside it are about, and
-              as a loose line it read as a third note among the two above it. */}
-                  <SettingsPanelRow
-                    label="Status"
-                    description={
-                      update.state && updateLine ? (
-                        <span
-                          className={
-                            update.state.phase === 'error'
-                              ? 'text-destructive'
-                              : undefined
-                          }>
-                          {updateLine}
-                        </span>
-                      ) : undefined
-                    }>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={updateBusy}
-                      onClick={() => void update.check()}>
-                      {update.state?.phase === 'checking'
-                        ? 'Checking…'
-                        : 'Check now'}
-                    </Button>
-                    {/* The same action as the strip's, on the screen a user opens when
+                      {/* The same action as the strip's, on the screen a user opens when
                 they went LOOKING for it — not a second mechanism: both call the
                 one service, and both are gated on the same `canInstall`. */}
-                    {update.state?.phase === 'available' &&
-                    update.state.canInstall ? (
-                      <Button
-                        type="button"
-                        variant="default"
-                        size="sm"
-                        onClick={() => void update.install()}>
-                        Update now
-                      </Button>
-                    ) : null}
-                    {/* Installed, waiting on the user. The restart quits the app and
+                      {update.state?.phase === 'available' &&
+                      update.state.canInstall ? (
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          title="Download and install the new version. Geniro keeps running until you press Restart now."
+                          onClick={() => void update.install()}>
+                          Update now
+                        </Button>
+                      ) : null}
+                      {/* Installed, waiting on the user. The restart quits the app and
                 takes the daemon and every running turn with it, so it is a press
                 rather than something that happens the moment the copy ends. */}
-                    {update.state?.phase === 'ready' ? (
-                      <Button
-                        type="button"
-                        variant="default"
-                        size="sm"
-                        onClick={() => void update.relaunch()}>
-                        Restart now
-                      </Button>
-                    ) : null}
-                  </SettingsPanelRow>
-                  {/* Only while something is moving: a bar sitting at 0% next to an
+                      {update.state?.phase === 'ready' ? (
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          title="Close Geniro and open the new version. Agents working right now are stopped."
+                          onClick={() => void update.relaunch()}>
+                          Restart now
+                        </Button>
+                      ) : null}
+                    </SettingsPanelRow>
+                    {/* Only while something is moving: a bar sitting at 0% next to an
               offer would suggest a download nobody started. */}
-                  {updateWorking && update.state ? (
-                    <SettingsPanelRow layout="block">
-                      <ProgressBar
-                        fraction={
-                          update.state.phase === 'installing'
-                            ? null
-                            : update.state.progress
-                        }
-                        label={`Update ${update.state.version} progress`}
+                    {updateWorking && update.state ? (
+                      <SettingsPanelRow layout="block">
+                        <ProgressBar
+                          fraction={
+                            update.state.phase === 'installing'
+                              ? null
+                              : update.state.progress
+                          }
+                          label={`Update ${update.state.version} progress`}
+                        />
+                      </SettingsPanelRow>
+                    ) : null}
+                  </SettingsPanel>
+                </SettingsGroup>
+
+                <SettingsGroup
+                  icon={<Bug />}
+                  title="Diagnostics"
+                  description="Tools for finding out why something went wrong."
+                  hint="Developer tools for looking inside Geniro when something misbehaves. You do not need them for everyday use.">
+                  <SettingsPanel>
+                    <SettingsPanelRow
+                      label="Attach a debugger to the daemon"
+                      htmlFor="settings-daemon-inspect"
+                      hint="For developers. Geniro's background service — the part that runs agents and stores chats — is started so Chrome DevTools can attach to it and step through its code. Switching it restarts that service. While it is on, any program on this Mac could run code inside Geniro, so leave it off unless you are debugging Geniro itself."
+                      description={
+                        <>
+                          Runs the daemon with a Node inspector on{' '}
+                          <code className="rounded bg-muted px-1 py-0.5">
+                            127.0.0.1:{DAEMON_INSPECT_PORT}
+                          </code>
+                          , so Chrome DevTools can attach to it from{' '}
+                          <code className="rounded bg-muted px-1 py-0.5">
+                            chrome://inspect
+                          </code>{' '}
+                          — this window’s own DevTools (⌥⌘I) cannot. Restarts
+                          the daemon, and while the port is open any process on
+                          this machine can run code inside it.
+                        </>
+                      }>
+                      {storedInspect === null ? (
+                        // Named so the state is legible: the switch is showing a default
+                        // this build chose, not something the user set. Without it, a
+                        // developer who never opened Settings has no way to learn the
+                        // port is open.
+                        <Badge variant="secondary">
+                          default for {isPackaged ? 'the installed app' : 'dev'}
+                        </Badge>
+                      ) : null}
+                      <Switch
+                        id="settings-daemon-inspect"
+                        checked={inspectEnabled}
+                        onCheckedChange={onToggleInspect}
                       />
                     </SettingsPanelRow>
-                  ) : null}
-                </SettingsPanel>
-              </section>
-
-              <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-medium">Diagnostics</h2>
-                <SettingsPanel>
-                  <SettingsPanelRow
-                    label="Attach a debugger to the daemon"
-                    htmlFor="settings-daemon-inspect"
-                    description={
-                      <>
-                        Runs the daemon with a Node inspector on{' '}
-                        <code className="rounded bg-muted px-1 py-0.5">
-                          127.0.0.1:{DAEMON_INSPECT_PORT}
-                        </code>
-                        , so Chrome DevTools can attach to it from{' '}
-                        <code className="rounded bg-muted px-1 py-0.5">
-                          chrome://inspect
-                        </code>{' '}
-                        — this window’s own DevTools (⌥⌘I) cannot. Restarts the
-                        daemon, and while the port is open any process on this
-                        machine can run code inside it.
-                      </>
-                    }>
-                    {storedInspect === null ? (
-                      // Named so the state is legible: the switch is showing a default
-                      // this build chose, not something the user set. Without it, a
-                      // developer who never opened Settings has no way to learn the
-                      // port is open.
-                      <Badge variant="secondary">
-                        default for {isPackaged ? 'the installed app' : 'dev'}
-                      </Badge>
-                    ) : null}
-                    <Switch
-                      id="settings-daemon-inspect"
-                      checked={inspectEnabled}
-                      onCheckedChange={onToggleInspect}
-                    />
-                  </SettingsPanelRow>
-                  {/* The debug drawer lost its title-bar button on request, so this is
+                    {/* The debug drawer lost its title-bar button on request, so this is
               the only place the chord is written down. A line rather than a
               control: putting the drawer back on screen from here would be the
               button again, one nav click further away. */}
-                  <SettingsPanelRow layout="block">
-                    <p className="text-xs text-muted-foreground">
-                      ⌥⌘L opens this app’s own debug log — the daemon, agent and
-                      UI lines you can copy into a bug report.
-                    </p>
-                  </SettingsPanelRow>
-                </SettingsPanel>
-              </section>
+                    <SettingsPanelRow layout="block">
+                      <p className="text-xs text-muted-foreground">
+                        ⌥⌘L opens this app’s own debug log — the daemon, agent
+                        and UI lines you can copy into a bug report.
+                      </p>
+                    </SettingsPanelRow>
+                  </SettingsPanel>
+                </SettingsGroup>
+              </SettingsGroups>
             </>
           )}
         </div>

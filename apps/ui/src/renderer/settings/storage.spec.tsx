@@ -1243,3 +1243,35 @@ describe('jobOutcome', () => {
     ).toBe('The database is compacted — 8.0 GB freed.');
   });
 });
+
+describe('Storage — groups and counts', () => {
+  async function open(): Promise<void> {
+    const api = {
+      getStorageUsage: vi.fn(() => Promise.resolve(usage())),
+      getStorageJob: vi.fn(() => Promise.resolve({ job: null })),
+      cleanStorage: vi.fn(),
+    };
+    await act(async () => root.render(<Storage api={api} remote={false} />));
+    await flush();
+  }
+
+  it('explains each group with a "?" beside its title', async () => {
+    await open();
+    for (const title of ['Chats', 'Tasks', 'Teams and app']) {
+      expect(
+        container.querySelector(`button[aria-label="About ${title}"]`),
+        title,
+      ).not.toBeNull();
+    }
+  });
+
+  it('keeps the In use card above every group', async () => {
+    await open();
+    const total = container.querySelector('[data-slot="storage-total"]')!;
+    const firstGroup = container.querySelector('[data-slot="settings-group"]')!;
+    expect(
+      total.compareDocumentPosition(firstGroup) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});

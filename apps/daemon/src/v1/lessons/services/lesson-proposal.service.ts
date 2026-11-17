@@ -97,8 +97,14 @@ export class LessonProposalService {
       em,
     );
     const moveUps = await this.moveUpsOf(rows);
+    const pending = await this.pendingEntriesOf(rows);
     return rows.map((row) =>
-      toWire(row, existing.has(row.sourceRunId), moveUps.get(row.id) ?? null),
+      toWire(
+        row,
+        existing.has(row.sourceRunId),
+        moveUps.get(row.id) ?? null,
+        pending.has(row.id),
+      ),
     );
   }
 
@@ -415,11 +421,30 @@ export class LessonProposalService {
   ): Promise<LessonProposalWire> {
     const existing = await this.runDao.existingIds([row.sourceRunId], em);
     const moveUps = await this.moveUpsOf([row]);
+    const pending = await this.pendingEntriesOf([row]);
     return toWire(
       row,
       existing.has(row.sourceRunId),
       moveUps.get(row.id) ?? null,
+      pending.has(row.id),
     );
+  }
+
+  /** The lessons whose own memory entry still waits for the user's review. */
+  private async pendingEntriesOf(
+    rows: readonly LessonProposal[],
+  ): Promise<Set<string>> {
+    const pending = new Set<string>();
+    for (const row of rows) {
+      if (!ownsEntry(row)) {
+        continue;
+      }
+      const entry = await this.entryOf(row);
+      if (entry?.status === 'pending') {
+        pending.add(row.id);
+      }
+    }
+    return pending;
   }
 
   private async moveUpsOf(
@@ -787,6 +812,7 @@ function toWire(
   row: LessonProposal,
   sourceExists: boolean,
   moveUp: LessonMoveUpPlace | null,
+  memoryPending: boolean,
 ): LessonProposalWire {
   const target = targetOf(row);
   return {
@@ -812,6 +838,7 @@ function toWire(
     places: placesOf(row),
     moveUp,
     undoable: ownsEntry(row),
+    memoryPending,
     sourceExists,
     createdAt: row.createdAt.toISOString(),
     decidedAt: row.decidedAt?.toISOString() ?? null,

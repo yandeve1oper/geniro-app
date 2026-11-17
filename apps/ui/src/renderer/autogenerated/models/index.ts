@@ -6440,6 +6440,12 @@ export interface LessonProposal {
      */
     undoable: boolean;
     /**
+     * Its own memory entry still waits for the user's review, so no agent uses it yet
+     * @type {boolean}
+     * @memberof LessonProposal
+     */
+    memoryPending: boolean;
+    /**
      * False once the thread the lesson came from was deleted
      * @type {boolean}
      * @memberof LessonProposal

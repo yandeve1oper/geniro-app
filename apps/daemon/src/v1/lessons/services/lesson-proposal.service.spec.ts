@@ -1168,6 +1168,27 @@ describe('LessonProposalService.list', () => {
     ]);
   });
 
+  it('marks a saved lesson whose own entry still waits for review, and only that one', async () => {
+    const own = proposal({ id: 'lp-own', status: 'saved', resultRef: 'm7' });
+    const waiting = proposal({ id: 'lp-waiting' });
+    const pending = build(null, undefined, {
+      ...FILED_ENTRY,
+      status: 'pending',
+    });
+    pending.proposals.list.mockResolvedValueOnce([own, waiting]);
+    const active = build(null);
+    active.proposals.list.mockResolvedValueOnce([own]);
+
+    const pendingWires = await pending.service.list({});
+    const [activeWire] = await active.service.list({});
+
+    expect(pendingWires.map((wire) => [wire.id, wire.memoryPending])).toEqual([
+      ['lp-own', true],
+      ['lp-waiting', false],
+    ]);
+    expect(activeWire!.memoryPending).toBe(false);
+  });
+
   it('drops a status name it does not know, and filters by no status when none is named', async () => {
     const { service, proposals } = build(null);
 

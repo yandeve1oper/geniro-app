@@ -11,9 +11,9 @@ import { cn } from './ui/utils';
  * controls, a run of saved configurations is a list — and a second copy of
  * these classes is how the two would come to disagree about a radius.
  *
- * `@container`: the rows fold at a CONTAINER width, not a viewport one. The
- * reading column this sits in is capped at 42rem and shares the window with a
- * nav column, so the viewport says nothing useful about how much room a row
+ * `@container`: the rows fold at a CONTAINER width, not a viewport one. A
+ * panel sits beside its group's heading on a wide page and under it on a
+ * narrow one, so the viewport says nothing useful about how much room a row
  * actually has.
  *
  * No `overflow-hidden` here, deliberately: a `SettingsPanel` row may hold a

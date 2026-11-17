@@ -479,6 +479,53 @@ function targetTrigger(el: HTMLElement): HTMLElement {
   return trigger;
 }
 
+describe('LessonsCard — what each choice means', () => {
+  it('says under every target who reads the lesson and where it ends up', async () => {
+    const el = await render({
+      lessons: [LESSON_PROJECT_RULE],
+      places: PROJECT_PLACES,
+      onSave: vi.fn(async () => undefined),
+    });
+
+    await press(targetTrigger(el));
+
+    const sub = (label: string): string | null | undefined =>
+      optionNamed(label).querySelector('[data-slot="menu-item-sublabel"]')
+        ?.textContent;
+    expect(sub('Project instructions')).toBe(
+      'Every agent in this project reads it each chat.',
+    );
+    expect(sub('Memory · project')).toBe(
+      'Agents in this project find it by searching.',
+    );
+    expect(sub('Memory · global')).toBe(
+      'Agents in any chat find it by searching.',
+    );
+    expect(sub('Instructions of Reviewer')).toBe(
+      'Only this team member reads it.',
+    );
+    expect(sub('Knowledge · new document')).toBe(
+      'Starts a new document agents can open.',
+    );
+  });
+
+  it('explains Edit, Reject and Why with a title', async () => {
+    const el = await render({
+      lessons: [LESSON_PROJECT_RULE],
+      places: PROJECT_PLACES,
+      onSave: vi.fn(async () => undefined),
+    });
+
+    expect(buttonNamed(el, 'Edit').title).toBe(
+      'Change the title and rule before saving.',
+    );
+    expect(buttonNamed(el, 'Reject').title).toBe(
+      'Throw this lesson away; nothing is saved.',
+    );
+    expect(el.querySelector('[title^="Why the reflection"]')).not.toBeNull();
+  });
+});
+
 describe('LessonsCard — the target a waiting lesson goes to', () => {
   it('names a project-instructions lesson in words, and saves it there', async () => {
     const onSave = vi.fn(async () => undefined);

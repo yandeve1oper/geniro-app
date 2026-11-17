@@ -1,5 +1,13 @@
 import { act } from 'react';
 
+function optionLabel(option: HTMLElement): string {
+  return (
+    (
+      option.querySelector('[data-slot="menu-item-label"]') ?? option
+    ).textContent?.trim() ?? ''
+  );
+}
+
 /** The labels a memory row's ⋯ menu offers, read by opening and closing it. */
 export async function memoryRowActions(row: HTMLElement): Promise<string[]> {
   const trigger = row.querySelector<HTMLButtonElement>(
@@ -15,7 +23,7 @@ export async function memoryRowActions(row: HTMLElement): Promise<string[]> {
     ...document.querySelectorAll<HTMLElement>(
       '[role="listbox"] [role="option"]',
     ),
-  ].map((option) => option.textContent?.trim() ?? '');
+  ].map(optionLabel);
   await act(async () => {
     trigger.click();
   });
@@ -40,7 +48,7 @@ export async function pressMemoryRowAction(
     ...document.querySelectorAll<HTMLElement>(
       '[role="listbox"] [role="option"]',
     ),
-  ].find((candidate) => candidate.textContent?.trim() === label);
+  ].find((candidate) => optionLabel(candidate) === label);
   if (!option) {
     throw new Error(`no "${label}" in the row's menu`);
   }

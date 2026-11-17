@@ -1684,5 +1684,5 @@ function pullRequestsByRun(
 }
 
 function archivedAtOrBefore(cutoff: Date): FilterQuery<Run> {
-  return { archivedAt: { $ne: null, $lte: cutoff } };
+  return { archivedAt: { $ne: null, $lte: cutoff }, pendingDeleteAt: null };
 }

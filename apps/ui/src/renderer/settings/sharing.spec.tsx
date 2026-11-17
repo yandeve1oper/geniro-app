@@ -637,3 +637,141 @@ describe('Settings → Sharing', () => {
     expect(api.listShares).not.toHaveBeenCalled();
   });
 });
+
+describe('Sharing — explanations and long lists', () => {
+  const sharing = (destinations: (typeof GCS)[]): SharingSettings => ({
+    destinations,
+    defaultDestinationId: destinations[0]?.id ?? null,
+    agentsMayShare: false,
+    autoRevokeAfterDays: null,
+  });
+  const aboutTrigger = (label: string): Element | null =>
+    container.querySelector(`button[aria-label="About ${label}"]`);
+  const sharedTitles = (): string[] =>
+    [...container.querySelectorAll('li')]
+      .map((row) => row.textContent ?? '')
+      .filter((text) => text.includes('Report '));
+  const manyShares = (count: number): Share[] =>
+    Array.from({ length: count }, (_, index) => ({
+      ...SHARED,
+      id: `share-${index}`,
+      title: `Report ${index}`,
+    }));
+
+  it('explains the switch, the default place, the places list and the expiry', async () => {
+    install(sharing([GCS]));
+    await render(fakeApi());
+
+    for (const label of [
+      'Let agents share pages',
+      'Share to',
+      'Saved places',
+      'Revoke shared pages',
+      'Agents',
+      'Shared pages',
+    ]) {
+      expect(aboutTrigger(label), label).not.toBeNull();
+    }
+  });
+
+  it('gives each action a plain-language title', async () => {
+    install(sharing([GCS]));
+    await render(fakeApi([SHARED]));
+
+    expect(button('Check').title).toContain('whether you are signed in');
+    expect(button('Add a place').title).toContain('Set up a new storage place');
+    expect(button('Get link').title).toContain('full link, key included');
+    expect(button('Revoke').title).toContain('Delete the uploaded copy');
+    expect(button('Revoke all').title).toContain('Revoke every shared page');
+  });
+
+  it('shows five shared pages, opens the rest on a press, and revokes all of them', async () => {
+    install(sharing([GCS]));
+    const api = fakeApi(manyShares(7));
+    await render(api);
+
+    expect(sharedTitles()).toHaveLength(5);
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[data-slot="show-all"]',
+    )!;
+    expect(toggle.textContent).toContain('Show all 7 pages');
+    expect(container.textContent).toContain('7 pages are shared right now.');
+    expect(button('Revoke all').textContent).toBe('Revoke all');
+
+    await press(toggle);
+    expect(sharedTitles()).toHaveLength(7);
+
+    await press(button('Revoke all'));
+    await press(confirmInDialog('Revoke all'));
+    expect(api.revokeAllShares).toHaveBeenCalledWith(
+      {
+        revokeSharesDto: {
+          shareIds: Array.from({ length: 7 }, (_, index) => `share-${index}`),
+        },
+      },
+      expect.anything(),
+    );
+  });
+
+  it('leaves the places list expanded after adding one past the cap, so the new place is shown', async () => {
+    install(
+      sharing(
+        Array.from({ length: 5 }, (_, index) => ({
+          ...GCS,
+          id: `place-${index}`,
+          name: `Place ${index}`,
+        })),
+      ),
+    );
+    await render(fakeApi());
+    const places = (): number =>
+      [...container.querySelectorAll('li')].filter((row) =>
+        row.textContent?.includes('gs://'),
+      ).length;
+    expect(places()).toBe(5);
+
+    await press(button('Add a place'));
+    await type('Name', 'Sixth place');
+    await type('Link address', 'https://sixth.example.com');
+    await type('Bucket', 'sixth-bucket');
+    await press(button('Save place'));
+
+    expect(places()).toBe(6);
+    expect(container.textContent).toContain('Sixth place');
+  });
+
+  it('explains each field of the Add a place form and titles its buttons', async () => {
+    install(sharing([]));
+    await render(fakeApi());
+    await press(button('Add a place'));
+
+    for (const label of ['Kind of place', 'Name', 'Link address', 'Bucket']) {
+      expect(aboutTrigger(label), label).not.toBeNull();
+    }
+    expect(button('Save place').title).toContain('Nothing is uploaded');
+    expect(button('Cancel').title).toContain('without saving the place');
+  });
+
+  it('shows five places and opens the rest on a press', async () => {
+    install(
+      sharing(
+        Array.from({ length: 6 }, (_, index) => ({
+          ...GCS,
+          id: `place-${index}`,
+          name: `Place ${index}`,
+        })),
+      ),
+    );
+    await render(fakeApi());
+
+    const places = (): number =>
+      [...container.querySelectorAll('li')].filter((row) =>
+        row.textContent?.includes('gs://'),
+      ).length;
+    expect(places()).toBe(5);
+    await press(
+      container.querySelector<HTMLButtonElement>('[data-slot="show-all"]')!,
+    );
+    expect(places()).toBe(6);
+  });
+});

@@ -543,6 +543,11 @@ export const LessonProposalWireSchema = z
       .describe(
         'Saved to memory as an entry of its own, so Undo and Edit apply',
       ),
+    memoryPending: z
+      .boolean()
+      .describe(
+        "Its own memory entry still waits for the user's review, so no agent uses it yet",
+      ),
     sourceExists: z
       .boolean()
       .describe('False once the thread the lesson came from was deleted'),

@@ -281,3 +281,70 @@ describe('FastActionsPane — editor', () => {
     );
   });
 });
+
+describe('FastActionsPane — explanations and long lists', () => {
+  const many = (count: number): FastAction[] =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `fa-${index}`,
+      name: `Action ${index}`,
+      description: `Do thing ${index}.`,
+    }));
+  const rows = (): number =>
+    container.querySelectorAll('[data-slot="settings-list"] li').length;
+
+  it('explains what a fast action is and titles every button', () => {
+    render();
+    expect(
+      container.querySelector('button[aria-label="About Your actions"]'),
+    ).not.toBeNull();
+    expect(button('New action').title).toContain('Write a new fast action');
+    expect(button('Edit Review the branch').title).toContain('name or text');
+    expect(button('Delete Review the branch').title).toContain(
+      'You are asked once more',
+    );
+  });
+
+  it('shows eight actions and opens the rest on a press', () => {
+    render({ actions: many(10) });
+    expect(rows()).toBe(8);
+
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[data-slot="show-all"]',
+    )!;
+    expect(toggle.textContent).toBe('Show all 10 actions');
+    click(toggle);
+    expect(rows()).toBe(10);
+    expect(container.textContent).toContain(`10 of ${MAX_FAST_ACTIONS}`);
+  });
+
+  it('leaves the list expanded after adding one past the cap, so the new action is on screen', () => {
+    const existing = many(9);
+    const onSave = vi.fn(
+      ({ name, description }: { name: string; description: string }) => {
+        root.render(
+          <FastActionsPane
+            actions={[...existing, { id: 'fa-new', name, description }]}
+            onSave={onSave}
+            onDelete={vi.fn()}
+          />,
+        );
+      },
+    );
+    render({ actions: existing, onSave });
+    expect(rows()).toBe(8);
+
+    click(button('New action'));
+    type(nameField(), 'Brand new action');
+    type(descriptionField(), 'Say something new.');
+    click(button('Create'));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(rows()).toBe(10);
+    expect(container.textContent).toContain('Brand new action');
+  });
+
+  it('draws no show-all while the list fits', () => {
+    render({ actions: many(8) });
+    expect(container.querySelector('[data-slot="show-all"]')).toBeNull();
+  });
+});

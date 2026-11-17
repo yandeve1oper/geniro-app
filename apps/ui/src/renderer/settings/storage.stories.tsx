@@ -108,7 +108,7 @@ const meta = {
       window.geniro = createPreloadStub({
         getAppStorage: () => Promise.resolve(APP),
       });
-      return <div className="max-w-2xl">{story()}</div>;
+      return <div className="max-w-6xl">{story()}</div>;
     },
   ],
 } satisfies Meta<typeof Storage>;

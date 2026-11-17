@@ -16,6 +16,8 @@ import { cn } from './ui/utils';
 export interface MemoryRowAction {
   value: string;
   label: string;
+  /** A muted second line under the label: what choosing it does. */
+  subLabel?: string;
   run: () => void | Promise<void>;
   tone?: 'destructive';
   confirm?: {
@@ -104,26 +106,43 @@ export function MemoryRow({
             ? {
                 value: 'search-only',
                 label: 'Search only',
+                subLabel: 'Agents find it only by searching.',
                 run: () => onIndexed(false),
               }
             : {
                 value: 'index',
                 label: 'Load into every chat',
+                subLabel: 'Every new chat starts with its title.',
                 run: () => onIndexed(true),
               },
         ]
       : []),
     ...(isLive && onEdit !== undefined
-      ? [{ value: 'edit', label: 'Edit', run: onEdit }]
+      ? [
+          {
+            value: 'edit',
+            label: 'Edit',
+            subLabel: 'Change its title, text or scope.',
+            run: onEdit,
+          },
+        ]
       : []),
     ...(isForgotten && onRestore !== undefined
-      ? [{ value: 'restore', label: 'Restore', run: onRestore }]
+      ? [
+          {
+            value: 'restore',
+            label: 'Restore',
+            subLabel: 'Bring it back for agents to use.',
+            run: onRestore,
+          },
+        ]
       : []),
     ...(isLive && onForget !== undefined
       ? [
           {
             value: 'forget',
             label: 'Forget…',
+            subLabel: 'Hide it from agents. Restore brings it back.',
             tone: 'destructive' as const,
             run: onForget,
             confirm: {
@@ -137,9 +156,10 @@ export function MemoryRow({
       : []),
   ];
   const menu = [...own, ...actions];
-  const items: MenuItem[] = menu.map(({ value, label, tone }) => ({
+  const items: MenuItem[] = menu.map(({ value, label, subLabel, tone }) => ({
     value,
     label,
+    subLabel,
     tone,
     action: true,
   }));
@@ -202,6 +222,7 @@ export function MemoryRow({
               size="sm"
               variant="outline"
               disabled={busy}
+              title="Approve it: from now on agents can find this entry."
               className="-my-1 h-7 shrink-0 rounded-control px-2.5 text-xs"
               onClick={onApprove}>
               Approve
@@ -218,7 +239,7 @@ export function MemoryRow({
                 aria-label={`Actions for ${entry.handle}`}
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
-                title="Actions"
+                title="More actions for this entry"
                 className="-my-1 size-7 shrink-0 rounded-control text-muted-foreground opacity-0 transition-opacity group-hover/memory-row:opacity-100 group-focus-within/memory-row:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100 max-sm:opacity-100 [&_svg]:size-4"
                 onClick={() => setMenuOpen((open) => !open)}>
                 <MoreHorizontal aria-hidden="true" />
@@ -229,7 +250,7 @@ export function MemoryRow({
                 side="bottom"
                 anchor="viewport"
                 triggerRef={triggerRef}
-                className="w-52 min-w-0"
+                className="w-72 min-w-0"
                 groups={[{ items }]}
                 onSelect={pick}
                 onClose={() => setMenuOpen(false)}

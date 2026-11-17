@@ -21,6 +21,7 @@ import { AgentGlyph } from './agent-glyph';
 import { CliLoginProgress } from './cli-login-progress';
 import { CollapsibleCard } from './collapsible-card';
 import { Field } from './field';
+import { HelpHint, HelpHintPart } from './help-hint';
 import { StatusDot, type StatusTone } from './status-dot';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -306,6 +307,7 @@ function CliUpdateBand({
           size="sm"
           className="shrink-0"
           disabled={updating}
+          title="Runs this agent's own updater on this Mac and replaces the installed program with its newest version."
           onClick={() => onUpdate(kind)}>
           {updating ? (
             <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
@@ -366,6 +368,7 @@ function CliInstallBand({
         size="sm"
         className="shrink-0"
         disabled={installing}
+        title="Downloads and runs this agent's own installer on this Mac, the one its maker publishes. Nothing else is installed."
         onClick={() => onInstall(kind)}>
         {installing ? (
           <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
@@ -532,6 +535,7 @@ export function AgentConfigList({
             <Field
               label={offerInstall ? 'Binary path (optional)' : 'Binary path'}
               htmlFor={pathId}
+              help={`Leave this empty and Geniro looks for ${agentShortName(identities, kind)} by itself. Set a path when Geniro could not find it, or when you want it to use one specific copy of the program. Browse lets you pick the program file instead of typing its path.`}
               hint={
                 found
                   ? 'Detected here — edit to pin a different binary.'
@@ -552,6 +556,7 @@ export function AgentConfigList({
                 <Button
                   type="button"
                   variant="outline"
+                  title="Pick the program file on this Mac instead of typing its path."
                   onClick={() => onBrowse(kind)}>
                   Browse…
                 </Button>
@@ -592,22 +597,45 @@ export function AgentConfigList({
                 // leave the panel outside the card's rounded corner.
                 cardLogin === null && '-mb-4',
               )}>
-              <span
-                className={cn(
-                  'text-sm',
-                  // Signed out is the one state that asks something of the user,
-                  // so it carries the same warn tone as the header's own dot
-                  // rather than sitting in muted text beside it.
-                  detection?.loggedIn === false
-                    ? 'text-warning'
-                    : 'text-muted-foreground',
-                )}>
-                {accountRowText({
-                  kind,
-                  loggedIn: detection?.loggedIn ?? null,
-                  profileScoped: profileScopedKinds?.has(kind) === true,
-                  canSignIn: onSignIn !== undefined,
-                })}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span
+                  className={cn(
+                    'text-sm',
+                    // Signed out is the one state that asks something of the user,
+                    // so it carries the same warn tone as the header's own dot
+                    // rather than sitting in muted text beside it.
+                    detection?.loggedIn === false
+                      ? 'text-warning'
+                      : 'text-muted-foreground',
+                  )}>
+                  {accountRowText({
+                    kind,
+                    loggedIn: detection?.loggedIn ?? null,
+                    profileScoped: profileScopedKinds?.has(kind) === true,
+                    canSignIn: onSignIn !== undefined,
+                  })}
+                </span>
+                <HelpHint
+                  subject={`${agentShortName(identities, kind)} status`}
+                  align="end"
+                  slot="agent-status-help">
+                  <HelpHintPart title="Ready">
+                    Geniro found the program and, where the program can say, you
+                    are signed in.
+                  </HelpHintPart>
+                  <HelpHintPart title="Not signed in">
+                    The program is installed, but you are not signed in to its
+                    own account. Sign in at the bottom of this card.
+                  </HelpHintPart>
+                  <HelpHintPart title="Not installed">
+                    Geniro could not find the program on this Mac. Install it
+                    here, or point to a copy with the path field.
+                  </HelpHintPart>
+                  <HelpHintPart title="Update available">
+                    A newer version exists. Update runs the program&apos;s own
+                    updater.
+                  </HelpHintPart>
+                </HelpHint>
               </span>
               {/* `found` matters as much as the handler: the daemon resolves an
                   account target from the bare CLI name without checking it
@@ -622,12 +650,20 @@ export function AgentConfigList({
                   control after every sign-in. */}
               {found &&
               (cardLogin === null || isLoginOver(cardLogin.session)) ? (
-                <AccountButton
-                  loggedIn={detection?.loggedIn ?? null}
-                  signingIn={signingIn === kind}
-                  onSignIn={onSignIn ? () => onSignIn(kind) : undefined}
-                  onSignOut={onSignOut ? () => onSignOut(kind) : undefined}
-                />
+                <span
+                  className="shrink-0"
+                  title={
+                    detection?.loggedIn === true
+                      ? `Signs ${agentShortName(identities, kind)} out on this Mac. You will need to sign in again to use it.`
+                      : `Opens ${agentShortName(identities, kind)}'s own sign-in in your browser; no terminal is needed. Geniro finishes on its own once you approve it there.`
+                  }>
+                  <AccountButton
+                    loggedIn={detection?.loggedIn ?? null}
+                    signingIn={signingIn === kind}
+                    onSignIn={onSignIn ? () => onSignIn(kind) : undefined}
+                    onSignOut={onSignOut ? () => onSignOut(kind) : undefined}
+                  />
+                </span>
               ) : null}
             </div>
             {cardLogin !== null ? (

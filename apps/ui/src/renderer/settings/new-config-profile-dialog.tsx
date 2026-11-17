@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 
 import { type CliKind, MAX_CONFIG_PROFILE_NAME } from '../../shared/contracts';
 import { Field } from '../components/field';
+import { HelpHint } from '../components/help-hint';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
@@ -115,7 +116,10 @@ export function NewConfigProfileDialog({
           Geniro makes a folder for it in its own data folder and opens the{' '}
           {agent} sign-in there, so this login stays apart from your other ones.
         </p>
-        <Field label="Name" htmlFor="new-config-profile-name">
+        <Field
+          label="Name"
+          htmlFor="new-config-profile-name"
+          help="Only for you: the name this configuration shows under when you pick it for a chat or a team member. You can rename it later.">
           <Input
             id="new-config-profile-name"
             value={name}
@@ -125,8 +129,20 @@ export function NewConfigProfileDialog({
           />
         </Field>
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">
+          <span className="flex items-center gap-1.5 text-sm font-medium">
             MCP servers to bring along
+            <HelpHint subject="MCP servers to bring along">
+              <p>
+                MCP servers are add-on tools an agent can call, set up in{' '}
+                {agent}&apos;s own settings. A new configuration starts without
+                any of them.
+              </p>
+              <p className="text-muted-foreground">
+                Ticked ones are copied from your other {agent} configurations
+                into the new one. A server the new one already has is never
+                overwritten. Some carry secret keys, and those are copied too.
+              </p>
+            </HelpHint>
           </span>
           {listing.state === 'loading' ? (
             <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -183,10 +199,14 @@ export function NewConfigProfileDialog({
             type="button"
             variant="ghost"
             disabled={creating}
+            title="Closes this without creating anything."
             onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={trimmed === '' || creating}>
+          <Button
+            type="submit"
+            disabled={trimmed === '' || creating}
+            title={`Makes the folder, copies the ticked MCP servers into it, then opens the ${agent} sign-in there in your browser.`}>
             {creating ? (
               <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
             ) : (

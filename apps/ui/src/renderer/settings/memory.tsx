@@ -1,6 +1,10 @@
 import {
   Archive,
+  ArrowLeftRight,
+  Brain,
+  Eraser,
   Inbox,
+  Library,
   MessagesSquare,
   Plus,
   Search,
@@ -37,6 +41,7 @@ import { ActionNotice } from '../components/action-notice';
 import { ConfirmActionButton } from '../components/confirm-action-button';
 import { EmptyState } from '../components/empty-state';
 import { ErrorBanner } from '../components/error-banner';
+import { HelpHint, HelpHintPart } from '../components/help-hint';
 import {
   BatchSummary,
   MemoryCleanupDialog,
@@ -55,7 +60,9 @@ import {
 } from '../components/memory-import-dialog';
 import { MemoryRow } from '../components/memory-row';
 import { MemorySortPanel } from '../components/memory-sort-panel';
+import { SettingsGroup, SettingsGroups } from '../components/settings-group';
 import { SettingsPanel, SettingsPanelRow } from '../components/settings-panel';
+import { ShowAllButton, useShowAll } from '../components/show-all';
 import {
   tabId,
   tabPanelId,
@@ -128,6 +135,7 @@ const REFRESH_DELAY_MS = 250;
 /** TWIN: `MEMORY_LIST_LIMIT_MAX` in `apps/daemon/src/v1/memory/memory.types.ts`. */
 const PENDING_LIMIT = 200;
 const MEMORY_PAGE = 20;
+const PENDING_SHOWN = 10;
 /** TWIN: `MEMORY_LIST_LIMIT_MAX` in `apps/daemon/src/v1/memory/memory.types.ts`. */
 const MEMORY_PAGE_MAX = 200;
 
@@ -465,7 +473,15 @@ export function Memory({
     client: lessonsClient,
   });
   const lessonCount = waitingLessons.proposals?.length ?? 0;
+  const [listOpen, setListOpen] = useState(false);
+  const entriesGroup = useRef<HTMLDivElement | null>(null);
+  // The list opens and reloads after the press, so the scroll waits for the
+  // rows it reveals: scrolled at once, the page is still too short to reach.
+  const [scrollAsk, setScrollAsk] = useState<{
+    entriesAtAsk: readonly MemoryEntry[];
+  } | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const pendingShow = useShowAll(entries, PENDING_SHOWN);
   const [error, setError] = useState<string | null>(null);
   const {
     editing,
@@ -634,6 +650,7 @@ export function Memory({
       .catch((err: unknown) => {
         if (mine === generation.current) {
           setError(describeDaemonError(err));
+          setScrollAsk(null);
         }
       });
   }, [api, filters, focus]);
@@ -907,18 +924,82 @@ export function Memory({
     }
     return 'a new chat in no project';
   })();
-  const waitingCount = pending.length + lessonCount;
-  const tabs: TabStripTab<EntryTab>[] = ENTRY_TABS.map((tab) =>
-    tab.id === 'pending' && waitingCount > 0
-      ? {
-          ...tab,
-          count: `${waitingCount.toLocaleString('en-US')}${pendingCut ? '+' : ''}`,
-        }
-      : tab,
-  );
+  const summary = cleanup.summary;
+  const waitingEntries = summary?.pending ?? pending.length;
+  const waitingCount = waitingEntries + lessonCount;
+  const waitingCut = summary === null && pendingCut;
+  const forgottenCount = summary?.forgotten ?? 0;
+  const tabs: TabStripTab<EntryTab>[] = ENTRY_TABS.map((tab) => {
+    if (tab.id === 'pending' && waitingCount > 0) {
+      return {
+        ...tab,
+        count: `${waitingCount.toLocaleString('en-US')}${waitingCut ? '+' : ''}`,
+      };
+    }
+    if (tab.id === 'forgotten' && forgottenCount > 0) {
+      return { ...tab, count: forgottenCount.toLocaleString('en-US') };
+    }
+    return tab;
+  });
+  const defaultFilters = sameFilters(filters, {
+    ...NO_FILTERS,
+    status: filters.status,
+  });
+  const daemonTotal =
+    focus !== null || !defaultFilters || summary === null
+      ? null
+      : filters.status === 'pending'
+        ? summary.pending
+        : filters.status === 'forgotten'
+          ? summary.forgotten
+          : null;
+  const entriesTotal =
+    filters.status === 'pending'
+      ? Math.max(daemonTotal ?? 0, entries.length) +
+        (defaultFilters ? lessonCount : 0)
+      : Math.max(daemonTotal ?? 0, entries.length);
+  const entriesExact = daemonTotal !== null || next === null;
+  const [entriesNoun, entriesNounOne] =
+    filters.status === 'pending'
+      ? ['waiting items', 'waiting item']
+      : ['entries', 'entry'];
+  const listVisible = focus !== null || listOpen || entriesTotal === 0;
+  const pendingCapped = filters.status === 'pending' && focus === null;
+  const shownEntries = pendingCapped ? pendingShow.shown : entries;
+  const pendingTotal = defaultFilters
+    ? Math.max(summary?.pending ?? 0, entries.length)
+    : entries.length;
+
+  useEffect(() => {
+    if (focus !== null) {
+      setListOpen(true);
+    }
+  }, [focus, setListOpen]);
+
+  const reviewWaiting = (): void => {
+    if (focus !== null) {
+      onFocusDone?.();
+    }
+    setFilters({ ...NO_FILTERS, status: 'pending' });
+    setWaitingTab(waitingEntries > 0 ? 'entries' : 'lessons');
+    setListOpen(true);
+    setScrollAsk(api === null ? null : { entriesAtAsk: entries });
+  };
+
+  useEffect(() => {
+    if (scrollAsk === null || !listVisible) {
+      return;
+    }
+    entriesGroup.current
+      ?.closest('[data-slot=settings-group]')
+      ?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    if (entries !== scrollAsk.entriesAtAsk) {
+      setScrollAsk(null);
+    }
+  }, [scrollAsk, listVisible, entries]);
   const waitingTabShown =
     waitingTab ??
-    (pending.length > 0 || lessonCount === 0 ? 'entries' : 'lessons');
+    (waitingEntries > 0 || lessonCount === 0 ? 'entries' : 'lessons');
   const lessonsShown =
     focus === null &&
     filters.status === 'pending' &&
@@ -1016,6 +1097,19 @@ export function Memory({
       />
     );
 
+  const entriesHint = (
+    <>
+      <p>
+        Every note agents can read or write, one row each. Open a tab to pick
+        which ones you are looking at; the list stays folded until you ask for
+        it.
+      </p>
+      <p>
+        Edit, forget or approve entries here, or add your own with New entry.
+      </p>
+    </>
+  );
+
   return (
     <div data-slot="memory" className="flex flex-col gap-3">
       {error !== null && (
@@ -1027,390 +1121,553 @@ export function Memory({
         </p>
       )}
 
-      <SettingsPanel>
-        <SettingsPanelRow
-          label="Shared memory"
-          htmlFor="settings-memory-enabled"
-          description="Agents read and save notes in one memory, whatever their CLI. Off, agents get no memory tools — the entries below stay here to edit.">
-          <Switch
-            id="settings-memory-enabled"
-            checked={current.enabled}
-            disabled={memory === null}
-            onCheckedChange={(on) => saveSettings({ ...current, enabled: on })}
-          />
-        </SettingsPanelRow>
-        <SettingsPanelRow
-          label="Agent notes"
-          htmlFor="settings-memory-agent-writes"
-          description="Also decides a lesson's memory note. Saved at once: agents find a new note by search right away, under Search only. Wait for my review: no agent sees it until you approve it.">
-          <Select
-            id="settings-memory-agent-writes"
-            aria-label="What happens to an agent's note"
-            className="w-48"
-            value={current.agentWrites}
-            disabled={memory === null}
-            groups={[{ label: 'Agent notes', items: AGENT_WRITES }]}
-            onValueChange={(value) =>
-              saveSettings({
-                ...current,
-                agentWrites: value as MemorySettings['agentWrites'],
-              })
-            }
-          />
-        </SettingsPanelRow>
-        <SettingsPanelRow
-          label="Each CLI's own memory off"
-          htmlFor="settings-memory-native-off"
-          description="New chats use only this memory, not the notes each CLI keeps itself. Import those first; a successful import turns this on.">
-          <Switch
-            id="settings-memory-native-off"
-            checked={current.nativeMemoryOff}
-            disabled={memory === null || !current.enabled}
-            onCheckedChange={(on) =>
-              saveSettings({ ...current, nativeMemoryOff: on })
-            }
-          />
-        </SettingsPanelRow>
-      </SettingsPanel>
-
-      <SettingsPanel>
-        <SettingsPanelRow
-          label="Clean up"
-          description={
-            cleanup.summary === null
-              ? 'Find the entries agents never use, and forget them in batches you can undo.'
-              : cleanupLine(cleanup.summary)
-          }>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={api === null}
-            onClick={cleanup.openDialog}>
-            Review…
-          </Button>
-        </SettingsPanelRow>
-        {lastPass.length > 1 ? (
-          <SettingsPanelRow
-            label="Last cleanup"
-            description={<PassSummary batches={lastPass} />}>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                cleanup.undoPass(lastPass.map((batch) => batch.batchId))
-              }>
-              Undo all
-            </Button>
-          </SettingsPanelRow>
-        ) : cleanup.summary?.lastBatch ? (
-          <SettingsPanelRow
-            label="Last cleanup"
-            description={<BatchSummary batch={cleanup.summary.lastBatch} />}>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                const last = cleanup.summary?.lastBatch;
-                if (last) {
-                  cleanup.undo(last.batchId);
-                }
-              }}>
-              Undo
-            </Button>
-          </SettingsPanelRow>
-        ) : null}
-        {cleanup.open || cleanup.notice === null ? null : (
-          <ActionNotice
-            key={cleanup.notice.text}
-            className="w-full"
-            icon={<Undo2 className="size-3.5" />}
-            title={cleanup.notice.text}
-            onDismiss={() => cleanup.announce(null)}
-          />
-        )}
-        {remote ? null : (
-          <MemoryAutoForgetRow
-            days={autoForgetDays}
-            figure={cleanup.autoForget}
-            preview={cleanup.autoForgetFigure}
-            onChange={saveAutoForget}
-          />
-        )}
-        {remote ? null : (
-          <SettingsPanelRow
-            label="Remove entries agents mark as not useful"
-            htmlFor="settings-memory-remove-not-useful"
-            description="When three more threads mark an entry not useful than helped, it is forgotten — any entry, kept ones included. It stays restorable under Forgotten for 30 days, then is deleted for good.">
-            <Switch
-              id="settings-memory-remove-not-useful"
-              checked={removeNotUseful ?? true}
-              disabled={removeNotUseful === undefined}
-              onCheckedChange={(on) => void saveRemoveNotUseful(on)}
+      <SettingsGroups>
+        {waitingCount > 0 ? (
+          <div
+            data-slot="memory-waiting-block"
+            className="flex flex-wrap items-center gap-3 rounded-lg border border-primary/40 bg-primary/5 px-4 py-3">
+            <Inbox
+              aria-hidden="true"
+              className="size-5 shrink-0 text-primary"
             />
-          </SettingsPanelRow>
-        )}
-      </SettingsPanel>
-
-      <LessonsSettingsPanel
-        agentsApi={agentsApi}
-        capabilities={capabilities}
-        capabilitiesLoading={capabilitiesLoading}
-        cliDetections={cliDetections}
-        lessonsApi={lessonsApi}
-        client={lessonsClient}
-        remote={remote}
-        agentWrites={memory === null ? null : current.agentWrites}
-      />
-
-      <section aria-label="Entries" className="flex flex-col gap-3">
-        <div className="flex min-h-8 items-center justify-between gap-2">
-          <h2 className="text-lg font-medium">Entries</h2>
-          {focus !== null || editing?.kind === 'new' ? null : (
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-semibold">
+                {waitingCount.toLocaleString('en-US')}
+                {waitingCut ? '+' : ''} waiting for your review
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {waitingEntries > 0 && lessonCount > 0
+                  ? `${plural(waitingEntries, 'note', 'notes')} agents saved and ${plural(lessonCount, 'lesson', 'lessons')} a reflection found`
+                  : lessonCount > 0
+                    ? plural(lessonCount, 'lesson', 'lessons') +
+                      ' a reflection found'
+                    : `${plural(waitingEntries, 'note', 'notes')} agents saved`}
+                . No agent uses them until you approve them.
+              </span>
+            </div>
             <Button
               type="button"
               size="sm"
-              variant="ghost"
-              disabled={api === null}
-              onClick={() => {
-                setFormError(null);
-                setEditing({
-                  kind: 'new',
-                  vouched: [],
-                  value: emptyValue(null),
-                });
-              }}>
-              <Plus aria-hidden="true" />
-              New entry
+              title="Open the Waiting for review list below, where you approve or forget each one."
+              onClick={reviewWaiting}>
+              Review now
             </Button>
-          )}
-        </div>
-        <SettingsPanel>
-          <SettingsPanelRow layout="block">
-            {focus !== null ? (
-              <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                <span>Showing {focus} only.</span>
+          </div>
+        ) : null}
+
+        <SettingsGroup
+          icon={<Brain />}
+          title="Memory settings"
+          description="Whether agents share one memory, and what happens to the notes they write."
+          hint="Memory is a notebook every agent can write to and search, whichever CLI it runs on, so something one agent learns is there for the next chat. These three switches decide whether it is used at all and who gets to add to it.">
+          <SettingsPanel>
+            <SettingsPanelRow
+              label="Shared memory"
+              htmlFor="settings-memory-enabled"
+              hint="On: agents can save notes and look them up in later chats. Off: agents get no memory tools at all, so they neither read nor write it. Your entries stay on this Mac and you can still edit them here."
+              description="Agents read and save notes in one memory, whatever their CLI. Off, agents get no memory tools — the entries below stay here to edit.">
+              <Switch
+                id="settings-memory-enabled"
+                checked={current.enabled}
+                disabled={memory === null}
+                onCheckedChange={(on) =>
+                  saveSettings({ ...current, enabled: on })
+                }
+              />
+            </SettingsPanelRow>
+            <SettingsPanelRow
+              label="Agent notes"
+              htmlFor="settings-memory-agent-writes"
+              hint="Saved at once: a note an agent writes is added straight away and agents can find it by searching. Wait for my review: the note is held under Waiting for review, and no agent sees it until you approve it; agents can then only add notes, not change or forget them. The same choice applies to notes made from lessons."
+              description="Also decides a lesson's memory note. Saved at once: agents find a new note by search right away, under Search only. Wait for my review: no agent sees it until you approve it.">
+              <Select
+                id="settings-memory-agent-writes"
+                aria-label="What happens to an agent's note"
+                className="w-48"
+                value={current.agentWrites}
+                disabled={memory === null}
+                groups={[{ label: 'Agent notes', items: AGENT_WRITES }]}
+                onValueChange={(value) =>
+                  saveSettings({
+                    ...current,
+                    agentWrites: value as MemorySettings['agentWrites'],
+                  })
+                }
+              />
+            </SettingsPanelRow>
+            <SettingsPanelRow
+              label="Each CLI's own memory off"
+              htmlFor="settings-memory-native-off"
+              hint="Some agent programs keep a notebook of their own. On: new chats ignore those and use only this shared memory, so an agent never has two notebooks that disagree. Import the old notes first so you do not lose them; a successful import turns this on for you."
+              description="New chats use only this memory, not the notes each CLI keeps itself. Import those first; a successful import turns this on.">
+              <Switch
+                id="settings-memory-native-off"
+                checked={current.nativeMemoryOff}
+                disabled={memory === null || !current.enabled}
+                onCheckedChange={(on) =>
+                  saveSettings({ ...current, nativeMemoryOff: on })
+                }
+              />
+            </SettingsPanelRow>
+          </SettingsPanel>
+        </SettingsGroup>
+
+        <SettingsGroup
+          icon={<Eraser />}
+          title="Clean up"
+          description="Find entries agents never use and forget them, with Undo."
+          hint="Over time memory collects notes nobody needs. Cleaning up never deletes straight away: forgotten entries move to Forgotten, where you can restore them, and every cleanup can be undone.">
+          <SettingsPanel>
+            <SettingsPanelRow
+              label="Clean up"
+              hint="Review… opens a list with four tabs: entries agents have not used for a while, pairs that repeat or contradict each other, entries you chose to keep, and forgotten ones. Nothing is forgotten until you tick entries and confirm."
+              description={
+                summary === null
+                  ? 'Find the entries agents never use, and forget them in batches you can undo.'
+                  : cleanupLine(summary)
+              }>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                title="Open the clean-up list: entries agents rarely use, and duplicates or contradictions."
+                disabled={api === null}
+                onClick={cleanup.openDialog}>
+                Review…
+              </Button>
+            </SettingsPanelRow>
+            {lastPass.length > 1 ? (
+              <SettingsPanelRow
+                label="Last cleanup"
+                hint="What your most recent clean-up forgot, in one or several batches. Undo brings every one of those entries back as it was."
+                description={<PassSummary batches={lastPass} />}>
                 <Button
                   type="button"
                   size="sm"
-                  variant="ghost"
-                  className="rounded-control"
-                  onClick={() => onFocusDone?.()}>
-                  Show all
+                  variant="outline"
+                  title="Bring back every entry the last cleanup forgot."
+                  onClick={() =>
+                    cleanup.undoPass(lastPass.map((batch) => batch.batchId))
+                  }>
+                  Undo all
                 </Button>
-              </div>
-            ) : (
-              <>
-                <TabStrip
-                  label="Which entries"
-                  idPrefix={ENTRY_TABS_ID}
-                  tabs={tabs}
-                  value={filters.status}
-                  className="border-b border-border"
-                  onSelect={(status) => setFilters({ ...filters, status })}
+              </SettingsPanelRow>
+            ) : summary?.lastBatch ? (
+              <SettingsPanelRow
+                label="Last cleanup"
+                hint="What your most recent clean-up forgot. Undo brings those entries back as they were."
+                description={<BatchSummary batch={summary.lastBatch} />}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  title="Bring back the entries the last cleanup forgot."
+                  onClick={() => {
+                    const last = cleanup.summary?.lastBatch;
+                    if (last) {
+                      cleanup.undo(last.batchId);
+                    }
+                  }}>
+                  Undo
+                </Button>
+              </SettingsPanelRow>
+            ) : null}
+            {cleanup.open || cleanup.notice === null ? null : (
+              <ActionNotice
+                key={cleanup.notice.text}
+                className="w-full"
+                icon={<Undo2 className="size-3.5" />}
+                title={cleanup.notice.text}
+                onDismiss={() => cleanup.announce(null)}
+              />
+            )}
+            {remote ? null : (
+              <MemoryAutoForgetRow
+                days={autoForgetDays}
+                figure={cleanup.autoForget}
+                preview={cleanup.autoForgetFigure}
+                onChange={saveAutoForget}
+              />
+            )}
+            {remote ? null : (
+              <SettingsPanelRow
+                label="Remove entries agents mark as not useful"
+                htmlFor="settings-memory-remove-not-useful"
+                hint="After a chat, agents say whether each entry they read helped. When an entry has three more not-useful marks than helpful ones, Geniro forgets it by itself, even one you chose to keep. You can restore it from Forgotten for 30 days; after that it is deleted for good."
+                description="When three more threads mark an entry not useful than helped, it is forgotten — any entry, kept ones included. It stays restorable under Forgotten for 30 days, then is deleted for good.">
+                <Switch
+                  id="settings-memory-remove-not-useful"
+                  checked={removeNotUseful ?? true}
+                  disabled={removeNotUseful === undefined}
+                  onCheckedChange={(on) => void saveRemoveNotUseful(on)}
                 />
-                <div
-                  data-slot="memory-entries-toolbar"
-                  className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
-                  <label className="relative min-w-[12rem] flex-1">
-                    <Search
-                      aria-hidden="true"
-                      className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-                    />
-                    <Input
-                      aria-label="Search memory"
-                      placeholder="Search"
-                      className="pl-8"
-                      value={filters.q}
-                      onChange={(event) =>
-                        setFilters({ ...filters, q: event.target.value })
-                      }
-                    />
-                  </label>
-                  <div className="flex min-w-0 items-center">
-                    <Select
+              </SettingsPanelRow>
+            )}
+          </SettingsPanel>
+        </SettingsGroup>
+
+        <LessonsSettingsPanel
+          agentsApi={agentsApi}
+          capabilities={capabilities}
+          capabilitiesLoading={capabilitiesLoading}
+          cliDetections={cliDetections}
+          lessonsApi={lessonsApi}
+          client={lessonsClient}
+          remote={remote}
+          agentWrites={memory === null ? null : current.agentWrites}
+        />
+
+        <SettingsGroup
+          layout="stacked"
+          icon={<Library />}
+          title="Entries"
+          description="Every note in memory, sorted by how agents reach it."
+          hint={entriesHint}
+          actions={
+            focus !== null || editing?.kind === 'new' ? null : (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                title="Write a note yourself that agents can use."
+                disabled={api === null}
+                onClick={() => {
+                  setFormError(null);
+                  setEditing({
+                    kind: 'new',
+                    vouched: [],
+                    value: emptyValue(null),
+                  });
+                }}>
+                <Plus aria-hidden="true" />
+                New entry
+              </Button>
+            )
+          }>
+          <div ref={entriesGroup} data-slot="memory-entries-group">
+            <SettingsPanel>
+              <SettingsPanelRow layout="block">
+                {focus !== null ? (
+                  <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                    <span>Showing {focus} only.</span>
+                    <Button
+                      type="button"
+                      size="sm"
                       variant="ghost"
-                      flexible
-                      aria-label="Scope"
-                      value={filters.scope}
-                      groups={scopeGroups}
-                      onValueChange={(scope) =>
-                        setFilters({ ...filters, scope })
-                      }
+                      className="rounded-control"
+                      title="Leave this one entry and list every entry again."
+                      onClick={() => onFocusDone?.()}>
+                      Show all
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex min-w-0 items-center gap-1 border-b border-border">
+                      <TabStrip
+                        label="Which entries"
+                        idPrefix={ENTRY_TABS_ID}
+                        tabs={tabs}
+                        value={filters.status}
+                        className="min-w-0 flex-1"
+                        onSelect={(status) => {
+                          setFilters({ ...filters, status });
+                          setListOpen(true);
+                        }}
+                      />
+                      <HelpHint subject="the entry tabs" align="end">
+                        <HelpHintPart title="In every chat">
+                          Entries whose titles every new chat starts with, up to
+                          2 KB, so agents know them without searching.
+                        </HelpHintPart>
+                        <HelpHintPart title="Search only">
+                          Entries agents are not told about up front. They find
+                          one only by searching memory.
+                        </HelpHintPart>
+                        <HelpHintPart title="Waiting for review">
+                          Notes agents saved, and lessons a reflection found,
+                          that no agent uses until you approve them.
+                        </HelpHintPart>
+                        <HelpHintPart title="Forgotten">
+                          Entries hidden from every agent. Restore brings one
+                          back.
+                        </HelpHintPart>
+                      </HelpHint>
+                    </div>
+                    <ShowAllButton
+                      total={entriesExact ? entriesTotal : null}
+                      limit={0}
+                      expanded={listOpen}
+                      noun={entriesNoun}
+                      nounOne={entriesNounOne}
+                      onToggle={() => setListOpen(!listOpen)}
                     />
-                    <Select
-                      variant="ghost"
-                      aria-label="Type"
-                      value={filters.type}
-                      groups={[{ label: 'Type', items: TYPE_FILTERS }]}
-                      onValueChange={(type) => setFilters({ ...filters, type })}
+                  </>
+                )}
+                {editing?.kind === 'new' ? (
+                  <div className="mt-2">
+                    <MemoryForm
+                      value={editing.value}
+                      projects={projects}
+                      teams={libraryTeamOptions}
+                      saving={saving}
+                      error={formError}
+                      submitLabel="Add"
+                      onChange={(value) =>
+                        setEditing({ ...editing, value, vouched: [] })
+                      }
+                      onSubmit={() => void submit()}
+                      onCancel={() => {
+                        setEditing(null);
+                        setFormError(null);
+                      }}
                     />
                   </div>
-                </div>
-                <p className="m-0 flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                  <span data-slot="memory-tab-explained">
-                    {TAB_EXPLAINED[filters.status]}
-                  </span>
-                  {filters.status === 'index' && indexPreview !== null ? (
-                    <span
-                      data-slot="memory-index-fit"
-                      title={`How many of these titles ${previewWhere} starts with now; the rest are found by search. Pick a project or team to see its own.`}
-                      className="tabular-nums">
-                      <span className="font-medium text-foreground">
-                        {indexPreview.listed.toLocaleString('en-US')} of{' '}
-                        {indexPreview.eligible.toLocaleString('en-US')} fit
-                      </span>{' '}
-                      · {previewWhere}
-                    </span>
-                  ) : null}
-                </p>
-              </>
-            )}
-            {editing?.kind === 'new' ? (
-              <div className="mt-2">
-                <MemoryForm
-                  value={editing.value}
-                  projects={projects}
-                  teams={libraryTeamOptions}
-                  saving={saving}
-                  error={formError}
-                  submitLabel="Add"
-                  onChange={(value) =>
-                    setEditing({ ...editing, value, vouched: [] })
-                  }
-                  onSubmit={() => void submit()}
-                  onCancel={() => {
-                    setEditing(null);
-                    setFormError(null);
-                  }}
-                />
-              </div>
-            ) : null}
-            <div
-              role={focus === null ? 'tabpanel' : undefined}
-              id={
-                focus === null
-                  ? tabPanelId(ENTRY_TABS_ID, filters.status)
-                  : undefined
-              }
-              aria-labelledby={
-                focus === null
-                  ? tabId(ENTRY_TABS_ID, filters.status)
-                  : undefined
-              }
-              data-slot="memory-entries"
-              className="flex min-w-0 flex-col">
-              {focus === null && filters.status === 'pending' ? (
-                <TabStrip
-                  label="Waiting for review"
-                  idPrefix="memory-waiting"
-                  tabs={[
-                    { id: 'entries', label: 'Entries', count: pending.length },
-                    { id: 'lessons', label: 'Lessons', count: lessonCount },
-                  ]}
-                  value={waitingTabShown}
-                  className="mt-1"
-                  onSelect={setWaitingTab}
-                />
-              ) : null}
-              {lessonsShown ? (
-                <div className="mt-2 flex flex-col gap-6">
-                  <WaitingLessons
-                    waiting={waitingLessons}
-                    lessonsApi={lessonsApi}
-                    knowledgeApi={knowledgeApi}
-                  />
-                  <SavedLessons saved={savedLessons} lessonsApi={lessonsApi} />
-                </div>
-              ) : loaded && entries.length === 0 ? (
-                focus !== null ? (
-                  <EmptyState className="h-auto py-8">
-                    No entry {focus}.
-                  </EmptyState>
-                ) : sameFilters(filters, {
-                    ...NO_FILTERS,
-                    status: filters.status,
-                  }) ? (
-                  <EmptyState
-                    className="py-8"
-                    icon={TAB_EMPTY_ICON[filters.status]}>
-                    {TAB_EMPTY[filters.status]}
-                  </EmptyState>
-                ) : (
-                  <EmptyState className="h-auto py-8">
-                    No entry matches. Try other words, or clear the filters.
-                  </EmptyState>
-                )
-              ) : (
-                <ul className="-mx-2 flex list-none flex-col divide-y divide-border p-0">
-                  {entries.map((entry) => (
-                    <li key={entry.id} className="py-0.5">
-                      {row(entry)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {next !== null && !lessonsShown ? (
+                ) : null}
+                {listVisible && focus === null ? (
+                  <>
+                    <div
+                      data-slot="memory-entries-toolbar"
+                      className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
+                      <label className="relative min-w-[12rem] flex-1">
+                        <Search
+                          aria-hidden="true"
+                          className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+                        />
+                        <Input
+                          aria-label="Search memory"
+                          placeholder="Search"
+                          className="pl-8"
+                          value={filters.q}
+                          onChange={(event) =>
+                            setFilters({ ...filters, q: event.target.value })
+                          }
+                        />
+                      </label>
+                      <div className="flex min-w-0 items-center">
+                        <Select
+                          variant="ghost"
+                          flexible
+                          aria-label="Scope"
+                          title="Show only the entries of one project, team or the global memory."
+                          value={filters.scope}
+                          groups={scopeGroups}
+                          onValueChange={(scope) =>
+                            setFilters({ ...filters, scope })
+                          }
+                        />
+                        <Select
+                          variant="ghost"
+                          aria-label="Type"
+                          title="Show only one kind of entry: about you, feedback, a project or a reference."
+                          value={filters.type}
+                          groups={[{ label: 'Type', items: TYPE_FILTERS }]}
+                          onValueChange={(type) =>
+                            setFilters({ ...filters, type })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <p className="m-0 flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                      <span data-slot="memory-tab-explained">
+                        {TAB_EXPLAINED[filters.status]}
+                      </span>
+                      {filters.status === 'index' && indexPreview !== null ? (
+                        <span
+                          data-slot="memory-index-fit"
+                          title={`How many of these titles ${previewWhere} starts with now; the rest are found by search. Pick a project or team to see its own.`}
+                          className="tabular-nums">
+                          <span className="font-medium text-foreground">
+                            {indexPreview.listed.toLocaleString('en-US')} of{' '}
+                            {indexPreview.eligible.toLocaleString('en-US')} fit
+                          </span>{' '}
+                          · {previewWhere}
+                        </span>
+                      ) : null}
+                    </p>
+                  </>
+                ) : null}
+                {listVisible ? (
+                  <div
+                    role={focus === null ? 'tabpanel' : undefined}
+                    id={
+                      focus === null
+                        ? tabPanelId(ENTRY_TABS_ID, filters.status)
+                        : undefined
+                    }
+                    aria-labelledby={
+                      focus === null
+                        ? tabId(ENTRY_TABS_ID, filters.status)
+                        : undefined
+                    }
+                    data-slot="memory-entries"
+                    className="flex min-w-0 flex-col">
+                    {focus === null && filters.status === 'pending' ? (
+                      <div className="mt-1 flex min-w-0 items-center gap-1">
+                        <TabStrip
+                          label="Waiting for review"
+                          idPrefix="memory-waiting"
+                          tabs={[
+                            {
+                              id: 'entries',
+                              label: 'Entries',
+                              count:
+                                waitingEntries > 0 ? waitingEntries : undefined,
+                            },
+                            {
+                              id: 'lessons',
+                              label: 'Lessons',
+                              count: lessonCount > 0 ? lessonCount : undefined,
+                            },
+                          ]}
+                          value={waitingTabShown}
+                          className="min-w-0 flex-1"
+                          onSelect={setWaitingTab}
+                        />
+                        <HelpHint
+                          subject="waiting entries and lessons"
+                          align="end">
+                          <HelpHintPart title="Entries">
+                            Notes an agent wanted to add to memory. Approve one
+                            to let agents use it, or forget it.
+                          </HelpHintPart>
+                          <HelpHintPart title="Lessons">
+                            What a reflection found in a chat. A number here
+                            counts only the lessons still waiting for you; the
+                            ones already saved are listed below, under Saved to
+                            memory, with their own count.
+                          </HelpHintPart>
+                        </HelpHint>
+                      </div>
+                    ) : null}
+                    {lessonsShown ? (
+                      <div className="mt-2 flex flex-col gap-6">
+                        <WaitingLessons
+                          waiting={waitingLessons}
+                          lessonsApi={lessonsApi}
+                          knowledgeApi={knowledgeApi}
+                        />
+                        <SavedLessons
+                          saved={savedLessons}
+                          lessonsApi={lessonsApi}
+                        />
+                      </div>
+                    ) : loaded && entries.length === 0 ? (
+                      focus !== null ? (
+                        <EmptyState className="h-auto py-8">
+                          No entry {focus}.
+                        </EmptyState>
+                      ) : defaultFilters ? (
+                        <EmptyState
+                          className="py-8"
+                          icon={TAB_EMPTY_ICON[filters.status]}>
+                          {TAB_EMPTY[filters.status]}
+                        </EmptyState>
+                      ) : (
+                        <EmptyState className="h-auto py-8">
+                          No entry matches. Try other words, or clear the
+                          filters.
+                        </EmptyState>
+                      )
+                    ) : (
+                      <ul className="-mx-2 flex list-none flex-col divide-y divide-border p-0">
+                        {shownEntries.map((entry) => (
+                          <li key={entry.id} className="py-0.5">
+                            {row(entry)}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {pendingCapped && !lessonsShown ? (
+                      <ShowAllButton
+                        total={pendingTotal}
+                        limit={PENDING_SHOWN}
+                        expanded={pendingShow.expanded}
+                        noun="waiting entries"
+                        className="mt-1"
+                        onToggle={() =>
+                          pendingShow.setExpanded(!pendingShow.expanded)
+                        }
+                      />
+                    ) : null}
+                    {next !== null &&
+                    !lessonsShown &&
+                    (!pendingCapped ||
+                      pendingShow.expanded ||
+                      entries.length <= PENDING_SHOWN) ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="mt-1 self-center rounded-control text-muted-foreground"
+                        title="Load the next page of entries."
+                        disabled={loadingMore}
+                        onClick={loadMore}>
+                        Show more
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </SettingsPanelRow>
+            </SettingsPanel>
+          </div>
+        </SettingsGroup>
+
+        <SettingsGroup
+          icon={<ArrowLeftRight />}
+          title="Import, export and reset"
+          description="Move notes in or out of memory, or start from empty."
+          hint="Import brings in notes your CLIs kept in their own memory. Export saves your entries as a file you can keep. Forget all hides every entry from the agents.">
+          <SettingsPanel>
+            {remote ? null : (
+              <SettingsPanelRow
+                label="Import"
+                hint="Claude and other CLIs keep their own notes in files on this Mac. Import shows you those notes and lets you pick which ones to copy into this memory. The originals are only read, never changed. A successful import also turns on Each CLI's own memory off."
+                description="Bring the notes each CLI kept in its own memory into this one. You pick which; the CLIs' files are only read.">
                 <Button
                   type="button"
                   size="sm"
-                  variant="ghost"
-                  className="mt-1 self-center rounded-control text-muted-foreground"
-                  disabled={loadingMore}
-                  onClick={loadMore}>
-                  Show more
+                  variant="outline"
+                  title="Look through the notes your CLIs kept and pick which to copy here."
+                  disabled={api === null}
+                  onClick={openImport}>
+                  Import…
                 </Button>
-              ) : null}
-            </div>
-          </SettingsPanelRow>
-        </SettingsPanel>
-      </section>
-
-      <SettingsPanel>
-        {remote ? null : (
-          <SettingsPanelRow
-            label="Import"
-            description="Bring the notes each CLI kept in its own memory into this one. You pick which; the CLIs' files are only read.">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={api === null}
-              onClick={openImport}>
-              Import…
-            </Button>
-          </SettingsPanelRow>
-        )}
-        {remote ? null : (
-          <SettingsPanelRow
-            label="Export"
-            description="Every active and waiting entry as one Markdown file.">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={api === null}
-              onClick={() => void exportAll()}>
-              Export…
-            </Button>
-          </SettingsPanelRow>
-        )}
-        <SettingsPanelRow
-          label="Forget all"
-          description="Hide every entry from every agent. Each stays restorable under Forgotten.">
-          <ConfirmActionButton
-            disabled={api === null}
-            question="Forget every entry?"
-            description="Every entry is hidden from every agent. Each stays restorable under Forgotten."
-            confirmLabel="Forget all"
-            busyLabel="Forgetting…"
-            onConfirm={() => forgetAll()}>
-            Forget all
-          </ConfirmActionButton>
-        </SettingsPanelRow>
-      </SettingsPanel>
+              </SettingsPanelRow>
+            )}
+            {remote ? null : (
+              <SettingsPanelRow
+                label="Export"
+                hint="Saves your entries as one Markdown text file wherever you choose, to keep a copy or move them elsewhere. Entries you forgot are not in it."
+                description="Every active and waiting entry as one Markdown file.">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  title="Save every active and waiting entry to a Markdown file."
+                  disabled={api === null}
+                  onClick={() => void exportAll()}>
+                  Export…
+                </Button>
+              </SettingsPanelRow>
+            )}
+            <SettingsPanelRow
+              label="Forget all"
+              hint="Hides every entry from every agent at once, so memory starts empty. Nothing is deleted: each entry moves to Forgotten and Restore brings it back. You are asked to confirm first."
+              description="Hide every entry from every agent. Each stays restorable under Forgotten.">
+              <ConfirmActionButton
+                title="Hide every entry from every agent, after you confirm."
+                disabled={api === null}
+                question="Forget every entry?"
+                description="Every entry is hidden from every agent. Each stays restorable under Forgotten."
+                confirmLabel="Forget all"
+                busyLabel="Forgetting…"
+                onConfirm={() => forgetAll()}>
+                Forget all
+              </ConfirmActionButton>
+            </SettingsPanelRow>
+          </SettingsPanel>
+        </SettingsGroup>
+      </SettingsGroups>
 
       <MemoryCleanupDialog
         open={cleanup.open}

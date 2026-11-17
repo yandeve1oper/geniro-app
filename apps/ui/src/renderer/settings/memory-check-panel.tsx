@@ -211,6 +211,7 @@ function MergeForm({
         <Button
           type="button"
           size="sm"
+          title="Save this text as one entry in place of the two; Undo is offered after."
           disabled={busy || title.trim() === '' || body.trim() === ''}
           onClick={() => void save()}>
           {busy ? 'Saving…' : 'Save merged entry'}
@@ -219,6 +220,7 @@ function MergeForm({
           type="button"
           size="sm"
           variant="outline"
+          title="Close this form and change nothing."
           disabled={busy}
           onClick={onCancel}>
           Cancel
@@ -296,6 +298,7 @@ function FindingCard({
             type="button"
             size="sm"
             variant="outline"
+            title="Keep the first entry and forget the second. Undo is offered after."
             disabled={busy}
             onClick={() => check.keepOne(finding, 'a')}>
             Keep A, forget B
@@ -304,6 +307,7 @@ function FindingCard({
             type="button"
             size="sm"
             variant="outline"
+            title="Keep the second entry and forget the first. Undo is offered after."
             disabled={busy}
             onClick={() => check.keepOne(finding, 'b')}>
             Keep B, forget A
@@ -312,6 +316,7 @@ function FindingCard({
             type="button"
             size="sm"
             variant="outline"
+            title="Write one entry that says what both did, and save it in place of the two."
             disabled={busy}
             onClick={onMergeOpen}>
             Merge…
@@ -320,6 +325,7 @@ function FindingCard({
             type="button"
             size="sm"
             variant="outline"
+            title="Keep both entries as they are and stop flagging this pair."
             disabled={busy}
             onClick={() => check.bothTrue(finding)}>
             Both are true
@@ -328,6 +334,7 @@ function FindingCard({
             type="button"
             size="sm"
             variant="ghost"
+            title="Hide this finding for now; it stays under the set aside count."
             disabled={busy}
             onClick={() => check.decideLater(finding)}>
             Decide later
@@ -380,6 +387,7 @@ export function MemoryCheckPanel({
           type="button"
           size="sm"
           variant="outline"
+          title="Stop asking for more batches. The batch already asked still finishes and is billed."
           disabled={check.stopping}
           onClick={check.stop}>
           {check.stopping ? 'Stopping after this batch…' : 'Stop'}
@@ -429,6 +437,7 @@ export function MemoryCheckPanel({
         <Button
           type="button"
           size="sm"
+          title="Ask your agent about these pairs, a batch at a time. It is billed to its account."
           disabled={settings === null || check.pairsLoading || count === 0}
           onClick={check.start}>
           {count === 0 && !check.pairsLoading && estimate !== null
@@ -481,6 +490,7 @@ export function MemoryCheckPanel({
           size="sm"
           variant="ghost"
           className="self-start"
+          title="Bring back the findings you set aside."
           onClick={check.showLater}>
           Show {check.setAside.toLocaleString('en-US')} set aside
         </Button>

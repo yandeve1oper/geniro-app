@@ -131,3 +131,17 @@ describe('Knowledge settings', () => {
     );
   });
 });
+
+describe('Knowledge settings — explanations', () => {
+  it('explains the group and both rows', async () => {
+    install({ enabled: true, agentWrites: 'review' });
+    await render();
+
+    for (const label of ['Knowledge', 'Agent knowledge', 'Agent writes']) {
+      expect(
+        container.querySelector(`button[aria-label="About ${label}"]`),
+        label,
+      ).not.toBeNull();
+    }
+  });
+});

@@ -56,6 +56,7 @@ function proposal(
     places: PROJECT_PLACES,
     moveUp: null,
     undoable: false,
+    memoryPending: false,
     sourceExists: true,
     createdAt: '2026-11-15T10:00:00Z',
     decidedAt: null,
@@ -408,6 +409,30 @@ function savedProposal(id: string, title: string): LessonProposal {
   });
 }
 
+describe('WaitingLessons cap', () => {
+  it('shows the first five waiting lessons and the rest behind Show all', async () => {
+    const api = lessonsApiMock(
+      Array.from({ length: 8 }, (_, index) => proposal({ id: `w${index}` })),
+    );
+    const el = await render({ lessonsApi: asLessonsApi(api) });
+    await flush();
+
+    expect(el.querySelectorAll('[data-slot="waiting-lesson"]')).toHaveLength(5);
+    await press(buttonNamed(el, 'Show all 8 lessons'));
+    expect(el.querySelectorAll('[data-slot="waiting-lesson"]')).toHaveLength(8);
+  });
+
+  it('draws no Show all for five or fewer', async () => {
+    const api = lessonsApiMock(
+      Array.from({ length: 5 }, (_, index) => proposal({ id: `w${index}` })),
+    );
+    const el = await render({ lessonsApi: asLessonsApi(api) });
+    await flush();
+
+    expect(el.querySelector('[data-slot="show-all"]')).toBeNull();
+  });
+});
+
 describe('SavedLessons', () => {
   it('lists only the lessons that own their memory entry, read as saved lessons', async () => {
     const api = lessonsApiMock([
@@ -419,11 +444,18 @@ describe('SavedLessons', () => {
         resultRef: 'm7',
         undoable: false,
       }),
+      {
+        ...savedProposal('held', 'WHEN reviewing → its note still waits'),
+        memoryPending: true,
+      },
     ]);
     const el = await renderSaved(asLessonsApi(api));
 
     expect(api.listLessonProposals).toHaveBeenCalledWith({ status: 'saved' });
     expect(el.querySelectorAll('[data-slot="saved-lesson"]')).toHaveLength(1);
+    expect(el.textContent).not.toContain(
+      'WHEN reviewing → its note still waits',
+    );
     expect(el.textContent).toContain('WHEN seeding → reset the fixtures first');
     expect(el.textContent).not.toContain('WHEN refining → keep it');
   });
@@ -467,8 +499,13 @@ describe('SavedLessons', () => {
     const el = await renderSaved(asLessonsApi(api));
 
     expect(el.querySelectorAll('[data-slot="saved-lesson"]')).toHaveLength(5);
-    await press(buttonNamed(el, 'Show all 7'));
+    expect(
+      el.querySelector('[data-slot="saved-lessons"] h3')?.textContent,
+    ).toBe('Saved to memory · 7');
+    await press(buttonNamed(el, 'Show all 7 lessons'));
     expect(el.querySelectorAll('[data-slot="saved-lesson"]')).toHaveLength(7);
+    await press(buttonNamed(el, 'Show fewer'));
+    expect(el.querySelectorAll('[data-slot="saved-lesson"]')).toHaveLength(5);
   });
 
   it('draws nothing while no lesson is saved', async () => {

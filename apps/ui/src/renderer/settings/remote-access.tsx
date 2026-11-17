@@ -1,4 +1,13 @@
-import { Globe, Loader2, RefreshCw, Smartphone, Trash2 } from 'lucide-react';
+import {
+  Globe,
+  KeyRound,
+  Link2,
+  Loader2,
+  RefreshCw,
+  Smartphone,
+  Tablet,
+  Trash2,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { RemoteAccessState } from '../../shared/remote';
@@ -6,7 +15,9 @@ import { formatRelativeTime } from '../chats/relative-time';
 import { CopyButton } from '../components/copy-button';
 import { ErrorText } from '../components/error-text';
 import { QrCode } from '../components/qr-code';
+import { SettingsGroup, SettingsGroups } from '../components/settings-group';
 import { SettingsPanel, SettingsPanelRow } from '../components/settings-panel';
+import { ShowAllButton, useShowAll } from '../components/show-all';
 import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
 import { useLatestCallback } from '../components/use-latest-callback';
@@ -46,6 +57,7 @@ export const REMOTE_ACCESS_POLL_WINDOW_MS = 5 * 60_000;
  */
 const EXPIRY_REREAD_MARGIN_MS = 1_000;
 const DEVICES_SHOWN = 5;
+const NO_DEVICES: RemoteAccessState['devices'] = [];
 
 type TunnelPress = 'open' | 'close';
 
@@ -102,74 +114,88 @@ function TunnelPanel({
   const connecting =
     !open && (tunnel.status === 'starting' || pending === 'open');
   return (
-    <SettingsPanel>
-      <SettingsPanelRow
-        layout="block"
-        label="Internet address"
-        description="Runs a tunnel client on this Mac (cloudflared, else ngrok) and forwards a public address to it. Anyone with the link reaches the pairing screen, so the 6-digit code becomes the only thing in front of your agents.">
-        <div className="flex flex-col gap-2">
-          {open && tunnel.url ? (
-            <RemoteLinkRow
-              label={`Public (via ${tunnel.provider ?? 'tunnel'})`}
-              url={tunnel.url}
-            />
-          ) : null}
-          {tunnel.status === 'error' && tunnel.error ? (
-            <ErrorText>{tunnel.error}</ErrorText>
-          ) : null}
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant={open || connecting ? 'outline' : 'default'}
-              size="sm"
-              className="shrink-0 gap-1.5"
-              disabled={closing}
-              onClick={open || connecting ? onClose : onOpen}>
-              {closing || connecting ? (
-                <Loader2
-                  aria-hidden="true"
-                  className="size-3.5 shrink-0 animate-spin"
-                />
-              ) : (
-                <Globe aria-hidden="true" className="size-3.5 shrink-0" />
-              )}
-              {connecting
-                ? 'Cancel'
-                : open
-                  ? 'Close address'
-                  : 'Get an address'}
-            </Button>
-            {connecting ? (
-              <span className="text-xs text-muted-foreground">
-                Connecting… The address appears here once it works.
-              </span>
+    <SettingsGroup
+      icon={<Globe />}
+      title="Public address"
+      description="Reach this Mac from outside your Wi-Fi."
+      hint="By default only devices on your own network can connect. A public address lets a phone on mobile data connect too, through a free tunnel program you already have installed. Geniro starts it when you press the button and stops it when you close the address.">
+      <SettingsPanel>
+        <SettingsPanelRow
+          layout="block"
+          label="Internet address"
+          hint="Pressing Get an address starts the tunnel program (cloudflared, else ngrok) and shows a public link once it connects. Anyone who gets that link sees the pairing screen, so keep the pairing code private. The link may change each time it opens (cloudflared always gives a new one), and Close address shuts it down; Cancel stops a connection that is still starting."
+          description="Runs a tunnel client on this Mac (cloudflared, else ngrok) and forwards a public address to it. Anyone with the link reaches the pairing screen, so the 6-digit code becomes the only thing in front of your agents.">
+          <div className="flex flex-col gap-2">
+            {open && tunnel.url ? (
+              <RemoteLinkRow
+                label={`Public (via ${tunnel.provider ?? 'tunnel'})`}
+                url={tunnel.url}
+              />
+            ) : null}
+            {tunnel.status === 'error' && tunnel.error ? (
+              <ErrorText>{tunnel.error}</ErrorText>
+            ) : null}
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant={open || connecting ? 'outline' : 'default'}
+                size="sm"
+                className="shrink-0 gap-1.5"
+                disabled={closing}
+                title={
+                  connecting
+                    ? 'Stop connecting and do not open a public address.'
+                    : open
+                      ? 'Shut the tunnel down. The public link stops working.'
+                      : 'Start a tunnel and get a public link to this Mac.'
+                }
+                onClick={open || connecting ? onClose : onOpen}>
+                {closing || connecting ? (
+                  <Loader2
+                    aria-hidden="true"
+                    className="size-3.5 shrink-0 animate-spin"
+                  />
+                ) : (
+                  <Globe aria-hidden="true" className="size-3.5 shrink-0" />
+                )}
+                {connecting
+                  ? 'Cancel'
+                  : open
+                    ? 'Close address'
+                    : 'Get an address'}
+              </Button>
+              {connecting ? (
+                <span className="text-xs text-muted-foreground">
+                  Connecting… The address appears here once it works.
+                </span>
+              ) : null}
+            </div>
+            {connecting && tunnel.detail ? (
+              <p
+                data-slot="tunnel-detail"
+                className="m-0 text-xs break-words text-muted-foreground">
+                {tunnel.provider}: {tunnel.detail}
+              </p>
             ) : null}
           </div>
-          {connecting && tunnel.detail ? (
-            <p
-              data-slot="tunnel-detail"
-              className="m-0 text-xs break-words text-muted-foreground">
-              {tunnel.provider}: {tunnel.detail}
-            </p>
-          ) : null}
-        </div>
-      </SettingsPanelRow>
-      {open && tunnel.url ? (
-        <SettingsPanelRow layout="block">
-          <div className="flex items-center gap-3">
-            <QrCode
-              value={tunnel.url}
-              size={144}
-              label="Scan to open the public link on your phone"
-            />
-            <p className="text-xs text-muted-foreground">
-              Works from any network, not just this Wi-Fi. The address changes
-              every time you open one.
-            </p>
-          </div>
         </SettingsPanelRow>
-      ) : null}
-    </SettingsPanel>
+        {open && tunnel.url ? (
+          <SettingsPanelRow layout="block">
+            <div className="flex items-center gap-3">
+              <QrCode
+                value={tunnel.url}
+                size={144}
+                label="Scan to open the public link on your phone"
+              />
+              <p className="text-xs text-muted-foreground">
+                Works from any network, not just this Wi-Fi. The address changes
+                every time you open one.
+              </p>
+            </div>
+          </SettingsPanelRow>
+        ) : null}
+      </SettingsPanel>
+    </SettingsGroup>
   );
 }
 
@@ -263,7 +289,6 @@ export function RemoteAccess({
   // was reported.
   const [regeneratedHere, setRegeneratedHere] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
-  const [allDevicesShown, setAllDevicesShown] = useState(false);
   // The switch flips at once, before the round trip answers — a toggle that
   // waited for `updateSettings` to resolve before moving would read as an
   // unresponsive control on a slow launch.
@@ -490,66 +515,88 @@ export function RemoteAccess({
       });
   }, []);
 
+  const {
+    shown: shownDevices,
+    expanded: devicesExpanded,
+    setExpanded: setDevicesExpanded,
+  } = useShowAll(state?.devices ?? NO_DEVICES, DEVICES_SHOWN);
+
   return (
-    <div data-slot="remote-access" className="flex flex-col gap-3">
+    <SettingsGroups>
       {error ? <ErrorText>{error}</ErrorText> : null}
 
-      <SettingsPanel>
-        <SettingsPanelRow
-          label="Remote access"
-          htmlFor="settings-remote-access"
-          description="Serves this app to your Wi-Fi so a phone can open the same live chats. Off, the port is never opened at all.">
-          <Switch
-            id="settings-remote-access"
-            checked={state?.enabled ?? false}
-            disabled={state === null || togglePending}
-            onCheckedChange={onToggle}
-          />
-        </SettingsPanelRow>
-        {/* Exactly the state `enabled`/`listening` are two fields for: the
-            switch is on and the port never bound. */}
-        {state?.enabled && !state.listening && state.unavailableReason ? (
-          <SettingsPanelRow layout="block">
-            <ErrorText>{state.unavailableReason}</ErrorText>
+      <SettingsGroup
+        icon={<Tablet />}
+        title="Access from other devices"
+        description="Open your live chats from a phone or tablet."
+        hint="Turn this on to use Geniro from your phone while this Mac is running. The Mac serves the app to devices on the same Wi-Fi, and a device has to pair first with a code shown here. Nothing goes through a Geniro server.">
+        <SettingsPanel>
+          <SettingsPanelRow
+            label="Remote access"
+            htmlFor="settings-remote-access"
+            description="Serves this app to your Wi-Fi so a phone can open the same live chats. Off, the port is never opened at all."
+            hint="On: this Mac listens for devices on your network and shows a link, a QR code and a pairing code below. Off: nothing is listening, and every paired device stops working until you turn it back on. Turning it off also closes a public address.">
+            <Switch
+              id="settings-remote-access"
+              checked={state?.enabled ?? false}
+              disabled={state === null || togglePending}
+              onCheckedChange={onToggle}
+            />
           </SettingsPanelRow>
-        ) : null}
-      </SettingsPanel>
+          {/* Exactly the state `enabled`/`listening` are two fields for: the
+              switch is on and the port never bound. */}
+          {state?.enabled && !state.listening && state.unavailableReason ? (
+            <SettingsPanelRow layout="block">
+              <ErrorText>{state.unavailableReason}</ErrorText>
+            </SettingsPanelRow>
+          ) : null}
+        </SettingsPanel>
+      </SettingsGroup>
 
       {state?.enabled && state.listening ? (
         <>
-          <SettingsPanel>
-            <SettingsPanelRow layout="block" label="Links">
-              <div className="flex flex-col gap-2">
-                {state.hostUrl ? (
-                  <RemoteLinkRow
-                    label="This device (.local)"
-                    url={state.hostUrl}
-                  />
-                ) : null}
-                {state.addressUrl ? (
-                  <RemoteLinkRow
-                    label="This device (IP address, if .local doesn’t resolve)"
-                    url={state.addressUrl}
-                  />
-                ) : null}
-              </div>
-            </SettingsPanelRow>
-            {state.hostUrl ? (
-              <SettingsPanelRow layout="block">
-                <div className="flex items-center gap-3">
-                  <QrCode
-                    value={state.hostUrl}
-                    size={144}
-                    label="Scan to open this device’s link on your phone"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Scan with your phone’s camera to open the primary link — the
-                    real team is scanning this rather than retyping it.
-                  </p>
+          <SettingsGroup
+            icon={<Link2 />}
+            title="Open on a device"
+            description="The addresses to type or scan on the phone."
+            hint="These are the addresses of this Mac on your network. Open one in the phone's browser, or scan the QR code with its camera, and the pairing screen appears.">
+            <SettingsPanel>
+              <SettingsPanelRow
+                layout="block"
+                label="Links"
+                hint="Use the first one, which is the Mac's name on the network. Some phones and guest Wi-Fi networks cannot find a name like that; for those, use the second one, which is the Mac's numeric address. The copy buttons put the link on your clipboard.">
+                <div className="flex flex-col gap-2">
+                  {state.hostUrl ? (
+                    <RemoteLinkRow
+                      label="This device (.local)"
+                      url={state.hostUrl}
+                    />
+                  ) : null}
+                  {state.addressUrl ? (
+                    <RemoteLinkRow
+                      label="This device (IP address, if .local doesn’t resolve)"
+                      url={state.addressUrl}
+                    />
+                  ) : null}
                 </div>
               </SettingsPanelRow>
-            ) : null}
-          </SettingsPanel>
+              {state.hostUrl ? (
+                <SettingsPanelRow layout="block">
+                  <div className="flex items-center gap-3">
+                    <QrCode
+                      value={state.hostUrl}
+                      size={144}
+                      label="Scan to open this device’s link on your phone"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Scan with your phone’s camera to open the primary link —
+                      the real team is scanning this rather than retyping it.
+                    </p>
+                  </div>
+                </SettingsPanelRow>
+              ) : null}
+            </SettingsPanel>
+          </SettingsGroup>
 
           <TunnelPanel
             tunnel={state.tunnel}
@@ -562,104 +609,118 @@ export function RemoteAccess({
             }
           />
 
-          <SettingsPanel>
-            <SettingsPanelRow layout="block" label="Pairing code">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex flex-col gap-0.5">
-                  {state.pairingCode ? (
-                    <span className="font-mono text-3xl tracking-[0.3em] tabular-nums">
-                      {state.pairingCode}
+          <SettingsGroup
+            icon={<KeyRound />}
+            title="Pairing"
+            description="The code a new device types to join."
+            hint="Pairing is how a device proves it is yours. A device that opens the link must type the code shown here before it can see anything. Once paired, it stays paired until you revoke it.">
+            <SettingsPanel>
+              <SettingsPanelRow
+                layout="block"
+                label="Pairing code"
+                hint="Type this 6-digit code on the new device when it asks. The code changes by itself every few minutes and after each device pairs, so an old code cannot be reused. Regenerate gives you a fresh one at once, for example if you showed the code to someone by mistake.">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col gap-0.5">
+                    {state.pairingCode ? (
+                      <span className="font-mono text-3xl tracking-[0.3em] tabular-nums">
+                        {state.pairingCode}
+                      </span>
+                    ) : remote ? (
+                      <span
+                        data-slot="pairing-code-elsewhere"
+                        className="text-sm text-muted-foreground">
+                        {regeneratedHere
+                          ? 'New code is on your computer’s screen'
+                          : 'Shown on your computer'}
+                      </span>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        No code yet
+                      </span>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {remote && !state.pairingCode
+                        ? 'Open Settings → Remote access on the computer running Geniro. A paired device is never sent the code.'
+                        : state.pairingCodeExpiresAt
+                          ? `A new device types this. Rotates at ${new Date(
+                              state.pairingCodeExpiresAt,
+                            ).toLocaleTimeString([], {
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}.`
+                          : 'A new device types this.'}
                     </span>
-                  ) : remote ? (
-                    <span
-                      data-slot="pairing-code-elsewhere"
-                      className="text-sm text-muted-foreground">
-                      {regeneratedHere
-                        ? 'New code is on your computer’s screen'
-                        : 'Shown on your computer'}
-                    </span>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">
-                      No code yet
-                    </span>
-                  )}
-                  <span className="text-xs text-muted-foreground">
-                    {remote && !state.pairingCode
-                      ? 'Open Settings → Remote access on the computer running Geniro. A paired device is never sent the code.'
-                      : state.pairingCodeExpiresAt
-                        ? `A new device types this. Rotates at ${new Date(
-                            state.pairingCodeExpiresAt,
-                          ).toLocaleTimeString([], {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })}.`
-                        : 'A new device types this.'}
-                  </span>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 gap-1.5"
-                  disabled={regenerating}
-                  onClick={onRegenerate}>
-                  {regenerating ? (
-                    <Loader2
-                      aria-hidden="true"
-                      className="size-3.5 shrink-0 animate-spin"
-                    />
-                  ) : (
-                    <RefreshCw
-                      aria-hidden="true"
-                      className="size-3.5 shrink-0"
-                    />
-                  )}
-                  Regenerate
-                </Button>
-              </div>
-            </SettingsPanelRow>
-          </SettingsPanel>
-
-          <SettingsPanel>
-            <SettingsPanelRow layout="block" label="Paired devices">
-              {state.devices.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  None yet — a device pairs by typing the code above.
-                </p>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
-                    {(allDevicesShown
-                      ? state.devices
-                      : state.devices.slice(0, DEVICES_SHOWN)
-                    ).map((device) => (
-                      <DeviceRow
-                        key={device.id}
-                        device={device}
-                        onRevoke={onRevoke}
-                        revoking={revokingId === device.id}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 gap-1.5"
+                    title="Replace the pairing code with a new one now."
+                    disabled={regenerating}
+                    onClick={onRegenerate}>
+                    {regenerating ? (
+                      <Loader2
+                        aria-hidden="true"
+                        className="size-3.5 shrink-0 animate-spin"
                       />
-                    ))}
-                  </ul>
-                  {state.devices.length <= DEVICES_SHOWN ? null : (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      data-slot="devices-show-all"
-                      className="self-start text-muted-foreground"
-                      onClick={() => setAllDevicesShown((shown) => !shown)}>
-                      {allDevicesShown
-                        ? 'Show fewer'
-                        : `Show all ${state.devices.length} devices`}
-                    </Button>
-                  )}
+                    ) : (
+                      <RefreshCw
+                        aria-hidden="true"
+                        className="size-3.5 shrink-0"
+                      />
+                    )}
+                    Regenerate
+                  </Button>
                 </div>
-              )}
-            </SettingsPanelRow>
-          </SettingsPanel>
+              </SettingsPanelRow>
+            </SettingsPanel>
+          </SettingsGroup>
+
+          <SettingsGroup
+            icon={<Smartphone />}
+            title="Devices"
+            description={
+              state.devices.length === 0
+                ? 'No device has paired yet.'
+                : `${state.devices.length} ${state.devices.length === 1 ? 'device is' : 'devices are'} paired.`
+            }
+            hint="Every phone or tablet that has typed the pairing code. A paired device can open your chats, so revoke any you no longer use or recognise.">
+            <SettingsPanel>
+              <SettingsPanelRow
+                layout="block"
+                label="Paired devices"
+                hint="Each row is a device that can open Geniro from this Mac. Revoke (the bin) signs that device out at once; to use it again it has to pair with a fresh code.">
+                {state.devices.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    None yet — a device pairs by typing the code above.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+                      {shownDevices.map((device) => (
+                        <DeviceRow
+                          key={device.id}
+                          device={device}
+                          onRevoke={onRevoke}
+                          revoking={revokingId === device.id}
+                        />
+                      ))}
+                    </ul>
+                    <ShowAllButton
+                      total={state.devices.length}
+                      limit={DEVICES_SHOWN}
+                      expanded={devicesExpanded}
+                      onToggle={() => setDevicesExpanded(!devicesExpanded)}
+                      noun="devices"
+                    />
+                  </div>
+                )}
+              </SettingsPanelRow>
+            </SettingsPanel>
+          </SettingsGroup>
         </>
       ) : null}
-    </div>
+    </SettingsGroups>
   );
 }

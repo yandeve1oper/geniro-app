@@ -384,4 +384,21 @@ describe('Lessons settings', () => {
         ?.disabled,
     ).toBe(true);
   });
+
+  it('explains the group and each row with a help hint', async () => {
+    await render();
+
+    for (const subject of [
+      'Lessons',
+      'Reflections',
+      'Memory model',
+      'Check found lessons with',
+      'Spend',
+    ]) {
+      expect(
+        container.querySelector(`button[aria-label="About ${subject}"]`),
+        subject,
+      ).not.toBeNull();
+    }
+  });
 });

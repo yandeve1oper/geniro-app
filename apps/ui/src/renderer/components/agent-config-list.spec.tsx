@@ -640,6 +640,19 @@ describe('AgentConfigList — the update band', () => {
     expect(onUpdate).toHaveBeenCalledWith('claude');
   });
 
+  it('says on the Update button what pressing it does', () => {
+    const el = render(
+      <AgentConfigList
+        {...baseProps}
+        clis={[det('claude'), det('cursor-agent')]}
+        onUpdate={vi.fn()}
+      />,
+    );
+
+    const button = updateButtons(el)[0]!;
+    expect(button.title).toContain('own updater on this Mac');
+  });
+
   it('marks an available update in its own colour, on the button and in the card header', () => {
     const el = render(
       <AgentConfigList
@@ -811,6 +824,21 @@ describe('AgentConfigList — the install band', () => {
       buttons[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(onInstall).toHaveBeenCalledWith('cursor-agent');
+  });
+
+  it('explains what Install, the path field and the status mean', () => {
+    const el = render(<AgentConfigList {...baseProps} onInstall={vi.fn()} />);
+
+    expect(installButtons(el)[0]!.title).toContain('installer');
+    expect(
+      el.querySelector('button[aria-label="About Binary path (optional)"]'),
+    ).not.toBeNull();
+    expect(
+      el.querySelector('button[aria-label="About Binary path"]'),
+    ).not.toBeNull();
+    expect(el.querySelectorAll('[data-slot="agent-status-help"]')).toHaveLength(
+      2,
+    );
   });
 
   it('marks the binary path optional only where Install is offered', () => {

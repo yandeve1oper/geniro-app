@@ -27,6 +27,13 @@ export const WithHint: Story = {
   },
 };
 
+export const WithHelp: Story = {
+  args: {
+    hint: 'Detected here — edit to pin a different binary.',
+    help: 'Leave this empty and Geniro finds the program by itself. Set it when Geniro could not find it, or when you want a specific copy.',
+  },
+};
+
 export const WithoutLabelableControl: Story = {
   args: {
     label: 'Account',

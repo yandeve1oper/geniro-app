@@ -1,4 +1,10 @@
-import { ChevronRight, RefreshCw } from 'lucide-react';
+import {
+  ChevronRight,
+  ListChecks,
+  MessageSquare,
+  RefreshCw,
+  Users,
+} from 'lucide-react';
 import { Fragment, useEffect, useId, useRef, useState } from 'react';
 
 import type { AppStorageUsage, StorageWorktree } from '../../shared/contracts';
@@ -22,6 +28,7 @@ import {
   SegmentBar,
   SegmentLegend,
 } from '../components/segment-breakdown';
+import { SettingsGroup, SettingsGroups } from '../components/settings-group';
 import { SettingsPanel, SettingsPanelRow } from '../components/settings-panel';
 import { Button } from '../components/ui/button';
 import { ProgressBar } from '../components/ui/progress-bar';
@@ -785,7 +792,7 @@ export function Storage({
     .sort((a, b) => b.bytes - a.bytes);
 
   return (
-    <div className="flex flex-col gap-6">
+    <SettingsGroups>
       {error === null ? null : (
         <ErrorBanner message={error} onDismiss={() => setError(null)} />
       )}
@@ -805,53 +812,51 @@ export function Storage({
         runningText={running && job !== null ? RUNNING_TEXT[job.target] : null}
       />
 
-      <StorageSection title="Chats">
-        {groupRow(
-          StorageGroupIdEnum.Database,
-          `${daemon.chats.active} chats, ${daemon.chats.archived} archived.`,
-        )}
-        {daemon.chats.archived === 0 ? null : (
-          <ArchivedChatsRow
-            total={daemon.chats.archived}
-            periods={daemon.chats.archivedPeriods}
-            disabled={busy}
-            onDelete={(archivedBefore) =>
-              clean(StorageCleanTarget.ArchivedChats, archivedBefore)
-            }
-          />
-        )}
-        {groupRow(StorageGroupIdEnum.AgentSessions)}
-        {groupRow(StorageGroupIdEnum.ChatFiles)}
-      </StorageSection>
+      <SettingsGroup
+        icon={<MessageSquare />}
+        title="Chats"
+        description="Transcripts, files and saved conversations of your chats."
+        hint="Everything your chats leave on this Mac: the transcripts, the pictures and pages they hold, and the conversation stores the agents resume from. Open a row to see what it holds. The buttons delete for good, and each one asks before it does anything.">
+        <SettingsPanel>
+          {groupRow(
+            StorageGroupIdEnum.Database,
+            `${daemon.chats.active} chats, ${daemon.chats.archived} archived.`,
+          )}
+          {daemon.chats.archived === 0 ? null : (
+            <ArchivedChatsRow
+              total={daemon.chats.archived}
+              periods={daemon.chats.archivedPeriods}
+              disabled={busy}
+              onDelete={(archivedBefore) =>
+                clean(StorageCleanTarget.ArchivedChats, archivedBefore)
+              }
+            />
+          )}
+          {groupRow(StorageGroupIdEnum.AgentSessions)}
+          {groupRow(StorageGroupIdEnum.ChatFiles)}
+        </SettingsPanel>
+      </SettingsGroup>
 
       {taskRows.length === 0 ? null : (
-        <StorageSection title="Tasks">{taskRows}</StorageSection>
+        <SettingsGroup
+          icon={<ListChecks />}
+          title="Tasks"
+          description="Checkouts and pictures that board cards use."
+          hint="What the board's task cards leave on disk: the working copies of your code the agents edited, and pictures attached to cards. Removing a working copy keeps its branch, so the work is not lost.">
+          <SettingsPanel>{taskRows}</SettingsPanel>
+        </SettingsGroup>
       )}
 
       {appRows.length === 0 ? null : (
-        <StorageSection title="Teams and app">
-          {appRows.map(({ row }) => row)}
-        </StorageSection>
+        <SettingsGroup
+          icon={<Users />}
+          title="Teams and app"
+          description="Your team library, logs, caches and the app's own files."
+          hint="Everything else Geniro keeps: your teams and their backups, the debug log, caches that rebuild themselves, and files the app needs to run. The largest is listed first. Only the rows with a red button destroy anything.">
+          <SettingsPanel>{appRows.map(({ row }) => row)}</SettingsPanel>
+        </SettingsGroup>
       )}
-    </div>
-  );
-}
-
-/** A named run of rows. */
-function StorageSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}): React.JSX.Element {
-  return (
-    <section className="flex flex-col gap-2">
-      <h2 className="px-1 text-xs font-medium text-muted-foreground">
-        {title}
-      </h2>
-      <SettingsPanel>{children}</SettingsPanel>
-    </section>
+    </SettingsGroups>
   );
 }
 

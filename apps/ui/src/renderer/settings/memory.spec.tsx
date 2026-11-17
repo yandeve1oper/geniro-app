@@ -420,6 +420,23 @@ async function render(
   return api;
 }
 
+async function openEntries(): Promise<void> {
+  const toggle = container.querySelector<HTMLButtonElement>(
+    '[data-slot="memory-entries-group"] [data-slot="show-all"][aria-expanded="false"]',
+  );
+  if (toggle) {
+    await press(toggle);
+  }
+}
+
+async function renderOpen(
+  props: Partial<React.ComponentProps<typeof Memory>> = {},
+): Promise<ReturnType<typeof fakeApi>> {
+  const api = await render(props);
+  await openEntries();
+  return api;
+}
+
 function dialogRow(handle: string): HTMLElement {
   const dialog = document.body.querySelector<HTMLElement>(
     '[data-slot="memory-cleanup"]',
@@ -522,7 +539,7 @@ afterEach(() => {
 
 describe('Memory', () => {
   it('lists the entries of the tab picked, counts what waits for review on its tab, and repeats no tab on a row', async () => {
-    const api = await render();
+    const api = await renderOpen();
 
     expect(tab(container, 'Waiting for review', '1')).toBeDefined();
     expect(() => rowOf('m2')).toThrow();
@@ -546,7 +563,7 @@ describe('Memory', () => {
       eligible: 326,
       ids: [],
     });
-    await render({ api });
+    await renderOpen({ api });
 
     expect(
       container.querySelector('[data-slot="memory-index-fit"]')?.textContent,
@@ -571,9 +588,9 @@ describe('Memory', () => {
   });
 
   it('narrows the list by each filter it offers', async () => {
-    const api = await render();
+    const api = await renderOpen();
 
-    await press(tab(container, 'Forgotten'));
+    await press(tab(container, 'Forgotten', '3'));
     await choose('Scope', 'Billing');
     await choose('Type', 'Feedback');
     await settle();
@@ -588,7 +605,7 @@ describe('Memory', () => {
   });
 
   it('edits an entry at the rev it read', async () => {
-    const api = await render({ api: fakeApi([ACTIVE]) });
+    const api = await renderOpen({ api: fakeApi([ACTIVE]) });
 
     await pressMemoryRowAction(rowOf('m1'), 'Edit');
     const title = container.querySelector<HTMLInputElement>(
@@ -612,13 +629,13 @@ describe('Memory', () => {
   });
 
   it('forgets, restores and approves through the entry’s status', async () => {
-    const api = await render({ api: fakeApi([ACTIVE, WAITING, GONE]) });
+    const api = await renderOpen({ api: fakeApi([ACTIVE, WAITING, GONE]) });
 
     await pressMemoryRowAction(rowOf('m1'), 'Forget…');
     await press(confirmInDialog('Forget'));
     await press(tab(container, 'Waiting for review', '1'));
     await press(button(rowOf('m2'), 'Approve'));
-    await press(tab(container, 'Forgotten'));
+    await press(tab(container, 'Forgotten', '3'));
     await pressMemoryRowAction(rowOf('m3'), 'Restore');
 
     expect(api.updateMemory.mock.calls.map((call) => call[0])).toEqual([
@@ -629,7 +646,7 @@ describe('Memory', () => {
   });
 
   it('turns memory off in settings and keeps every entry editable', async () => {
-    await render();
+    await renderOpen();
 
     await press(
       container.querySelector<HTMLElement>('#settings-memory-enabled')!,
@@ -658,7 +675,7 @@ describe('Memory', () => {
         next: null,
       }),
     );
-    await render({ api });
+    await renderOpen({ api });
 
     expect(rowOf('m1').textContent).toContain(
       'Shown in 2 runs · read 1 · helped 0 · not useful 3',
@@ -667,7 +684,7 @@ describe('Memory', () => {
 
   it('re-reads the list once for a burst of memory announcements', async () => {
     const client = fakeClient();
-    const api = await render({ client });
+    const api = await renderOpen({ client });
     vi.useFakeTimers();
     try {
       const before = api.listMemories.mock.calls.length;
@@ -710,7 +727,7 @@ describe('Memory', () => {
       source: { ...WAITING.source },
       approvedAt: '2026-10-01T00:00:00.000Z',
     });
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi([ACTIVE, WAITING, savedAtOnce, approved]),
     });
 
@@ -743,7 +760,7 @@ describe('Memory', () => {
       triageAgents: [],
     });
     api.importMemories.mockResolvedValue({ imported: 1, skipped: [] });
-    await render({ api });
+    await renderOpen({ api });
     stored = {
       ...stored,
       memory: { ...stored.memory, agentWrites: 'pending' },
@@ -783,7 +800,7 @@ describe('Memory', () => {
       imported: 0,
       skipped: [{ key: 'claude:/n.md#1', reason: 'already imported' }],
     });
-    await render({ api });
+    await renderOpen({ api });
 
     await press(button(container, 'Import…'));
     await press(button(document.body, 'Import 1'));
@@ -819,7 +836,7 @@ describe('Memory', () => {
         { key: 'drop-me', keep: false, reason: 'task status' },
       ],
     });
-    await render({ api });
+    await renderOpen({ api });
 
     await press(button(container, 'Import…'));
     await press(button(document.body, 'Sort 2 notes'));
@@ -856,7 +873,7 @@ describe('Memory', () => {
         unavailableReason: null,
       })),
     }) as unknown as DaemonApis['agents'];
-    await render({ api, agentsApi });
+    await renderOpen({ api, agentsApi });
     await press(button(container, 'Import…'));
 
     const settings = (): HTMLElement =>
@@ -926,7 +943,7 @@ describe('Memory', () => {
       sources: [],
       triageAgents: ['claude', 'codex'],
     });
-    await render({ api });
+    await renderOpen({ api });
     await press(button(container, 'Import…'));
     await press(button(document.body, 'Sort 1 note'));
 
@@ -953,7 +970,7 @@ describe('Memory', () => {
     api.importMemories
       .mockResolvedValueOnce({ imported: 1000, skipped: [] })
       .mockRejectedValueOnce(new Error('daemon unreachable'));
-    await render({ api });
+    await renderOpen({ api });
 
     await press(button(container, 'Import…'));
     await press(button(document.body, 'Import 1001'));
@@ -982,7 +999,7 @@ describe('Memory', () => {
       ),
       getTeam: vi.fn(),
     };
-    await render({
+    await renderOpen({
       api,
       teams: teams as unknown as React.ComponentProps<typeof Memory>['teams'],
     });
@@ -1000,7 +1017,7 @@ describe('Memory', () => {
     const api = fakeApi([
       memoryEntry({ id: 'e6', handle: 'm6', teamSlug: 'deleted-team' }),
     ]);
-    await render({ api });
+    await renderOpen({ api });
 
     expect(rowOf('m6').textContent).toContain(' · deleted-team · ');
   });
@@ -1013,7 +1030,7 @@ describe('Memory', () => {
       ),
       getTeam: vi.fn(),
     };
-    await render({
+    await renderOpen({
       api,
       teams: teams as unknown as React.ComponentProps<typeof Memory>['teams'],
     });
@@ -1071,7 +1088,7 @@ describe('Memory', () => {
           : Promise.reject(new Error('unreadable')),
       ),
     };
-    await render({
+    await renderOpen({
       api,
       teams: teams as unknown as React.ComponentProps<typeof Memory>['teams'],
     });
@@ -1088,8 +1105,8 @@ describe('Memory', () => {
     });
   });
 
-  it('counts the waiting entries on their tab, with a plus past the cap, and lists them there', async () => {
-    const api = fakeApi();
+  it('counts the waiting entries on their tab from the daemon, and lists them there', async () => {
+    const api = fakeApi(undefined, undefined, { ...SUMMARY, pending: 7 });
     api.listMemories.mockImplementation((request: { status?: string } = {}) =>
       Promise.resolve({
         memories: request.status === 'pending' ? [WAITING] : [ACTIVE, WAITING],
@@ -1100,9 +1117,9 @@ describe('Memory', () => {
             : null,
       }),
     );
-    await render({ api });
+    await renderOpen({ api });
 
-    await press(tab(container, 'Waiting for review', '1+'));
+    await press(tab(container, 'Waiting for review', '7'));
 
     expect(api.listMemories).toHaveBeenCalledWith({
       status: 'pending',
@@ -1112,6 +1129,52 @@ describe('Memory', () => {
       container.querySelector('[data-slot="memory-tab-explained"]')
         ?.textContent,
     ).toBe('No agent sees these until you approve them.');
+  });
+
+  it('marks a waiting count read from a cut list with a plus when the daemon count is unavailable', async () => {
+    const api = fakeApi();
+    api.memoryReviewSummary.mockImplementation(() =>
+      Promise.reject(new Error('summary unavailable')),
+    );
+    api.listMemories.mockImplementation((request: { status?: string } = {}) =>
+      Promise.resolve({
+        memories: request.status === 'pending' ? [WAITING] : [ACTIVE],
+        tracks: [],
+        next:
+          request.status === 'pending'
+            ? { beforeUpdatedAt: WAITING.updatedAt, beforeId: WAITING.id }
+            : null,
+      }),
+    );
+    await render({ api });
+
+    expect(tab(container, 'Waiting for review', '1+')).toBeTruthy();
+  });
+
+  it('claims no daemon total on a search that matches fewer waiting entries than the cap', async () => {
+    const api = fakeApi(undefined, undefined, { ...SUMMARY, pending: 25 });
+    await renderOpen({ api });
+    await press(tab(container, 'Waiting for review', '25'));
+    const showAll = (): HTMLButtonElement | undefined =>
+      [
+        ...entriesGroup().querySelectorAll<HTMLButtonElement>(
+          'button[data-slot="show-all"]',
+        ),
+      ].find((candidate) => candidate.textContent?.includes('waiting entries'));
+    expect(showAll()?.textContent).toBe('Show all 25 waiting entries');
+
+    await type(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Search memory"]',
+      )!,
+      'loopback',
+    );
+    await settle(300);
+
+    expect(api.listMemories).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'pending', q: 'loopback' }),
+    );
+    expect(showAll()).toBeUndefined();
   });
 
   it('appends the next page once, however often Show more is pressed while it loads', async () => {
@@ -1140,7 +1203,7 @@ describe('Memory', () => {
         });
       },
     );
-    await render({ api });
+    await renderOpen({ api });
 
     const more = button(container, 'Show more');
     await press(more);
@@ -1195,7 +1258,7 @@ describe('Memory', () => {
             });
       },
     );
-    await render({ api, client });
+    await renderOpen({ api, client });
 
     client.announce({
       memoryId: 'e1',
@@ -1217,7 +1280,7 @@ describe('Memory', () => {
 
   it('opens on the one entry a transcript row names, and leaves it on Show all', async () => {
     const onFocusDone = vi.fn();
-    const api = await render({ focus: 'm3', onFocusDone });
+    const api = await renderOpen({ focus: 'm3', onFocusDone });
 
     expect(api.listMemories).toHaveBeenCalledWith({ handle: 'm3', limit: 20 });
     expect(api.listMemories).not.toHaveBeenCalledWith(
@@ -1234,7 +1297,7 @@ describe('Memory', () => {
         'daemon POST /v1/memories failed (409): {"code":"MEMORY_NEAR_DUPLICATE","message":"similar entries exist: m3, m7"}',
       ),
     );
-    await render({ api });
+    await renderOpen({ api });
 
     await press(button(container, 'New entry'));
     await type(
@@ -1266,7 +1329,7 @@ describe('Memory', () => {
   });
 
   it('hides import and export on a paired phone, keeping Forget all', async () => {
-    await render({ remote: true });
+    await renderOpen({ remote: true });
 
     const labels = [...container.querySelectorAll('button')].map((b) =>
       b.textContent?.trim(),
@@ -1284,7 +1347,7 @@ describe('Memory', () => {
       getSettings: () => Promise.resolve(DEFAULT_SETTINGS),
       saveMemoryExport,
     });
-    await render();
+    await renderOpen();
 
     await press(button(container, 'Export…'));
 
@@ -1393,7 +1456,7 @@ describe('Memory clean up', () => {
   }
 
   it('shows the daemon’s figures in the panel and opens the review dialog on Least used', async () => {
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, () => ({
         rows: [COLD, COLD_RULE],
         total: 2,
@@ -1437,7 +1500,7 @@ describe('Memory clean up', () => {
         { key: 'c3', keep: true, reason: 'durable team convention' },
       ],
     });
-    await render({ api });
+    await renderOpen({ api });
     await press(button(container, 'Review…'));
     await settle();
 
@@ -1535,7 +1598,7 @@ describe('Memory clean up', () => {
           { key: 'c4', keep: true, reason: 'a durable rule' },
         ],
       });
-    await render({ api });
+    await renderOpen({ api });
     await press(button(container, 'Review…'));
     await settle();
     await press(button(sortPanel(), 'Sort 2 listed'));
@@ -1600,7 +1663,7 @@ describe('Memory clean up', () => {
       younger: 0,
       next: null,
     }));
-    await render({ api });
+    await renderOpen({ api });
     await press(button(container, 'Review…'));
     await settle();
 
@@ -1620,7 +1683,7 @@ describe('Memory clean up', () => {
   });
 
   it('Tick shown skips warned rows and the confirm names the count', async () => {
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, () => ({
         rows: [COLD, COLD_RULE],
         total: 2,
@@ -1660,7 +1723,7 @@ describe('Memory clean up', () => {
   });
 
   it('the empty list offers younger entries', async () => {
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, (request) =>
         request.minAgeDays === 0
           ? { rows: [COLD], total: 1, younger: 0, next: null }
@@ -1681,7 +1744,7 @@ describe('Memory clean up', () => {
   });
 
   it('keeps an entry, and asks the daemon for the Kept and Forgotten tabs', async () => {
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, (request) =>
         request.tab === 'cold'
           ? { rows: [COLD], total: 1, younger: 0, next: null }
@@ -1703,7 +1766,7 @@ describe('Memory clean up', () => {
   });
 
   it('narrows Least used by the filters it offers, over every row on the daemon', async () => {
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, () => ({
         rows: [COLD],
         total: 1,
@@ -1741,7 +1804,7 @@ describe('Memory clean up', () => {
       purgeAt: null,
       automatic: true,
     };
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, undefined, {
         ...SUMMARY,
         lastBatch: batch,
@@ -1758,7 +1821,7 @@ describe('Memory clean up', () => {
   });
 
   it('shows a cleanup pass as one line of its totals and its titles, with one Undo all', async () => {
-    await render({
+    await renderOpen({
       api: fakeApi(undefined, undefined, { ...SUMMARY, ...passOf(PASS) }),
     });
 
@@ -1776,7 +1839,7 @@ describe('Memory clean up', () => {
   });
 
   it('undoes every batch of a pass with one press, refreshes the summary once and says so once', async () => {
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, undefined, { ...SUMMARY, ...passOf(PASS) }),
     });
     api.restoreMemoryBatch.mockImplementation(() =>
@@ -1796,7 +1859,7 @@ describe('Memory clean up', () => {
   });
 
   it('re-reads the cleanup summary when the removal switch flips, so the purge date follows it', async () => {
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, undefined, { ...SUMMARY, ...passOf(MARKS) }),
     });
     api.memoryReviewSummary.mockImplementation(() =>
@@ -1854,7 +1917,7 @@ describe('Memory clean up', () => {
         },
       ],
     });
-    await render({ api });
+    await renderOpen({ api });
     await press(button(container, 'Review…'));
 
     await press(tab(inDialog(), 'Forgotten', '3'));
@@ -1877,7 +1940,7 @@ describe('Memory clean up', () => {
       memoryEntry({ id: 'k1', handle: 'm31', title: 'Billing edge cases' }),
       { keptAt: '2026-11-10T09:00:00.000Z' },
     );
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, (request) =>
         request.tab === 'kept'
           ? { rows: [kept], total: 1, younger: null, next: null }
@@ -1896,7 +1959,7 @@ describe('Memory clean up', () => {
   });
 
   it('asks before forgetting one entry that looks like a rule, and says so', async () => {
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, () => ({
         rows: [COLD, COLD_RULE],
         total: 2,
@@ -1922,7 +1985,7 @@ describe('Memory clean up', () => {
   });
 
   it('keeps the rows when the tab that is already open is pressed again', async () => {
-    await render({
+    await renderOpen({
       api: fakeApi(undefined, () => ({
         rows: [COLD, COLD_RULE],
         total: 2,
@@ -1945,7 +2008,7 @@ describe('Memory clean up', () => {
   });
 
   it('stops counting a warned row as skipped once it is ticked by hand', async () => {
-    await render({
+    await renderOpen({
       api: fakeApi(undefined, () => ({
         rows: [COLD, COLD_RULE],
         total: 2,
@@ -1980,7 +2043,7 @@ describe('Memory clean up', () => {
         answer = resolve;
       }),
     );
-    await render({ api });
+    await renderOpen({ api });
     await press(button(container, 'Review…'));
 
     await press(button(inDialog(), 'Tick shown'));
@@ -2010,7 +2073,7 @@ describe('Memory clean up', () => {
   });
 
   it('deletes a forgotten entry permanently, only after a confirm that says it cannot be undone', async () => {
-    const api = await render({ api: fakeApi(undefined, FORGOTTEN_ONLY) });
+    const api = await renderOpen({ api: fakeApi(undefined, FORGOTTEN_ONLY) });
     await press(button(container, 'Review…'));
     await press(tab(inDialog(), 'Forgotten', '3'));
 
@@ -2033,7 +2096,7 @@ describe('Memory clean up', () => {
   it('keeps a refused purge in its confirm, with the reason', async () => {
     const api = fakeApi(undefined, FORGOTTEN_ONLY);
     api.purgeMemory.mockRejectedValue(new Error('only a forgotten memory'));
-    await render({ api });
+    await renderOpen({ api });
     await press(button(container, 'Review…'));
     await press(tab(inDialog(), 'Forgotten', '3'));
 
@@ -2044,7 +2107,7 @@ describe('Memory clean up', () => {
   });
 
   it('offers neither the permanent delete, the automatic sweep nor Sort with AI on a paired device', async () => {
-    const api = await render({
+    const api = await renderOpen({
       api: fakeApi(undefined, FORGOTTEN_ONLY),
       remote: true,
     });
@@ -2064,7 +2127,7 @@ describe('Memory clean up', () => {
   });
 
   it('turns the removal of entries agents mark not useful off in settings, once it is read', async () => {
-    await render();
+    await renderOpen();
     const toggle = container.querySelector<HTMLElement>(
       '#settings-memory-remove-not-useful',
     )!;
@@ -2084,7 +2147,7 @@ describe('Memory clean up', () => {
   });
 
   it('offers no removal switch on a paired device', async () => {
-    await render({ remote: true });
+    await renderOpen({ remote: true });
 
     expect(container.textContent).not.toContain(
       'Remove entries agents mark as not useful',
@@ -2092,7 +2155,7 @@ describe('Memory clean up', () => {
   });
 
   it('arms the automatic sweep only after a confirm naming what it would forget now', async () => {
-    const api = await render();
+    const api = await renderOpen();
     expect(container.textContent).toContain(
       'Never deletes, never asks a model, never touches kept entries or entries with a warning.',
     );
@@ -2127,7 +2190,7 @@ describe('Memory clean up', () => {
   });
 
   it('names the window it was asked about, whatever answer comes back late', async () => {
-    const api = await render();
+    const api = await renderOpen();
     let late: (summary: MemoryReviewSummaryDto) => void = () => undefined;
     api.memoryReviewSummary.mockImplementationOnce(
       () =>
@@ -2155,7 +2218,7 @@ describe('Memory clean up', () => {
   });
 
   it('says the figure may be high while earlier chats are still counted', async () => {
-    await render({
+    await renderOpen({
       api: fakeApi(undefined, undefined, { ...SUMMARY, counting: true }),
     });
 
@@ -2182,7 +2245,7 @@ describe('Memory duplicates and contradictions', () => {
     api: ReturnType<typeof fakeApi>,
     props: Partial<React.ComponentProps<typeof Memory>> = {},
   ): Promise<void> {
-    await render({ api, ...props });
+    await renderOpen({ api, ...props });
     await press(button(container, 'Review…'));
     const tab = [...inDialog().querySelectorAll('button')].find((candidate) =>
       candidate.textContent?.startsWith('Conflicts'),
@@ -2395,7 +2458,7 @@ describe('Memory duplicates and contradictions', () => {
       undefined,
       { findings: [] },
     );
-    await render({ api });
+    await renderOpen({ api });
     await press(button(container, 'Review…'));
     const cold = api.listMemoryReview.mock.calls.length;
     expect(
@@ -2505,5 +2568,316 @@ describe('Memory duplicates and contradictions', () => {
         type: 'feedback',
       }),
     });
+  });
+});
+
+function entriesGroup(): HTMLElement {
+  const found = container.querySelector<HTMLElement>(
+    '[data-slot="memory-entries-group"]',
+  );
+  if (!found) {
+    throw new Error('no entries group');
+  }
+  return found;
+}
+
+function lessonProposal(id: string, status: 'proposed' | 'saved') {
+  return {
+    id,
+    sourceRunId: 'run-1',
+    sourceTitle: 'A thread',
+    reflectionRunId: 'reflection-1',
+    projectId: 'proj-1',
+    teamSlug: null,
+    title: `Lesson ${id}`,
+    rule: `Rule ${id}`,
+    why: 'Because.',
+    signalKind: 'user_correction',
+    evidence: { seq: 3, quote: 'quote' },
+    target: { kind: 'memory', scope: 'project', type: 'feedback' },
+    dedup: { verdict: 'new', handle: null },
+    status,
+    rejectReason: null,
+    checkVerdict: null,
+    checkReason: null,
+    memoryHandle: status === 'saved' ? `m${id}` : null,
+    resultRef: null,
+    places: { project: true, team: false, projectId: 'proj-1', members: [] },
+    moveUp: null,
+    undoable: status === 'saved',
+    memoryPending: false,
+    sourceExists: true,
+    createdAt: '2026-11-15T10:00:00Z',
+    decidedAt: null,
+  };
+}
+
+function lessonsApiOf(waiting: number, saved: number): DaemonApis['lessons'] {
+  return {
+    listLessonProposals: vi.fn(async (request: { status: string }) => ({
+      proposals:
+        request.status === 'saved'
+          ? Array.from({ length: saved }, (_, i) =>
+              lessonProposal(`s${i}`, 'saved'),
+            )
+          : Array.from({ length: waiting }, (_, i) =>
+              lessonProposal(`w${i}`, 'proposed'),
+            ),
+    })),
+    getLessonsSpend: vi.fn(() => new Promise(() => undefined)),
+  } as unknown as DaemonApis['lessons'];
+}
+
+describe('Memory entries folded until asked', () => {
+  it('keeps the tab strip with its counts and hides the list behind a Show button', async () => {
+    await render();
+
+    const group = entriesGroup();
+    expect(group.querySelector('[role="tablist"]')).not.toBeNull();
+    expect(tab(group, 'Waiting for review', '1')).toBeTruthy();
+    expect(tab(group, 'Forgotten', '3')).toBeTruthy();
+    expect(group.querySelector('[data-memory-handle]')).toBeNull();
+    expect(
+      group.querySelector('[data-slot="memory-entries-toolbar"]'),
+    ).toBeNull();
+    const toggle = group.querySelector<HTMLButtonElement>(
+      '[data-slot="show-all"]',
+    )!;
+    expect(toggle.textContent).toBe('Show 1 entry');
+
+    await press(toggle);
+
+    expect(group.querySelector('[data-memory-handle="m1"]')).not.toBeNull();
+    expect(
+      group.querySelector('[data-slot="memory-entries-toolbar"]'),
+    ).not.toBeNull();
+    expect(group.querySelector('[data-slot="show-all"]')?.textContent).toBe(
+      'Hide entries',
+    );
+  });
+
+  it('counts the forgotten tab from the daemon in its Show button', async () => {
+    await render({ api: fakeApi([ACTIVE, WAITING, GONE]) });
+    const group = entriesGroup();
+
+    await act(async () => {
+      tab(group, 'Forgotten', '3').click();
+    });
+    await settle();
+    expect(group.querySelectorAll('[data-memory-handle]')).toHaveLength(1);
+    await press(
+      group.querySelector<HTMLButtonElement>('[data-slot="show-all"]')!,
+    );
+
+    expect(group.querySelector('[data-memory-handle]')).toBeNull();
+    expect(group.querySelector('[data-slot="show-all"]')?.textContent).toBe(
+      `Show ${SUMMARY.forgotten} entries`,
+    );
+  });
+
+  it('starts open when the pane is focused on one entry', async () => {
+    await render({ focus: 'm1' });
+
+    expect(
+      entriesGroup().querySelector('[data-memory-handle="m1"]'),
+    ).not.toBeNull();
+  });
+
+  it('pressing a tab while the list is folded opens it on that tab', async () => {
+    await render();
+    const group = entriesGroup();
+
+    await press(tab(group, 'Waiting for review', '1'));
+
+    expect(group.querySelector('[data-memory-handle]')).not.toBeNull();
+    expect(
+      tab(group, 'Waiting for review', '1').getAttribute('aria-selected'),
+    ).toBe('true');
+  });
+});
+
+describe('Memory waiting-for-review block', () => {
+  it('is absent when nothing waits', async () => {
+    await render({
+      api: fakeApi(undefined, undefined, { ...SUMMARY, pending: 0 }),
+    });
+
+    expect(
+      container.querySelector('[data-slot="memory-waiting-block"]'),
+    ).toBeNull();
+  });
+
+  it('counts waiting entries and lessons together and says what they are', async () => {
+    await render({
+      api: fakeApi(undefined, undefined, { ...SUMMARY, pending: 2 }),
+      lessonsApi: lessonsApiOf(3, 0),
+    });
+
+    const block = container.querySelector(
+      '[data-slot="memory-waiting-block"]',
+    )!;
+    expect(block.textContent).toContain('5 waiting for your review');
+    expect(block.textContent).toContain(
+      '2 notes agents saved and 3 lessons a reflection found',
+    );
+    expect(tab(entriesGroup(), 'Waiting for review', '5')).toBeTruthy();
+  });
+
+  it('opens the Waiting for review list on Review now, on the entries side', async () => {
+    const api = await render();
+    const group = entriesGroup();
+    expect(group.querySelector('[data-memory-handle]')).toBeNull();
+
+    await press(button(container, 'Review now'));
+
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(
+      tab(group, 'Waiting for review', '1').getAttribute('aria-selected'),
+    ).toBe('true');
+    expect(group.querySelector('[data-memory-handle="m2"]')).not.toBeNull();
+    expect(api.listMemories).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'pending' }),
+    );
+  });
+
+  it('switches back to the entries side on Review now when entries wait too', async () => {
+    await render({ lessonsApi: lessonsApiOf(2, 0) });
+    const group = entriesGroup();
+    await press(tab(group, 'Waiting for review', '3'));
+    await press(tab(group, 'Lessons', '2'));
+    expect(tab(group, 'Lessons', '2').getAttribute('aria-selected')).toBe(
+      'true',
+    );
+
+    await press(button(container, 'Review now'));
+
+    expect(tab(group, 'Entries', '1').getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    expect(tab(group, 'Lessons', '2').getAttribute('aria-selected')).toBe(
+      'false',
+    );
+  });
+
+  it('scrolls the entries group again once the reload it waited for has landed', async () => {
+    const api = fakeApi();
+    await render({ api });
+    const scroll = vi.mocked(Element.prototype.scrollIntoView);
+    scroll.mockClear();
+    let release: () => void = () => {};
+    const held = new Promise<MemoryListDto>((resolve) => {
+      release = () => resolve({ memories: [WAITING], tracks: [], next: null });
+    });
+    api.listMemories.mockImplementation(() => held);
+
+    await press(button(container, 'Review now'));
+    const callsBefore = scroll.mock.calls.length;
+    expect(callsBefore).toBeGreaterThan(0);
+    const settingsGroup = entriesGroup().closest('[data-slot=settings-group]');
+    expect(settingsGroup).not.toBeNull();
+    expect(scroll.mock.contexts[0]).toBe(settingsGroup);
+
+    await act(async () => release());
+    await settle();
+
+    expect(scroll.mock.calls.length).toBeGreaterThan(callsBefore);
+    expect(scroll.mock.contexts.at(-1)).toBe(settingsGroup);
+  });
+
+  it('drops the scroll request when the reload fails, so a later reload does not scroll', async () => {
+    const api = fakeApi();
+    const client = fakeClient();
+    await render({ api, client });
+    const scroll = vi.mocked(Element.prototype.scrollIntoView);
+    const healthy = api.listMemories.getMockImplementation()!;
+    api.listMemories.mockImplementation(() =>
+      Promise.reject(new Error('daemon gone')),
+    );
+
+    await press(button(container, 'Review now'));
+    api.listMemories.mockImplementation(healthy);
+    const callsAfterFailure = scroll.mock.calls.length;
+    const readsAfterFailure = api.listMemories.mock.calls.length;
+
+    client.announce({
+      memoryId: 'e1',
+      change: 'updated',
+      projectId: null,
+      teamSlug: null,
+      batchId: null,
+    });
+    await settle(300);
+
+    expect(api.listMemories.mock.calls.length).toBeGreaterThan(
+      readsAfterFailure,
+    );
+    expect(scroll.mock.calls.length).toBe(callsAfterFailure);
+  });
+
+  it('opens on the Lessons side when only lessons wait', async () => {
+    await render({
+      api: fakeApi(undefined, undefined, { ...SUMMARY, pending: 0 }),
+      lessonsApi: lessonsApiOf(2, 0),
+    });
+
+    await press(button(container, 'Review now'));
+
+    const group = entriesGroup();
+    expect(tab(group, 'Lessons', '2').getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    expect(group.querySelectorAll('[data-slot="waiting-lesson"]')).toHaveLength(
+      2,
+    );
+  });
+});
+
+describe('Memory lessons counts', () => {
+  it('counts only the waiting lessons on the switch and counts the saved ones in their own heading', async () => {
+    await render({
+      api: fakeApi(undefined, undefined, { ...SUMMARY, pending: 0 }),
+      lessonsApi: lessonsApiOf(0, 12),
+    });
+    const group = entriesGroup();
+    await press(
+      group.querySelector<HTMLButtonElement>('[data-slot="show-all"]')!,
+    );
+    await press(tab(group, 'Waiting for review'));
+    await press(tab(group, 'Lessons'));
+
+    expect(tab(group, 'Lessons').textContent).not.toMatch(/\d/);
+    expect(group.querySelector('[data-slot="waiting-lessons"]')).toBeNull();
+    expect(group.textContent).toContain('Nothing is waiting for review.');
+    expect(
+      group.querySelector('[data-slot="saved-lessons"] h3')?.textContent,
+    ).toBe('Saved to memory · 12');
+  });
+});
+
+describe('Memory explanations', () => {
+  it('explains each group and each labelled row with a help hint', async () => {
+    await render();
+
+    for (const subject of [
+      'Memory settings',
+      'Clean up',
+      'Lessons',
+      'Entries',
+      'Import, export and reset',
+      'Shared memory',
+      'Agent notes',
+      "Each CLI's own memory off",
+      'Forget cold entries automatically',
+      'Remove entries agents mark as not useful',
+      'Import',
+      'Export',
+      'Forget all',
+      'the entry tabs',
+    ]) {
+      expect(
+        container.querySelector(`button[aria-label="About ${subject}"]`),
+        subject,
+      ).not.toBeNull();
+    }
   });
 });

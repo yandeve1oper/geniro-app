@@ -1,4 +1,13 @@
-import { Check, CircleDashed, Loader2, TriangleAlert } from 'lucide-react';
+import {
+  Bot,
+  Check,
+  CircleDashed,
+  CloudUpload,
+  Link2,
+  Loader2,
+  Timer,
+  TriangleAlert,
+} from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import {
@@ -21,7 +30,9 @@ import { ConfirmActionButton } from '../components/confirm-action-button';
 import { CopyButton } from '../components/copy-button';
 import { ErrorBanner } from '../components/error-banner';
 import { Field } from '../components/field';
+import { SettingsGroup, SettingsGroups } from '../components/settings-group';
 import { SettingsPanel, SettingsPanelRow } from '../components/settings-panel';
+import { ShowAllButton, useShowAll } from '../components/show-all';
 import { SignInAction } from '../components/sign-in-action';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -91,6 +102,9 @@ const EMPTY_DRAFT: Draft = {
   login: '',
   patterns: '',
 };
+
+/** Places and shared pages shown before Show all. */
+const SHOWN_LIMIT = 5;
 
 /** The select's spelling of `autoRevokeAfterDays: null`. */
 const NEVER_REVOKE = 'never';
@@ -212,6 +226,17 @@ export function Sharing({
   const [retryNotes, setRetryNotes] = useState<Record<string, string>>({});
   const [links, setLinks] = useState<Record<string, string>>({});
   const [savingPlace, setSavingPlace] = useState(false);
+  const current = sharing ?? DEFAULT_SHARING;
+  const {
+    shown: shownPlaces,
+    expanded: placesExpanded,
+    setExpanded: setPlacesExpanded,
+  } = useShowAll(current.destinations, SHOWN_LIMIT);
+  const {
+    shown: shownShares,
+    expanded: sharesExpanded,
+    setExpanded: setSharesExpanded,
+  } = useShowAll(shares, SHOWN_LIMIT);
 
   const readShares = useLatestCallback(() => {
     if (api === null || remote) {
@@ -280,8 +305,6 @@ export function Sharing({
     );
   }
 
-  const current = sharing ?? DEFAULT_SHARING;
-
   const addDestination = (): void => {
     if (draft === null) {
       return;
@@ -302,6 +325,7 @@ export function Sharing({
       setSavingPlace(false);
       if (saved) {
         setDraft(null);
+        setPlacesExpanded(true);
       }
     });
   };
@@ -418,211 +442,270 @@ export function Sharing({
   };
 
   return (
-    <div data-slot="sharing" className="flex flex-col gap-3">
+    <SettingsGroups>
       {error !== null && (
         <ErrorBanner message={error} onDismiss={() => setError(null)} />
       )}
 
-      <SettingsPanel>
-        <SettingsPanelRow
-          label="Let agents share pages"
-          htmlFor="settings-agents-share"
-          description="An agent asked to share a page uploads it to the default place below and gets its link.">
-          <Switch
-            id="settings-agents-share"
-            checked={current.agentsMayShare}
-            disabled={sharing === null}
-            onCheckedChange={(on) => save({ ...current, agentsMayShare: on })}
-          />
-        </SettingsPanelRow>
-        <SettingsPanelRow
-          label="Share to"
-          description="Where a Share press and an agent upload.">
-          <Select
-            aria-label="Default place to share to"
-            value={current.defaultDestinationId}
-            placeholder="Nowhere yet"
-            groups={[
-              {
-                label: 'Places',
-                items: current.destinations.map((d) => ({
-                  value: d.id,
-                  label: d.name,
-                })),
-              },
-            ]}
-            onValueChange={(id) =>
-              save({ ...current, defaultDestinationId: id })
-            }
-          />
-        </SettingsPanelRow>
-        <SettingsPanelRow layout="block">
-          <p className="text-xs text-muted-foreground">
-            {received === null
-              ? 'Not yet handed to the daemon — sharing is off until it is.'
-              : 'The daemon has these settings.'}{' '}
-            Pages are encrypted on this Mac; only ciphertext is uploaded, and
-            the key travels in the link after #.
-          </p>
-        </SettingsPanelRow>
-      </SettingsPanel>
-
-      <SettingsPanel>
-        <SettingsPanelRow layout="block" label="Places to share to">
-          <ul className="flex flex-col gap-2">
-            {current.destinations.map((destination) => (
-              <li
-                key={destination.id}
-                className="flex min-w-0 flex-col gap-1 rounded-md border border-border p-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="shrink-0 font-medium">
-                    {destination.name}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                    {summaryOf(destination)}
-                  </span>
-                  <span className="ml-auto flex shrink-0 gap-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={checks[destination.id]?.kind === 'checking'}
-                      onClick={() => check(destination)}>
-                      Check
-                    </Button>
-                    <ConfirmActionButton
-                      question={`Remove ${destination.name}?`}
-                      description="Pages are no longer shared there. Links already shared to it keep working until you revoke them."
-                      confirmLabel="Remove"
-                      busyLabel="Removing…"
-                      onConfirm={() => removeDestination(destination.id)}>
-                      Remove
-                    </ConfirmActionButton>
-                  </span>
-                </div>
-                <SignInStatus
-                  destination={destination}
-                  state={checks[destination.id]}
-                  api={api}
-                  onSettled={(session) => signedIn(destination, session)}
-                />
-                {retryNotes[destination.id] ? (
-                  <p className="text-xs text-muted-foreground">
-                    {retryNotes[destination.id]}
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-          {draft === null ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="mt-2 self-start"
+      <SettingsGroup
+        icon={<Bot />}
+        title="Agents"
+        description="Whether an agent may publish a page on its own."
+        hint="An encrypted link lets someone outside Geniro open a page an agent made, such as a report. Here you decide whether agents may create those links themselves. Leave it off and only you can share, with the Share button on a page.">
+        <SettingsPanel>
+          <SettingsPanelRow
+            label="Let agents share pages"
+            htmlFor="settings-agents-share"
+            description="An agent asked to share a page uploads it to the default place below and gets its link."
+            hint="When this is on, you can ask an agent in a chat to share a page and it will upload it and hand you the link. Agents are told to share only when you or their instructions ask, but nothing else stops one that shares anyway — leave it off if your chats read pages or files you do not trust. When it is off, agents are told they cannot share, and only your own Share button works.">
+            <Switch
+              id="settings-agents-share"
+              checked={current.agentsMayShare}
               disabled={sharing === null}
-              onClick={() => setDraft(EMPTY_DRAFT)}>
-              Add a place
-            </Button>
-          ) : (
-            <DestinationForm
-              draft={draft}
-              onChange={setDraft}
-              onCancel={() => setDraft(null)}
-              onSave={addDestination}
-              saving={savingPlace}
+              onCheckedChange={(on) => save({ ...current, agentsMayShare: on })}
             />
-          )}
-        </SettingsPanelRow>
-      </SettingsPanel>
+          </SettingsPanelRow>
+        </SettingsPanel>
+      </SettingsGroup>
 
-      <SettingsPanel>
-        <SettingsPanelRow
-          label="Revoke shared pages"
-          htmlFor="settings-share-auto-revoke"
-          description="Counted from when a page was first shared. Its link stops working; checked every few hours while Geniro runs.">
-          <Select
-            id="settings-share-auto-revoke"
-            className="w-44"
-            aria-label="When to revoke shared pages"
-            groups={AUTO_REVOKE_OPTIONS}
-            value={
-              current.autoRevokeAfterDays === null
-                ? NEVER_REVOKE
-                : String(current.autoRevokeAfterDays)
-            }
-            disabled={sharing === null}
-            onValueChange={setAutoRevoke}
-          />
-        </SettingsPanelRow>
-        <SettingsPanelRow layout="block" label="Shared pages">
-          {shares.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nothing shared yet.</p>
-          ) : (
+      <SettingsGroup
+        icon={<CloudUpload />}
+        title="Places to share to"
+        description="Where the encrypted pages are uploaded."
+        hint="A place is storage you already own, such as a Google Cloud or Amazon bucket, or your own upload program. Geniro encrypts a page on this Mac and uploads only the scrambled copy through your own sign-in. The key that unlocks it is part of the link, after the # sign, which a browser never sends to the storage place. A link an agent shares is also kept in that chat's transcript and by the agent's provider.">
+        <SettingsPanel>
+          <SettingsPanelRow
+            label="Share to"
+            description="Where a Share press and an agent upload."
+            hint="The default place. Pressing Share on a page, or an agent sharing one, uploads it here. You can keep several places and switch the default at any time; links already shared stay where they were uploaded.">
+            <Select
+              aria-label="Default place to share to"
+              value={current.defaultDestinationId}
+              placeholder="Nowhere yet"
+              groups={[
+                {
+                  label: 'Places',
+                  items: current.destinations.map((d) => ({
+                    value: d.id,
+                    label: d.name,
+                  })),
+                },
+              ]}
+              onValueChange={(id) =>
+                save({ ...current, defaultDestinationId: id })
+              }
+            />
+          </SettingsPanelRow>
+          <SettingsPanelRow
+            layout="block"
+            label="Saved places"
+            hint="Each place is one storage location Geniro can upload to. Check asks that place's sign-in whether you are signed in right now; it uploads nothing. If you are signed out, a Sign in button appears and opens the provider's own sign-in. Remove only forgets the place here: links already shared keep working until you revoke them.">
             <ul className="flex flex-col gap-2">
-              {shares.map((share) => (
+              {shownPlaces.map((destination) => (
                 <li
-                  key={share.id}
-                  className="flex min-w-0 items-center gap-2 text-sm">
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate">{share.title}</span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      Shared{' '}
-                      <time dateTime={share.createdAt}>
-                        {formatDateTime(share.createdAt)}
-                      </time>{' '}
-                      ·{' '}
-                      {share.sharedVersion > 0
-                        ? `v${share.sharedVersion} · `
-                        : ''}
-                      {share.sharedBy === 'agent' ? 'by an agent' : 'by you'} ·{' '}
-                      {share.destinationName}
-                      {SHARE_STATUS_NOTE[share.status] ?? ''}
+                  key={destination.id}
+                  className="flex min-w-0 flex-col gap-1 rounded-md border border-border p-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 font-medium">
+                      {destination.name}
                     </span>
-                  </span>
-                  <span className="flex shrink-0 gap-1">
-                    {share.sharedVersion === 0 ? null : links[share.id] ===
-                      undefined ? (
+                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                      {summaryOf(destination)}
+                    </span>
+                    <span className="ml-auto flex shrink-0 gap-1">
                       <Button
                         type="button"
                         size="sm"
-                        variant="ghost"
-                        onClick={() => showLink(share.id)}>
-                        Get link
+                        variant="outline"
+                        title="Ask this place whether you are signed in. Nothing is uploaded."
+                        disabled={checks[destination.id]?.kind === 'checking'}
+                        onClick={() => check(destination)}>
+                        Check
                       </Button>
-                    ) : (
-                      <CopyButton
-                        text={links[share.id] ?? ''}
-                        label="Copy link"
-                      />
-                    )}
-                    <ConfirmActionButton
-                      question="Revoke this link?"
-                      description="The shared page is deleted where it was uploaded, and the link stops opening for everyone who has it. This cannot be undone."
-                      confirmLabel="Revoke"
-                      busyLabel="Revoking…"
-                      onConfirm={() => revoke(share.id)}>
-                      Revoke
-                    </ConfirmActionButton>
-                  </span>
+                      <ConfirmActionButton
+                        title="Stop using this place. Links already shared keep working."
+                        question={`Remove ${destination.name}?`}
+                        description="Pages are no longer shared there. Links already shared to it keep working until you revoke them."
+                        confirmLabel="Remove"
+                        busyLabel="Removing…"
+                        onConfirm={() => removeDestination(destination.id)}>
+                        Remove
+                      </ConfirmActionButton>
+                    </span>
+                  </div>
+                  <SignInStatus
+                    destination={destination}
+                    state={checks[destination.id]}
+                    api={api}
+                    onSettled={(session) => signedIn(destination, session)}
+                  />
+                  {retryNotes[destination.id] ? (
+                    <p className="text-xs text-muted-foreground">
+                      {retryNotes[destination.id]}
+                    </p>
+                  ) : null}
                 </li>
               ))}
             </ul>
-          )}
-          {shares.length > 0 && (
-            <ConfirmActionButton
-              className="mt-2 self-start"
-              question={`Revoke all ${shares.length} links?`}
-              description="Every shared page is deleted where it was uploaded, and none of the links opens again. This cannot be undone."
-              confirmLabel="Revoke all"
-              busyLabel="Revoking…"
-              onConfirm={revokeAll}>
-              Revoke all
-            </ConfirmActionButton>
-          )}
-        </SettingsPanelRow>
-      </SettingsPanel>
-    </div>
+            <ShowAllButton
+              total={current.destinations.length}
+              limit={SHOWN_LIMIT}
+              expanded={placesExpanded}
+              onToggle={() => setPlacesExpanded(!placesExpanded)}
+              noun="places"
+            />
+            {draft === null ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2 self-start"
+                title="Set up a new storage place to upload shared pages to."
+                disabled={sharing === null}
+                onClick={() => setDraft(EMPTY_DRAFT)}>
+                Add a place
+              </Button>
+            ) : (
+              <DestinationForm
+                draft={draft}
+                onChange={setDraft}
+                onCancel={() => setDraft(null)}
+                onSave={addDestination}
+                saving={savingPlace}
+              />
+            )}
+          </SettingsPanelRow>
+          <SettingsPanelRow layout="block">
+            <p className="text-xs text-muted-foreground">
+              {received === null
+                ? "Geniro's background service has not received these settings yet — sharing is off until it does."
+                : "Geniro's background service is using these settings."}{' '}
+              Pages are encrypted on this Mac; only the scrambled copy is
+              uploaded, and the key travels in the link after #.
+            </p>
+          </SettingsPanelRow>
+        </SettingsPanel>
+      </SettingsGroup>
+
+      <SettingsGroup
+        icon={<Timer />}
+        title="Expiry"
+        description="Take links down automatically after a while."
+        hint="A shared link works until you revoke it. This can revoke old ones for you, so a page does not stay open to anyone with the link forever.">
+        <SettingsPanel>
+          <SettingsPanelRow
+            label="Revoke shared pages"
+            htmlFor="settings-share-auto-revoke"
+            description="Counted from when a page was first shared. Its link stops working; checked every few hours while Geniro runs."
+            hint="Pick how long a page stays shared. Once it is older than that, Geniro deletes the uploaded copy and the link stops opening for everyone. It cannot be undone, so leave it on Never if you want links to last until you decide.">
+            <Select
+              id="settings-share-auto-revoke"
+              className="w-44"
+              aria-label="When to revoke shared pages"
+              groups={AUTO_REVOKE_OPTIONS}
+              value={
+                current.autoRevokeAfterDays === null
+                  ? NEVER_REVOKE
+                  : String(current.autoRevokeAfterDays)
+              }
+              disabled={sharing === null}
+              onValueChange={setAutoRevoke}
+            />
+          </SettingsPanelRow>
+        </SettingsPanel>
+      </SettingsGroup>
+
+      <SettingsGroup
+        icon={<Link2 />}
+        title="Shared pages"
+        description={
+          shares.length === 0
+            ? 'Nothing is shared right now.'
+            : `${shares.length} ${shares.length === 1 ? 'page is' : 'pages are'} shared right now.`
+        }
+        hint="Every page that has been shared and not yet revoked. Copy the link again from here, or revoke one to take it down.">
+        <SettingsPanel>
+          <SettingsPanelRow layout="block">
+            {shares.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Nothing shared yet.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {shownShares.map((share) => (
+                  <li
+                    key={share.id}
+                    className="flex min-w-0 items-center gap-2 text-sm">
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate">{share.title}</span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        Shared{' '}
+                        <time dateTime={share.createdAt}>
+                          {formatDateTime(share.createdAt)}
+                        </time>{' '}
+                        ·{' '}
+                        {share.sharedVersion > 0
+                          ? `v${share.sharedVersion} · `
+                          : ''}
+                        {share.sharedBy === 'agent' ? 'by an agent' : 'by you'}{' '}
+                        · {share.destinationName}
+                        {SHARE_STATUS_NOTE[share.status] ?? ''}
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 gap-1">
+                      {share.sharedVersion === 0 ? null : links[share.id] ===
+                        undefined ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          title="Build this page's full link, key included, so you can copy it."
+                          onClick={() => showLink(share.id)}>
+                          Get link
+                        </Button>
+                      ) : (
+                        <CopyButton
+                          text={links[share.id] ?? ''}
+                          label="Copy link"
+                        />
+                      )}
+                      <ConfirmActionButton
+                        title="Delete the uploaded copy so the link stops opening."
+                        question="Revoke this link?"
+                        description="The shared page is deleted where it was uploaded, and the link stops opening for everyone who has it. This cannot be undone."
+                        confirmLabel="Revoke"
+                        busyLabel="Revoking…"
+                        onConfirm={() => revoke(share.id)}>
+                        Revoke
+                      </ConfirmActionButton>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <ShowAllButton
+              total={shares.length}
+              limit={SHOWN_LIMIT}
+              expanded={sharesExpanded}
+              onToggle={() => setSharesExpanded(!sharesExpanded)}
+              noun="pages"
+            />
+            {shares.length > 0 && (
+              <ConfirmActionButton
+                className="mt-2 self-start"
+                title="Revoke every shared page at once, including the ones not shown."
+                question={`Revoke all ${shares.length} links?`}
+                description="Every shared page is deleted where it was uploaded, and none of the links opens again. This cannot be undone."
+                confirmLabel="Revoke all"
+                busyLabel="Revoking…"
+                onConfirm={revokeAll}>
+                Revoke all
+              </ConfirmActionButton>
+            )}
+          </SettingsPanelRow>
+        </SettingsPanel>
+      </SettingsGroup>
+    </SettingsGroups>
   );
 }
 
@@ -745,9 +828,10 @@ function DestinationForm({
     key: Exclude<keyof Draft, 'kind'>,
     label: string,
     placeholder: string,
+    help: React.ReactNode,
     hint?: React.ReactNode,
   ): React.JSX.Element => (
-    <Field label={label} htmlFor={`${id}-${key}`} hint={hint}>
+    <Field label={label} htmlFor={`${id}-${key}`} help={help} hint={hint}>
       <Input
         id={`${id}-${key}`}
         placeholder={placeholder}
@@ -758,7 +842,10 @@ function DestinationForm({
   );
   return (
     <div className="mt-2 flex flex-col gap-3" data-slot="sharing-form">
-      <Field label="Kind of place" htmlFor={`${id}-kind`}>
+      <Field
+        label="Kind of place"
+        htmlFor={`${id}-kind`}
+        help="Which program uploads the encrypted page: Google Cloud's gcloud, Amazon's aws, or a program of your own. Geniro runs it with the sign-in you already have on this Mac and keeps no password of its own.">
         <Select
           id={`${id}-kind`}
           value={draft.kind}
@@ -774,16 +861,32 @@ function DestinationForm({
           onValueChange={(kind) => onChange({ ...draft, kind: kind as Kind })}
         />
       </Field>
-      {field('name', 'Name', 'Company artifacts')}
+      {field(
+        'name',
+        'Name',
+        'Company artifacts',
+        'Only for you: how this place is listed here and in the Share to picker.',
+      )}
       {field(
         'linkBase',
         'Link address',
         'https://artifacts.example.com',
+        'The web address the uploaded pages are opened from. A shared link is this address, then the folder below (if any), then a random name for the page, then the key after #.',
         'Use a domain of your own. A shared one (storage.googleapis.com, s3.amazonaws.com) lets any other page on it read the key from a link.',
       )}
       {draft.kind === 'command' ? (
         <>
-          <Field label="Upload command" htmlFor={`${id}-upload`}>
+          <Field
+            label="Upload command"
+            htmlFor={`${id}-upload`}
+            help={
+              <>
+                The program that uploads a page, then its arguments, one per
+                line. It is run directly, never through a shell. {'{file}'}{' '}
+                becomes the encrypted page on this Mac and {'{object}'} the name
+                it gets in storage.
+              </>
+            }>
             <Textarea
               id={`${id}-upload`}
               placeholder={'/usr/local/bin/upload\n--src={file}\n{object}'}
@@ -799,7 +902,7 @@ function DestinationForm({
             hint={
               <>
                 One argument per line; run directly, never through a shell.
-                {' {file}'} is the encrypted page, {'{object}'} where it goes.
+                {' {object}'} is the name of the page in storage.
               </>
             }>
             <Textarea
@@ -841,18 +944,43 @@ function DestinationForm({
         </>
       ) : (
         <>
-          {field('bucket', 'Bucket', 'company-share')}
-          {field('prefix', 'Folder in the bucket', 'reports (optional)')}
+          {field(
+            'bucket',
+            'Bucket',
+            'company-share',
+            'The storage bucket pages are uploaded to. It must already exist, and your own sign-in must be allowed to write to it.',
+          )}
+          {field(
+            'prefix',
+            'Folder in the bucket',
+            'reports (optional)',
+            'An optional folder inside the bucket, so shared pages stay apart from everything else in it.',
+          )}
           {draft.kind === 's3' && (
             <>
-              {field('profile', 'AWS profile', 'default (optional)')}
-              {field('region', 'AWS region', 'eu-west-1 (optional)')}
+              {field(
+                'profile',
+                'AWS profile',
+                'default (optional)',
+                'Which of your aws sign-ins to upload with. Empty uses the default one.',
+              )}
+              {field(
+                'region',
+                'AWS region',
+                'eu-west-1 (optional)',
+                'The region the bucket lives in. Empty lets aws use its own default.',
+              )}
             </>
           )}
         </>
       )}
       <div className="flex gap-2">
-        <Button type="button" size="sm" disabled={saving} onClick={onSave}>
+        <Button
+          type="button"
+          size="sm"
+          disabled={saving}
+          title="Save this place. Nothing is uploaded until a page is shared."
+          onClick={onSave}>
           Save place
         </Button>
         <Button
@@ -860,6 +988,7 @@ function DestinationForm({
           size="sm"
           variant="ghost"
           disabled={saving}
+          title="Close this form without saving the place."
           onClick={onCancel}>
           Cancel
         </Button>

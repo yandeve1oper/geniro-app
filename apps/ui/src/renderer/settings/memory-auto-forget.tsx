@@ -103,6 +103,7 @@ export function MemoryAutoForgetRow({
       <SettingsPanelRow
         label="Forget cold entries automatically"
         htmlFor="settings-memory-auto-forget"
+        hint="Entries nobody has read, edited or restored for the chosen number of days are moved to Forgotten once a day, so the memory does not fill up with stale notes. Nothing is deleted, entries you marked Keep are left alone, and every run can be undone from Clean up. Off does nothing on its own."
         description={
           days === null || days === undefined
             ? 'Moves them to Forgotten, with Undo. Never deletes, never asks a model, never touches kept entries or entries with a warning.'

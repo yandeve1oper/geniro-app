@@ -14,8 +14,8 @@ import {
   type LessonSaveRequest,
   type LessonView,
 } from '../components/lessons-card';
+import { ShowAllButton, useShowAll } from '../components/show-all';
 import { Badge } from '../components/ui/badge';
-import { Button } from '../components/ui/button';
 import { useLatestCallback } from '../components/use-latest-callback';
 import type { DaemonApis } from '../daemon-api';
 import type { DaemonClient } from '../daemon-client';
@@ -27,6 +27,7 @@ export interface WaitingLessonsState {
 }
 
 const SAVED_SHOWN = 5;
+const WAITING_SHOWN = 5;
 
 function useLessonProposals({
   lessonsApi,
@@ -86,7 +87,10 @@ export function useSavedLessons(options: {
 }): WaitingLessonsState {
   const saved = useLessonProposals({ ...options, status: 'saved' });
   return {
-    proposals: saved.proposals?.filter((proposal) => proposal.undoable) ?? null,
+    proposals:
+      saved.proposals?.filter(
+        (proposal) => proposal.undoable && !proposal.memoryPending,
+      ) ?? null,
     reload: saved.reload,
   };
 }
@@ -134,8 +138,13 @@ export function WaitingLessons({
   knowledgeApi: DaemonApis['knowledge'] | null;
 }): React.JSX.Element {
   const readDocuments = documentsReaderOf(knowledgeApi);
-  const proposals = waiting.proposals ?? [];
-  if (proposals.length === 0) {
+  const all = waiting.proposals ?? [];
+  const {
+    shown: proposals,
+    expanded,
+    setExpanded,
+  } = useShowAll(all, WAITING_SHOWN);
+  if (all.length === 0) {
     return (
       <p className="m-0 text-xs text-muted-foreground">
         Nothing is waiting for review.
@@ -143,65 +152,74 @@ export function WaitingLessons({
     );
   }
   return (
-    <ul
-      data-slot="waiting-lessons"
-      className="m-0 flex list-none flex-col divide-y divide-border p-0">
-      {proposals.map((proposal) => (
-        <li
-          key={proposal.id}
-          data-slot="waiting-lesson"
-          className="min-w-0 py-3 first:pt-0 last:pb-0">
-          <LessonRow
-            lesson={lessonOf(proposal)}
-            places={proposal.places}
-            moveUp={proposal.moveUp}
-            readDocuments={readDocuments}
-            source={<SourceLine proposal={proposal} />}
-            onSave={
-              lessonsApi === null
-                ? undefined
-                : (proposalId: string, request: LessonSaveRequest) =>
-                    described(
-                      lessonsApi.saveLesson({
-                        proposalId,
-                        saveLessonDto: request,
-                      }),
-                    ).then(waiting.reload)
-            }
-            onReject={
-              lessonsApi === null
-                ? undefined
-                : (proposalId: string, reason: string | null) =>
-                    described(
-                      lessonsApi.rejectLesson({
-                        proposalId,
-                        rejectLessonDto: reason === null ? {} : { reason },
-                      }),
-                    ).then(waiting.reload)
-            }
-            onUpdateRule={
-              lessonsApi === null
-                ? undefined
-                : (proposalId: string, edit: LessonRuleEdit) =>
-                    described(
-                      lessonsApi.updateLessonRule({
-                        proposalId,
-                        updateLessonRuleDto: edit,
-                      }),
-                    ).then(waiting.reload)
-            }
-            onMoveUp={
-              lessonsApi === null
-                ? undefined
-                : (proposalId: string) =>
-                    described(lessonsApi.moveLessonUp({ proposalId })).then(
-                      waiting.reload,
-                    )
-            }
-          />
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-2">
+      <ul
+        data-slot="waiting-lessons"
+        className="m-0 flex list-none flex-col divide-y divide-border p-0">
+        {proposals.map((proposal) => (
+          <li
+            key={proposal.id}
+            data-slot="waiting-lesson"
+            className="min-w-0 py-3 first:pt-0 last:pb-0">
+            <LessonRow
+              lesson={lessonOf(proposal)}
+              places={proposal.places}
+              moveUp={proposal.moveUp}
+              readDocuments={readDocuments}
+              source={<SourceLine proposal={proposal} />}
+              onSave={
+                lessonsApi === null
+                  ? undefined
+                  : (proposalId: string, request: LessonSaveRequest) =>
+                      described(
+                        lessonsApi.saveLesson({
+                          proposalId,
+                          saveLessonDto: request,
+                        }),
+                      ).then(waiting.reload)
+              }
+              onReject={
+                lessonsApi === null
+                  ? undefined
+                  : (proposalId: string, reason: string | null) =>
+                      described(
+                        lessonsApi.rejectLesson({
+                          proposalId,
+                          rejectLessonDto: reason === null ? {} : { reason },
+                        }),
+                      ).then(waiting.reload)
+              }
+              onUpdateRule={
+                lessonsApi === null
+                  ? undefined
+                  : (proposalId: string, edit: LessonRuleEdit) =>
+                      described(
+                        lessonsApi.updateLessonRule({
+                          proposalId,
+                          updateLessonRuleDto: edit,
+                        }),
+                      ).then(waiting.reload)
+              }
+              onMoveUp={
+                lessonsApi === null
+                  ? undefined
+                  : (proposalId: string) =>
+                      described(lessonsApi.moveLessonUp({ proposalId })).then(
+                        waiting.reload,
+                      )
+              }
+            />
+          </li>
+        ))}
+      </ul>
+      <ShowAllButton
+        total={all.length}
+        limit={WAITING_SHOWN}
+        expanded={expanded}
+        noun="lessons"
+        onToggle={() => setExpanded(!expanded)}
+      />
+    </div>
   );
 }
 
@@ -212,19 +230,20 @@ export function SavedLessons({
   saved: WaitingLessonsState;
   lessonsApi: DaemonApis['lessons'] | null;
 }): React.JSX.Element | null {
-  const [showAll, setShowAll] = useState(false);
   const proposals = saved.proposals ?? [];
+  const { shown, expanded, setExpanded } = useShowAll(proposals, SAVED_SHOWN);
   if (proposals.length === 0) {
     return null;
   }
-  const shown = showAll ? proposals : proposals.slice(0, SAVED_SHOWN);
   return (
     <section
       aria-label="Saved to memory"
       data-slot="saved-lessons"
       className="flex flex-col gap-2">
       <div className="flex flex-col gap-0.5">
-        <h3 className="m-0 text-sm font-medium">Saved to memory</h3>
+        <h3 className="m-0 text-sm font-medium">
+          Saved to memory · {proposals.length}
+        </h3>
         <p className="m-0 text-xs text-muted-foreground">
           Lessons that went into memory as entries of their own. Undo forgets
           the entry; Edit makes it yours.
@@ -273,16 +292,13 @@ export function SavedLessons({
           </li>
         ))}
       </ul>
-      {proposals.length > SAVED_SHOWN ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="self-start"
-          onClick={() => setShowAll((value) => !value)}>
-          {showAll ? 'Show fewer' : `Show all ${proposals.length}`}
-        </Button>
-      ) : null}
+      <ShowAllButton
+        total={proposals.length}
+        limit={SAVED_SHOWN}
+        expanded={expanded}
+        noun="lessons"
+        onToggle={() => setExpanded(!expanded)}
+      />
     </section>
   );
 }

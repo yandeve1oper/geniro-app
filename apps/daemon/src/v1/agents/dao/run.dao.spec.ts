@@ -900,6 +900,18 @@ describe('RunDao (in-memory sqlite)', () => {
       expect(await dao.countArchivedBefore(new Date(9_999))).toBe(0);
     });
 
+    it('leaves out a run waiting out its lessons before its delete, as the archived count does', async () => {
+      await dao.create({ archivedAt: new Date(1_000) });
+      await dao.create({
+        archivedAt: new Date(1_000),
+        pendingDeleteAt: new Date(2_000),
+      });
+
+      expect(await dao.archivedRunsBefore(new Date(9_999))).toHaveLength(1);
+      expect(await dao.countArchivedBefore(new Date(9_999))).toBe(1);
+      expect((await dao.countByShelf()).archived).toBe(1);
+    });
+
     it('answers a TEAM run too, and says which it is', async () => {
       // It answered chats alone until team runs became archivable, which
       // left the retention window covering half the shelf and saying nothing.

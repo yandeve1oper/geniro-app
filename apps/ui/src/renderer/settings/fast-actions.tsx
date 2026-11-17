@@ -1,4 +1,4 @@
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import * as React from 'react';
 
 import type { FastAction } from '../../shared/contracts';
@@ -10,7 +10,9 @@ import {
 import { EmptyState } from '../components/empty-state';
 import { ErrorText } from '../components/error-text';
 import { ExpandableTextarea } from '../components/expandable-textarea';
+import { SettingsGroup, SettingsGroups } from '../components/settings-group';
 import { SettingsList, SettingsPanel } from '../components/settings-panel';
+import { ShowAllButton, useShowAll } from '../components/show-all';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { useLatestCallback } from '../components/use-latest-callback';
@@ -19,6 +21,8 @@ import { useLatestCallback } from '../components/use-latest-callback';
 export type FastActionDraft = Omit<FastAction, 'id'>;
 
 const EMPTY_DRAFT: FastActionDraft = { name: '', description: '' };
+
+const SHOWN_LIMIT = 8;
 
 /**
  * Fast actions — the user's own buttons for writing a message.
@@ -58,6 +62,7 @@ export function FastActionsPane({
     null,
   );
   const [error, setError] = React.useState<string | null>(null);
+  const { shown, expanded, setExpanded } = useShowAll(actions, SHOWN_LIMIT);
 
   const commit = useLatestCallback((): void => {
     if (!editing) {
@@ -101,95 +106,108 @@ export function FastActionsPane({
     // its name.
     setError(null);
     onSave({ name, description }, editing.id);
+    if (editing.id === null) {
+      setExpanded(true);
+    }
     setEditing(null);
-  }, [editing, actions.length, onSave]);
+  }, [editing, actions.length, onSave, setExpanded]);
 
   return (
-    // NO heading of its own: the screen's header already names the section it
-    // is showing, and the pane repeating it printed `Fast actions` twice, one
-    // line apart. The same goes for the sentence under it — the header carries
-    // the one description.
-    <section className="flex flex-col gap-3" aria-label="Fast actions">
-      {editing ? null : (
-        // A toolbar rather than a lone right-aligned button. The count is the
-        // half that earns it: this list has a CEILING the editor refuses a save
-        // against (`MAX_FAST_ACTIONS`), so somebody filling it up learns that
-        // here rather than from a refusal after writing an action.
-        <div className="flex items-center justify-between gap-3">
-          {/* Silent on an EMPTY list — see the twin note in
-              `chats/run-config-picker.tsx`. The empty state below says it
-              better, and the two together said it twice. */}
-          <span className="text-xs text-muted-foreground">
-            {actions.length === 0
-              ? null
-              : `${actions.length} of ${MAX_FAST_ACTIONS}`}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setError(null);
-              setEditing({ id: null, draft: EMPTY_DRAFT });
-            }}>
-            <Plus className="size-4" />
-            New action
-          </Button>
-        </div>
-      )}
-      {error ? <ErrorText>{error}</ErrorText> : null}
-      {editing ? (
-        <FastActionEditor
-          draft={editing.draft}
-          isNew={editing.id === null}
-          onChange={(draft) => setEditing({ id: editing.id, draft })}
-          onCancel={() => {
-            setError(null);
-            setEditing(null);
-          }}
-          onCommit={commit}
-        />
-      ) : actions.length === 0 ? (
-        // Inside the SAME enclosure the list gets — see the twin note in
-        // `chats/run-config-picker.tsx`.
-        <SettingsPanel>
-          <EmptyState className="flex-col gap-1 py-10">
-            <span className="text-foreground">No fast actions yet</span>
-            {/* `text-xs` — see the twin note in `chats/run-config-picker.tsx`. */}
-            <span className="max-w-sm text-xs">
-              Name one and write what it should say — its button appears under
-              the composer, and a press drops that text into the message box.
-            </span>
-          </EmptyState>
-        </SettingsPanel>
-      ) : (
-        // `overflow-hidden` so a row's hover fill clips to the card's radius —
-        // the corner rows would otherwise paint square over a rounded edge. Safe
-        // here and NOT on `SettingsPanel`, whose rows can hold a `Select` whose
-        // panel would then be cut off.
-        <SettingsList className="overflow-hidden">
-          {actions.map((action) => (
-            <FastActionRow
-              key={action.id}
-              action={action}
-              confirmingDelete={confirmingDelete === action.id}
-              onEdit={() => {
+    <SettingsGroups>
+      <SettingsGroup
+        layout="stacked"
+        icon={<Zap />}
+        title="Your actions"
+        description="Ready-made messages you can drop into a chat with one press."
+        hint="A fast action is a message you write once and reuse, like “Review the branch and report findings”. Its button appears under the message box on the new-chat screen. Pressing it writes the text into the message box and sends nothing, so you can still edit it, add to it, or change the agent before you send."
+        actions={
+          editing ? undefined : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              title="Write a new fast action: a name for its button and the text it puts in the message box."
+              onClick={() => {
                 setError(null);
-                setConfirmingDelete(null);
-                const { id: _id, ...draft } = action;
-                setEditing({ id: action.id, draft });
-              }}
-              onDeletePress={() => setConfirmingDelete(action.id)}
-              onDeleteCancel={() => setConfirmingDelete(null)}
-              onDeleteConfirm={() => {
-                setConfirmingDelete(null);
-                onDelete(action.id);
-              }}
-            />
-          ))}
-        </SettingsList>
-      )}
-    </section>
+                setEditing({ id: null, draft: EMPTY_DRAFT });
+              }}>
+              <Plus className="size-4" />
+              New action
+            </Button>
+          )
+        }>
+        {editing || actions.length === 0 ? null : (
+          // The list has a ceiling the editor refuses a save against
+          // (`MAX_FAST_ACTIONS`), so somebody filling it up learns that here
+          // rather than from a refusal after writing an action. Silent on an
+          // empty list, where the empty state says it better.
+          <span className="text-xs text-muted-foreground">
+            {`${actions.length} of ${MAX_FAST_ACTIONS}`}
+          </span>
+        )}
+        {error ? <ErrorText>{error}</ErrorText> : null}
+        {editing ? (
+          <FastActionEditor
+            draft={editing.draft}
+            isNew={editing.id === null}
+            onChange={(draft) => setEditing({ id: editing.id, draft })}
+            onCancel={() => {
+              setError(null);
+              setEditing(null);
+            }}
+            onCommit={commit}
+          />
+        ) : actions.length === 0 ? (
+          // Inside the SAME enclosure the list gets — see the twin note in
+          // `chats/run-config-picker.tsx`.
+          <SettingsPanel>
+            <EmptyState className="flex-col gap-1 py-10">
+              <span className="text-foreground">No fast actions yet</span>
+              {/* `text-xs` — see the twin note in `chats/run-config-picker.tsx`. */}
+              <span className="max-w-sm text-xs">
+                Name one and write what it should say — its button appears under
+                the composer, and a press drops that text into the message box.
+              </span>
+            </EmptyState>
+          </SettingsPanel>
+        ) : (
+          // `overflow-hidden` so a row's hover fill clips to the card's radius —
+          // the corner rows would otherwise paint square over a rounded edge. Safe
+          // here and NOT on `SettingsPanel`, whose rows can hold a `Select` whose
+          // panel would then be cut off.
+          <SettingsList className="overflow-hidden">
+            {shown.map((action) => (
+              <FastActionRow
+                key={action.id}
+                action={action}
+                confirmingDelete={confirmingDelete === action.id}
+                onEdit={() => {
+                  setError(null);
+                  setConfirmingDelete(null);
+                  const { id: _id, ...draft } = action;
+                  setEditing({ id: action.id, draft });
+                }}
+                onDeletePress={() => setConfirmingDelete(action.id)}
+                onDeleteCancel={() => setConfirmingDelete(null)}
+                onDeleteConfirm={() => {
+                  setConfirmingDelete(null);
+                  onDelete(action.id);
+                }}
+              />
+            ))}
+          </SettingsList>
+        )}
+        {editing ? null : (
+          <ShowAllButton
+            total={actions.length}
+            limit={SHOWN_LIMIT}
+            expanded={expanded}
+            onToggle={() => setExpanded(!expanded)}
+            noun="actions"
+          />
+        )}
+      </SettingsGroup>
+    </SettingsGroups>
   );
 }
 
@@ -239,6 +257,7 @@ function FastActionRow({
             size="sm"
             className="shrink-0 text-muted-foreground"
             aria-label={`Keep ${action.name}`}
+            title="Keep this action and do not delete it."
             onClick={onDeleteCancel}>
             Cancel
           </Button>
@@ -248,6 +267,7 @@ function FastActionRow({
             size="sm"
             className="shrink-0"
             aria-label={`Confirm delete ${action.name}`}
+            title="Delete this action for good."
             onClick={onDeleteConfirm}>
             Delete?
           </Button>
@@ -260,7 +280,7 @@ function FastActionRow({
             size="icon"
             className="size-7 shrink-0 text-muted-foreground"
             aria-label={`Edit ${action.name}`}
-            title="Edit"
+            title="Change this action’s name or text."
             onClick={onEdit}>
             <Pencil className="size-4" />
           </Button>
@@ -270,7 +290,7 @@ function FastActionRow({
             size="icon"
             className="size-7 shrink-0 text-muted-foreground"
             aria-label={`Delete ${action.name}`}
-            title="Delete"
+            title="Delete this action. You are asked once more first."
             onClick={onDeletePress}>
             <Trash2 className="size-4" />
           </Button>
@@ -338,10 +358,23 @@ function FastActionEditor({
       </label>
 
       <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          title="Close the editor without saving."
+          onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="button" size="sm" onClick={onCommit}>
+        <Button
+          type="button"
+          size="sm"
+          title={
+            isNew
+              ? 'Add this action to your list.'
+              : 'Save your changes to this action.'
+          }
+          onClick={onCommit}>
           {isNew ? 'Create' : 'Save'}
         </Button>
       </div>
