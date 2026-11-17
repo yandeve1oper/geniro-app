@@ -309,6 +309,10 @@ export class LessonSegmentService implements OnModuleInit, OnModuleDestroy {
       id: segment.runId,
       agentKind: null,
       configDir: null,
+      model: null,
+      effort: null,
+      contextWindow: null,
+      modelParameters: null,
     };
     const range = { fromSeq: segment.fromSeq, toSeq: segment.toSeq };
     const checker = this.config.checkChoice();

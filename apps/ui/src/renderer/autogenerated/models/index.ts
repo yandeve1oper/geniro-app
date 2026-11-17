@@ -6434,6 +6434,12 @@ export interface LessonProposal {
      */
     moveUp: LessonProposalMoveUpEnum | null;
     /**
+     * Saved to memory as an entry of its own, so Undo and Edit apply
+     * @type {boolean}
+     * @memberof LessonProposal
+     */
+    undoable: boolean;
+    /**
      * False once the thread the lesson came from was deleted
      * @type {boolean}
      * @memberof LessonProposal
@@ -6468,7 +6474,6 @@ export type LessonProposalCheckVerdictEnum = typeof LessonProposalCheckVerdictEn
  * @export
  */
 export const LessonProposalMoveUpEnum = {
-    ProjectInstructions: 'project_instructions',
     MemoryIndex: 'memory_index'
 } as const;
 export type LessonProposalMoveUpEnum = typeof LessonProposalMoveUpEnum[keyof typeof LessonProposalMoveUpEnum];

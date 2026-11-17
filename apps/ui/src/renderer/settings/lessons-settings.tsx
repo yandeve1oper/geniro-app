@@ -7,6 +7,7 @@ import {
   DEFAULT_LESSONS,
   type LessonsMode,
   type LessonsSettings,
+  type MemoryAgentWrites,
   type MemoryTriageConfig,
   type Settings,
 } from '../../shared/contracts';
@@ -51,23 +52,16 @@ function counted(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-function resolvedReflectorWords(
-  installed: readonly CliKind[] | null,
-  capabilities: CapabilitiesDto | null,
-): string {
-  if (installed === null || capabilities === null) {
-    return 'Checking which CLIs are installed and their light models…';
+const SAME_AS_THREAD_WORDS =
+  "Each reflection runs on the thread's own CLI, profile, model and effort — exactly what the thread ran.";
+
+function lessonsDescription(agentWrites: MemoryAgentWrites | null): string {
+  const reads =
+    'A reflection reads an archived thread for what went wrong in it and files at most three lessons, each with the quote it rests on.';
+  if (agentWrites === 'pending') {
+    return `${reads} A lesson for memory waits for your review, as Agent notes above says: no agent sees it until you approve it. Every other lesson waits under Waiting for review too.`;
   }
-  if (installed.length === 0) {
-    return 'No CLI is installed to reflect with.';
-  }
-  const words = installed.map((kind) => {
-    const light =
-      capabilities.agents.find((agent) => agent.agent === kind)?.lightModel ??
-      null;
-    return `${kind}: ${light ?? "no light model known, runs on the CLI's default model"}`;
-  });
-  return `The thread's own CLI and profile, on its light model at high effort — ${words.join(' · ')}`;
+  return `${reads} A lesson for memory is saved at once, as Agent notes above says: agents find it by search right away, and it joins every chat's memory index only once you approve it. Every other lesson waits for you under Waiting for review.`;
 }
 
 function spendSummary(spend: LessonsSpendDto): string {
@@ -132,6 +126,7 @@ export function LessonsSettingsPanel({
   lessonsApi,
   client,
   remote,
+  agentWrites,
 }: {
   agentsApi: DaemonApis['agents'] | null;
   capabilities: CapabilitiesDto | null;
@@ -141,6 +136,7 @@ export function LessonsSettingsPanel({
   lessonsApi: DaemonApis['lessons'] | null;
   client: Pick<DaemonClient, 'onLessonsChanged'> | null;
   remote: boolean;
+  agentWrites: MemoryAgentWrites | null;
 }): React.JSX.Element {
   const [lessons, setLessons] = useState<LessonsSettings | null>(null);
   const [profiles, setProfiles] = useState<Profiles>({
@@ -228,7 +224,7 @@ export function LessonsSettingsPanel({
       <SettingsPanelRow
         layout="block"
         label="Lessons"
-        description="A reflection reads an archived thread for what went wrong in it and files at most three lessons into searchable memory, each with the quote it rests on. Undo and Edit sit on the lesson's card.">
+        description={lessonsDescription(agentWrites)}>
         {error === null ? null : (
           <ErrorBanner
             message={error}
@@ -250,13 +246,13 @@ export function LessonsSettingsPanel({
       </SettingsPanelRow>
       <SettingsPanelRow
         layout="block"
-        label="Reflect with"
-        description="Which CLI, profile, model and effort a reflection runs as. Its cost shows on the thread's lessons card and under Lessons in Stats.">
+        label="Memory model"
+        description="The one CLI, profile, model and effort memory work runs on, such as reflecting on a thread for lessons. Its cost shows on the thread's lessons card and under Lessons in Stats.">
         <div
           className="flex min-w-0 flex-col items-start gap-2"
           inert={disabled}>
           <SegmentedControl
-            ariaLabel="Reflect with"
+            ariaLabel="Memory model"
             options={REFLECTOR_SOURCES}
             value={reflectorSource}
             disabled={disabled}
@@ -277,7 +273,7 @@ export function LessonsSettingsPanel({
             <p
               data-slot="lessons-default-reflector"
               className="text-xs text-muted-foreground">
-              {resolvedReflectorWords(installed, capabilities)}
+              {SAME_AS_THREAD_WORDS}
             </p>
           ) : (
             <div className="flex min-w-0 flex-wrap items-center gap-1">
@@ -285,7 +281,7 @@ export function LessonsSettingsPanel({
                 value={current.reflector.agent}
                 teams={NO_TEAMS}
                 cliDetections={cliDetections}
-                aria-label="Reflection agent"
+                aria-label="Memory model agent"
                 onChange={(target) =>
                   pickAgent(target, (choice) =>
                     save({ ...current, reflector: choice }),

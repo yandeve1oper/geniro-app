@@ -6,9 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GeniroApi } from '../../shared/contracts';
 import { createPreloadStub } from '../__fixtures__/preload-stub';
 import type { RunStatusKind } from '../chats/run-status';
-import type { SharesChangedEvent } from '../daemon-client';
+import type { LessonsChangedEvent, SharesChangedEvent } from '../daemon-client';
 import type { AgentNotice } from './run-notifications';
 import {
+  useLessonsFiledNotifications,
   useRunNotifications,
   useShareSignInNotifications,
 } from './use-run-notifications';
@@ -368,6 +369,94 @@ describe('useShareSignInNotifications', () => {
     announce(event);
 
     expect(notify).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+});
+
+describe('useLessonsFiledNotifications', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  const notify = vi.fn<GeniroApi['notify']>(async () => {});
+  let listeners: Set<(event: LessonsChangedEvent) => void>;
+  const client = {
+    onLessonsChanged: (listener: (event: LessonsChangedEvent) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+
+  function LessonsProbe({ activeRunId }: { activeRunId: string | null }): null {
+    useLessonsFiledNotifications({
+      client,
+      runs: [{ id: 'r1' }],
+      labelOf: () => 'Migrate the cache',
+      activeRunId,
+    });
+    return null;
+  }
+
+  beforeEach(() => {
+    notify.mockClear();
+    listeners = new Set();
+    window.geniro = createPreloadStub({ notify });
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  const announce = (next: LessonsChangedEvent): void => {
+    act(() => {
+      for (const listener of listeners) {
+        listener(next);
+      }
+    });
+  };
+
+  it('posts one lessons banner, titled with the thread, when a reflection’s card lands with lessons', () => {
+    act(() => root.render(<LessonsProbe activeRunId={null} />));
+
+    announce({ runId: 'r1', filed: { saved: 2, waiting: 1 } });
+    announce({ runId: 'r1' });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith({
+      kind: 'lessons',
+      runId: 'r1',
+      title: 'Migrate the cache',
+      body: '2 lessons saved to memory · 1 lesson waits for your review',
+    });
+  });
+
+  it('posts nothing for a reflection that filed nothing', () => {
+    act(() => root.render(<LessonsProbe activeRunId={null} />));
+
+    announce({ runId: 'r1', filed: { saved: 0, waiting: 0 } });
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet while the user is looking at that chat', () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    act(() => root.render(<LessonsProbe activeRunId="r1" />));
+
+    announce({ runId: 'r1', filed: { saved: 1, waiting: 0 } });
+
+    expect(notify).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it('still posts for the open chat while its window is in the background', () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    act(() => root.render(<LessonsProbe activeRunId="r1" />));
+
+    announce({ runId: 'r1', filed: { saved: 1, waiting: 0 } });
+
+    expect(notify).toHaveBeenCalledTimes(1);
     vi.restoreAllMocks();
   });
 });

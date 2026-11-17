@@ -209,13 +209,22 @@ function agentOptionsCaps(): unknown {
 let container: HTMLDivElement;
 let root: Root | null;
 
-async function mount(section?: SettingsSection): Promise<void> {
+async function mount(
+  section?: SettingsSection,
+  memoryWaiting: number | null = null,
+): Promise<void> {
   container = document.createElement('div');
   document.body.appendChild(container);
   const mountedRoot = createRoot(container);
   root = mountedRoot;
   await act(async () => {
-    mountedRoot.render(<Settings handle={handle} section={section} />);
+    mountedRoot.render(
+      <Settings
+        handle={handle}
+        section={section}
+        memoryWaiting={memoryWaiting}
+      />,
+    );
   });
 }
 
@@ -1662,6 +1671,20 @@ describe('Settings — sections', () => {
     expect(
       container.querySelector('[data-slot="section-updates"]')?.textContent,
     ).toBe('1');
+  });
+
+  it('counts what waits for review on the Memory row', async () => {
+    await mount('fast-actions', 5);
+
+    expect(
+      container.querySelector('[data-slot="section-waiting"]')?.textContent,
+    ).toBe('5');
+  });
+
+  it('draws no Memory count while nothing waits', async () => {
+    await mount('fast-actions', 0);
+
+    expect(container.querySelector('[data-slot="section-waiting"]')).toBeNull();
   });
 
   it('marks the open section for a screen reader, not by colour alone', async () => {

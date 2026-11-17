@@ -90,6 +90,7 @@ import { DaemonClient } from '../daemon-client';
 import { reportRendererIssue } from '../debug/report-ui-errors';
 import { openResolvedTarget as openResolvedHandoff } from '../handoff-open';
 import {
+  useLessonsFiledNotifications,
   useRunNotifications,
   useShareSignInNotifications,
 } from '../notifications/use-run-notifications';
@@ -9503,6 +9504,12 @@ export function Chats({
   // An agent's share waiting on the user signing in — desktop only, like the
   // Share control that answers it.
   useShareSignInNotifications({
+    client: isRemoteRuntime() || isHosted ? null : client,
+    runs: notifiedRuns,
+    labelOf: notificationLabel,
+    activeRunId: active && showsRequestedThread ? activeRunId : null,
+  });
+  useLessonsFiledNotifications({
     client: isRemoteRuntime() || isHosted ? null : client,
     runs: notifiedRuns,
     labelOf: notificationLabel,

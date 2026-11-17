@@ -1109,6 +1109,18 @@ describe('parseLessonsChanged — the lessons_changed twin', () => {
     expect(parseLessonsChanged({ runId: null })).toEqual({ runId: null });
   });
 
+  it('reads what a reflection’s card filed, and drops a filed that is not two counts', () => {
+    expect(
+      parseLessonsChanged({ runId: 'x', filed: { saved: 2, waiting: 1 } }),
+    ).toEqual({ runId: 'x', filed: { saved: 2, waiting: 1 } });
+    expect(
+      parseLessonsChanged({ runId: 'x', filed: { saved: -1, waiting: 1 } }),
+    ).toEqual({ runId: 'x' });
+    expect(parseLessonsChanged({ runId: 'x', filed: { saved: 1 } })).toEqual({
+      runId: 'x',
+    });
+  });
+
   it('refuses anything else', () => {
     expect(parseLessonsChanged(null)).toBeNull();
     expect(parseLessonsChanged({})).toBeNull();

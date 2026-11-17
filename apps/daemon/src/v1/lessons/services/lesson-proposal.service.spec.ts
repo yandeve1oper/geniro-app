@@ -1040,38 +1040,14 @@ describe('LessonProposalService.moveUp', () => {
     handle: 'm7',
   });
 
-  it("moves a rule broken again into the project's Lessons block, and the lesson becomes a project-instructions lesson", async () => {
+  it('approves the entry a rule broken again names into the memory index, as the user, even when the thread has a project', async () => {
     const row = proposal({ dedup: BROKEN_AGAIN });
-    const { service, projects, memory } = build(row);
-
-    const wire = await service.moveUp('lp-1');
-
-    expect(projects.update).toHaveBeenCalledWith(
-      'p1',
-      {
-        instructionBlocks: [
-          { id: 'lessons', title: 'Lessons', text: `- ${BODY_RULE}` },
-        ],
-        expectedInstructionsRevision: 4,
-      },
-      expect.objectContaining({ source: 'lesson' }),
-    );
-    expect(memory.setStatus).not.toHaveBeenCalled();
-    expect(wire).toMatchObject({
-      status: 'saved',
-      target: PROJECT_TARGET,
-      resultRef: 'p1',
-    });
-  });
-
-  it('approves the entry a rule broken again names into the memory index, as the user, when the thread has no project', async () => {
-    const row = proposal({ projectId: null, dedup: BROKEN_AGAIN });
     const { service, memory, projects, rows } = build(row, undefined, {
       ...FILED_ENTRY,
-      status: 'pending',
+      indexed: false,
     });
 
-    await service.moveUp('lp-1');
+    const wire = await service.moveUp('lp-1');
 
     expect(memory.setStatus).toHaveBeenCalledWith(
       { kind: 'user' },
@@ -1088,6 +1064,22 @@ describe('LessonProposalService.moveUp', () => {
         }),
       }),
     );
+    expect(wire).toMatchObject({ status: 'saved', resultRef: 'm7' });
+  });
+
+  it('refuses to move up an entry already in every chat’s index, with 409 LESSON_ALREADY_INDEXED, touching nothing', async () => {
+    const row = proposal({ dedup: BROKEN_AGAIN });
+    const { service, memory, projects, rows } = build(row, undefined, {
+      ...FILED_ENTRY,
+      indexed: true,
+    });
+
+    await expect(service.moveUp('lp-1')).rejects.toMatchObject({
+      errorCode: 'LESSON_ALREADY_INDEXED',
+    });
+    expect(memory.setStatus).not.toHaveBeenCalled();
+    expect(projects.update).not.toHaveBeenCalled();
+    expect(rows.write).not.toHaveBeenCalled();
   });
 
   it('refuses to move up a lesson whose rule was not broken again, with 409 LESSON_NOT_BROKEN_AGAIN, touching nothing', async () => {
@@ -1126,6 +1118,53 @@ describe('LessonProposalService.list', () => {
     expect(wires.map((wire) => [wire.id, wire.sourceExists])).toEqual([
       ['lp-kept', true],
       ['lp-orphan', false],
+    ]);
+  });
+
+  it('offers Move up only while the entry a rule broken again names is outside the index', async () => {
+    const broken = JSON.stringify({ verdict: 'broken_again', handle: 'm7' });
+    const outside = build(null, undefined, { ...FILED_ENTRY, indexed: false });
+    outside.proposals.list.mockResolvedValueOnce([proposal({ dedup: broken })]);
+    const inside = build(null, undefined, { ...FILED_ENTRY, indexed: true });
+    inside.proposals.list.mockResolvedValueOnce([proposal({ dedup: broken })]);
+
+    const [offered] = await outside.service.list({});
+    const [withheld] = await inside.service.list({});
+
+    expect(offered!.moveUp).toBe('memory_index');
+    expect(withheld!.moveUp).toBeNull();
+  });
+
+  it('marks undoable only a lesson saved to memory as an entry of its own', async () => {
+    const own = proposal({ id: 'lp-own', status: 'saved', resultRef: 'm9' });
+    const changedExisting = proposal({
+      id: 'lp-refined',
+      status: 'saved',
+      resultRef: 'm7',
+      dedup: JSON.stringify({ verdict: 'refines', handle: 'm7' }),
+    });
+    const elsewhere = proposal({
+      id: 'lp-project',
+      status: 'saved',
+      resultRef: 'p1',
+      target: JSON.stringify(PROJECT_TARGET),
+    });
+    const waiting = proposal({ id: 'lp-waiting' });
+    const { service, proposals } = build(null);
+    proposals.list.mockResolvedValueOnce([
+      own,
+      changedExisting,
+      elsewhere,
+      waiting,
+    ]);
+
+    const wires = await service.list({});
+
+    expect(wires.map((wire) => [wire.id, wire.undoable])).toEqual([
+      ['lp-own', true],
+      ['lp-refined', false],
+      ['lp-project', false],
+      ['lp-waiting', false],
     ]);
   });
 
@@ -1187,15 +1226,13 @@ describe('lesson proposal helpers', () => {
     ).toEqual([{ id: 'lessons', title: 'Lessons', text: '- B' }]);
   });
 
-  it('moves up only a memory lesson broken again: into the project when it has one, else the index', () => {
+  it('moves up only a memory lesson broken again, and always into the memory index', () => {
     const broken = {
       dedup: JSON.stringify({ verdict: 'broken_again', handle: 'm7' }),
       target: JSON.stringify(TARGET_PROJECT),
-      projectId: 'p1',
     };
 
-    expect(moveUpOf(broken)).toBe('project_instructions');
-    expect(moveUpOf({ ...broken, projectId: null })).toBe('memory_index');
+    expect(moveUpOf(broken)).toBe('memory_index');
     expect(
       moveUpOf({
         ...broken,

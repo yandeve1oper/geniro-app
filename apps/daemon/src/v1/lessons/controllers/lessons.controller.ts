@@ -77,7 +77,7 @@ export class LessonsController {
     return this.proposals.updateRule(proposalId, dto);
   }
 
-  /** "Move up" on a rule broken again: into the project's instructions, or its entry into the memory index. 409 `LESSON_NOT_BROKEN_AGAIN`. */
+  /** "Move up" on a rule broken again: its entry into every chat's memory index. 409 `LESSON_NOT_BROKEN_AGAIN`, `LESSON_ALREADY_INDEXED`. */
   @Post('proposals/:proposalId/move-up')
   @ApiOperation({ operationId: 'moveLessonUp' })
   @ZodResponse({ status: 201, type: LessonProposalDto })

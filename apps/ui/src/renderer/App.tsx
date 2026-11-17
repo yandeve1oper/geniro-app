@@ -65,7 +65,7 @@ const Teams = lazy(() =>
 );
 import type { SettingsSection } from './settings/Settings';
 import { useCliUpdatesAvailable } from './settings/use-cli-updates-available';
-import { useMemoryPendingCount } from './settings/use-memory-pending-count';
+import { useMemoryWaitingCount } from './settings/use-memory-waiting-count';
 
 const Settings = lazy(() =>
   import('./settings/Settings').then((m) => ({ default: m.Settings })),
@@ -574,7 +574,7 @@ export function App(): React.JSX.Element {
     }
   }, [openRunId]);
   const knowledgeCounts = useKnowledgeCounts(apis, clientRef.current);
-  const memoryPending = useMemoryPendingCount(apis, clientRef.current);
+  const memoryWaiting = useMemoryWaitingCount(apis, clientRef.current);
   const cliUpdatesAvailable = useCliUpdatesAvailable();
   const agentName = useLatestCallback(
     (kind: string): string => agentShortName(agentIdentities, kind),
@@ -589,9 +589,9 @@ export function App(): React.JSX.Element {
     () => ({
       chats: owedCount(waiting),
       knowledge: knowledgeCounts?.waiting ?? 0,
-      settings: (memoryPending ?? 0) + cliUpdatesAvailable,
+      settings: (memoryWaiting ?? 0) + cliUpdatesAvailable,
     }),
-    [waiting, knowledgeCounts, memoryPending, cliUpdatesAvailable],
+    [waiting, knowledgeCounts, memoryWaiting, cliUpdatesAvailable],
   );
   const waitingByRun = useMemo(
     () => new Map(waiting.map((reading) => [reading.runId, reading.state])),
@@ -1000,6 +1000,7 @@ export function App(): React.JSX.Element {
                           settingsSection === 'memory' ? memoryFocus : null
                         }
                         onMemoryFocusDone={() => setMemoryFocus(null)}
+                        memoryWaiting={memoryWaiting}
                         onOpenOnboarding={
                           isRemoteRuntime()
                             ? undefined

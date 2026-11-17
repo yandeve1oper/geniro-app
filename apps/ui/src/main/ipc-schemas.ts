@@ -860,7 +860,13 @@ export type KnowledgeExportSave = z.infer<typeof knowledgeExportSaveSchema>;
  */
 export const notificationSchema = z
   .strictObject({
-    kind: z.enum(['question', 'turn-end', 'share-sign-in', 'resource-alert']),
+    kind: z.enum([
+      'question',
+      'turn-end',
+      'share-sign-in',
+      'resource-alert',
+      'lessons',
+    ]),
     runId: z.string().max(128),
     title: z.string().min(1).max(120),
     body: z.string().max(240),

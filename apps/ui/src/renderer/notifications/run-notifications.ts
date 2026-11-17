@@ -40,6 +40,23 @@ export function shareSignInNotice(event: {
   };
 }
 
+export function lessonsFiledNotice(filed: {
+  saved: number;
+  waiting: number;
+}): { kind: 'lessons'; body: string } | null {
+  const parts = [
+    filed.saved === 0
+      ? null
+      : `${filed.saved} ${filed.saved === 1 ? 'lesson' : 'lessons'} saved to memory`,
+    filed.waiting === 0
+      ? null
+      : `${filed.waiting} ${filed.waiting === 1 ? 'lesson waits' : 'lessons wait'} for your review`,
+  ].filter((part): part is string => part !== null);
+  return parts.length === 0
+    ? null
+    : { kind: 'lessons', body: parts.join(' · ') };
+}
+
 /** One run that just crossed into a state worth interrupting the user for. */
 export interface RunNotificationTrigger {
   runId: string;

@@ -35,6 +35,7 @@ import {
   type LessonPlaces,
   type LessonProposalCard,
   LESSONS_PER_REFLECTION_MAX,
+  type LessonsFiled,
   type LessonSignalKind,
   type LessonsPayload,
   type LessonTarget,
@@ -360,7 +361,13 @@ export class LessonFilingService {
     }
     if (rows.length === 0) {
       if (segment.closedBy === 'manual') {
-        await this.writeCard(segment, turn.analysisRunId, rows, null);
+        await this.writeCard(
+          segment,
+          turn.analysisRunId,
+          rows,
+          null,
+          NOTHING_FILED,
+        );
       } else {
         this.events.publishChanged(source.id);
       }
@@ -455,7 +462,13 @@ export class LessonFilingService {
       { status: 'reflected', leaseUntil: null },
       em,
     );
-    await this.writeCard(segment, rows[0]?.reflectionRunId ?? '', rows, check);
+    await this.writeCard(
+      segment,
+      rows[0]?.reflectionRunId ?? '',
+      rows,
+      check,
+      filedOf(rows, outcomes),
+    );
     for (const outcome of outcomes) {
       await this.rows.write(segment.runId, {
         kind: 'lesson_outcome',
@@ -484,7 +497,13 @@ export class LessonFilingService {
       { status: 'reflected', leaseUntil: null, failReason: reason },
       em,
     );
-    await this.writeCard(segment, rows[0]?.reflectionRunId ?? '', rows, check);
+    await this.writeCard(
+      segment,
+      rows[0]?.reflectionRunId ?? '',
+      rows,
+      check,
+      filedOf(rows, []),
+    );
   }
 
   private async fileOne(
@@ -562,6 +581,7 @@ export class LessonFilingService {
     reflectionRunId: string,
     rows: readonly LessonProposal[],
     check: LessonCheckFacts | null,
+    filed: LessonsFiled,
   ): Promise<void> {
     const em = this.em.fork();
     const reflection = await this.runDao.getById(reflectionRunId, em);
@@ -588,7 +608,7 @@ export class LessonFilingService {
           : placesOf(rows[0]),
       check,
     };
-    await this.rows.write(segment.runId, { kind: 'lessons', payload });
+    await this.rows.write(segment.runId, { kind: 'lessons', payload }, filed);
   }
 
   /** Why the thread has no place for a lesson's target, or null when it has. */
@@ -693,6 +713,21 @@ export class LessonFilingService {
     );
     return item === undefined ? '' : textOfPayload(item.payload);
   }
+}
+
+const NOTHING_FILED: LessonsFiled = { saved: 0, waiting: 0 };
+
+function filedOf(
+  rows: readonly LessonProposal[],
+  outcomes: readonly LessonOutcomePayload[],
+): LessonsFiled {
+  return {
+    saved: outcomes.filter(({ status }) => status === 'saved').length,
+    waiting:
+      rows.filter(
+        ({ status }) => status === 'proposed' || status === 'check_failed',
+      ).length + outcomes.filter(({ status }) => status === 'pending').length,
+  };
 }
 
 function refusedWith(code: LessonRefusalCode, reason: string): LessonFiled {

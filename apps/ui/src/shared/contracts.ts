@@ -402,8 +402,8 @@ export type LessonsMode = 'off' | 'auto';
 
 /**
  * What a lessons reflection and its optional check run as. A null `reflector`
- * reflects as the thread did — its CLI and profile — on that CLI's light model;
- * a null `checker` runs no check.
+ * reflects as the thread ran — its CLI, profile, model, effort, window and
+ * model parameters; a null `checker` runs no check.
  *
  * TWIN PARSER: `LessonsConfigSchema` in `apps/daemon/src/v1/lessons/lessons.types.ts`,
  * which `main/lessons-config-push.ts` pushes this to.
@@ -1137,10 +1137,11 @@ export const CHAT_LIST_WIDTH = 260;
  * keeps the one place that can post a banner the one place that gates it.
  * `share-sign-in` is an agent's share waiting on the user signing in to the
  * place it shares to. `resource-alert` is the daemon's resource watch finding a
- * thread eating memory, or the machine short of memory or disk.
+ * thread eating memory, or the machine short of memory or disk. `lessons` is
+ * a reflection's card landing with lessons saved or waiting on the user.
  */
 export type RunNotificationKind =
-  'question' | 'turn-end' | 'share-sign-in' | 'resource-alert';
+  'question' | 'turn-end' | 'share-sign-in' | 'resource-alert' | 'lessons';
 
 /** One notification the renderer asks main to post. */
 export interface RunNotification {

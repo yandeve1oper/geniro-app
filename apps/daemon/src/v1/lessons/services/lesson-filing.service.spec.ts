@@ -12,6 +12,7 @@ import { teamSnapshotOf } from '../../teams/utils/team-snapshot';
 import type { LessonProposalDao } from '../dao/lesson-proposal.dao';
 import type { LessonSegmentDao } from '../dao/lesson-segment.dao';
 import { LessonProposal } from '../entity/lesson-proposal.entity';
+import type { LessonSegment } from '../entity/lesson-segment.entity';
 import type {
   LessonDedup,
   LessonModelChoice,
@@ -543,44 +544,48 @@ describe('LessonFilingService.file', () => {
       { reflectedThroughSeq: SEGMENT_TO },
       fixture.tx,
     );
-    expect(fixture.rows.write).toHaveBeenCalledWith('src', {
-      kind: 'lessons',
-      payload: {
-        reflectionRunId: 'refl',
-        segmentId: 'seg-1',
-        fromSeq: SEGMENT_FROM,
-        toSeq: SEGMENT_TO,
-        agentKind: 'claude',
-        model: 'opus',
-        proposals: [
-          {
-            id: persisted[0]!.id,
-            title: lesson().title,
-            rule: lesson().rule,
-            why: lesson().why,
-            signalKind: 'user_correction',
-            evidence: { seq: 6, quote: 'use pnpm not npm' },
-            target: lesson().target,
-            dedup: lesson().dedup,
-          },
-          {
-            id: persisted[1]!.id,
-            title: second.title,
-            rule: second.rule,
-            why: second.why,
-            signalKind: 'user_correction',
-            evidence: {
-              seq: 9,
-              quote: 'cache key must not include the run id',
+    expect(fixture.rows.write).toHaveBeenCalledWith(
+      'src',
+      {
+        kind: 'lessons',
+        payload: {
+          reflectionRunId: 'refl',
+          segmentId: 'seg-1',
+          fromSeq: SEGMENT_FROM,
+          toSeq: SEGMENT_TO,
+          agentKind: 'claude',
+          model: 'opus',
+          proposals: [
+            {
+              id: persisted[0]!.id,
+              title: lesson().title,
+              rule: lesson().rule,
+              why: lesson().why,
+              signalKind: 'user_correction',
+              evidence: { seq: 6, quote: 'use pnpm not npm' },
+              target: lesson().target,
+              dedup: lesson().dedup,
             },
-            target: second.target,
-            dedup: second.dedup,
-          },
-        ],
-        places: { project: false, team: false, projectId: null, members: [] },
-        check: null,
+            {
+              id: persisted[1]!.id,
+              title: second.title,
+              rule: second.rule,
+              why: second.why,
+              signalKind: 'user_correction',
+              evidence: {
+                seq: 9,
+                quote: 'cache key must not include the run id',
+              },
+              target: second.target,
+              dedup: second.dedup,
+            },
+          ],
+          places: { project: false, team: false, projectId: null, members: [] },
+          check: null,
+        },
       },
-    });
+      expect.anything(),
+    );
   });
 
   it('tells the card which memory scopes the thread can save to', async () => {
@@ -591,17 +596,21 @@ describe('LessonFilingService.file', () => {
 
     await fixture.service.file(fixture.turn, [lesson()]);
 
-    expect(fixture.rows.write).toHaveBeenCalledWith('src', {
-      kind: 'lessons',
-      payload: expect.objectContaining({
-        places: {
-          project: true,
-          team: true,
-          projectId: 'proj-1',
-          members: [],
-        },
-      }),
-    });
+    expect(fixture.rows.write).toHaveBeenCalledWith(
+      'src',
+      {
+        kind: 'lessons',
+        payload: expect.objectContaining({
+          places: {
+            project: true,
+            team: true,
+            projectId: 'proj-1',
+            members: [],
+          },
+        }),
+      },
+      expect.anything(),
+    );
     expect(persistedOf(fixture)).toEqual([
       expect.objectContaining({ projectId: 'proj-1', teamSlug: 'reviewers' }),
     ]);
@@ -636,10 +645,14 @@ describe('LessonFilingService.file', () => {
       { reflectedThroughSeq: SEGMENT_TO },
       fixture.tx,
     );
-    expect(fixture.rows.write).toHaveBeenCalledWith('src', {
-      kind: 'lessons',
-      payload: expect.objectContaining({ proposals: [] }),
-    });
+    expect(fixture.rows.write).toHaveBeenCalledWith(
+      'src',
+      {
+        kind: 'lessons',
+        payload: expect.objectContaining({ proposals: [] }),
+      },
+      { saved: 0, waiting: 0 },
+    );
   });
 
   it('writes no card for an automatic stretch that found no lesson, and tells the thread it changed', async () => {
@@ -746,6 +759,33 @@ describe('LessonFilingService.file', () => {
     );
   });
 
+  it('counts every lesson a check could not judge as waiting on the card’s announce', async () => {
+    const fixture = build({ checker: CHECKER });
+    fixture.service.useCheck(vi.fn(() => Promise.resolve()));
+    await fixture.service.file(fixture.turn, [
+      lesson({
+        target: { kind: 'memory', scope: 'global', type: 'feedback' },
+      }),
+      lesson({
+        title: 'Run the migration before the seed',
+        target: { kind: 'memory', scope: 'global', type: 'feedback' },
+      }),
+    ]);
+
+    await fixture.service.deliverUnchecked(
+      fixture.segment as unknown as LessonSegment,
+      persistedOf(fixture),
+      null,
+      'the check ended without verdicts',
+    );
+
+    expect(fixture.rows.write).toHaveBeenCalledWith(
+      'src',
+      expect.objectContaining({ kind: 'lessons' }),
+      { saved: 0, waiting: 2 },
+    );
+  });
+
   it('holds the proposals as checking and starts the check instead of filing when a checker is set', async () => {
     const fixture = build({ checker: CHECKER });
     const starter = vi.fn(() => Promise.resolve());
@@ -813,14 +853,59 @@ describe('LessonFilingService.file', () => {
       ]);
       expect(fixture.memory.fileLesson).not.toHaveBeenCalled();
       expect(fixture.rows.write).toHaveBeenCalledTimes(1);
-      expect(fixture.rows.write).toHaveBeenCalledWith('src', {
-        kind: 'lessons',
-        payload: expect.objectContaining({
-          proposals: [expect.objectContaining({ target })],
-        }),
-      });
+      expect(fixture.rows.write).toHaveBeenCalledWith(
+        'src',
+        {
+          kind: 'lessons',
+          payload: expect.objectContaining({
+            proposals: [expect.objectContaining({ target })],
+          }),
+        },
+        expect.anything(),
+      );
     },
   );
+
+  it('tells the card’s announce how many lessons it saved by itself and how many wait on the user', async () => {
+    const fixture = build({ project: { id: 'proj-1' } });
+
+    await fixture.service.file(fixture.turn, [
+      lesson({
+        target: { kind: 'memory', scope: 'global', type: 'feedback' },
+      }),
+      lesson({
+        title: 'Run the migration before the seed',
+        target: { kind: 'project_instructions' },
+      }),
+    ]);
+
+    expect(fixture.rows.write).toHaveBeenCalledWith(
+      'src',
+      expect.objectContaining({ kind: 'lessons' }),
+      { saved: 1, waiting: 1 },
+    );
+  });
+
+  it('counts a memory lesson held for review as waiting, not saved', async () => {
+    const fixture = build({
+      saved: {
+        kind: 'created',
+        entry: { handle: 'm-wait', status: 'pending' },
+      },
+    });
+
+    await fixture.service.file(fixture.turn, [
+      lesson({
+        target: { kind: 'memory', scope: 'global', type: 'feedback' },
+      }),
+    ]);
+
+    expect(fixture.rows.write).toHaveBeenCalledWith(
+      'src',
+      expect.objectContaining({ kind: 'lessons' }),
+      { saved: 0, waiting: 1 },
+    );
+  });
 
   it('stores the places the thread had on the proposal: its project and its team run members', async () => {
     const fixture = build({

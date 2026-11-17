@@ -10,10 +10,8 @@ import { environment } from '../../../environments';
 import type { RunStatusEvent } from '../../agents/chat.types';
 import type { ItemDao } from '../../agents/dao/item.dao';
 import type { RunDao } from '../../agents/dao/run.dao';
-import type { AgentAdapterRegistry } from '../../agents/services/agent-adapter.registry';
 import type { AgentEventBus } from '../../agents/services/agent-events.bus';
 import type { ChatService } from '../../agents/services/chat.service';
-import type { EffortsService } from '../../agents/services/efforts.service';
 import type { MemoryService } from '../../memory/services/memory.service';
 import type { RunPlace } from '../../projects/projects.types';
 import type { ProjectScopeService } from '../../projects/services/project-scope.service';
@@ -67,6 +65,10 @@ function runOf(overrides: Partial<Run>): Run {
     status: 'completed',
     agentKind: 'claude',
     configDir: null,
+    model: null,
+    effort: null,
+    contextWindow: null,
+    modelParameters: null,
     analysisSourceRunId: null,
     analysisTeamSlug: null,
     editsTeamSlug: null,
@@ -114,10 +116,6 @@ function build(
     running?: Partial<Run>[];
     project?: { id: string; folder: string } | null;
     config?: Partial<LessonsConfig>;
-    /** The light model each CLI offers, as its adapter reports it. */
-    lightModels?: Record<string, string | null>;
-    /** The efforts the CLIs accept; none by default. */
-    acceptsEffort?: boolean;
     runItems?: Item[];
     rejected?: { title: string; rejectReason: string | null }[];
     forgotten?: { title: string; reason: string | null }[];
@@ -198,16 +196,7 @@ function build(
   const projectScope = {
     projectOfRun: vi.fn(() => Promise.resolve(options.project ?? null)),
   };
-  const adapters = {
-    for: (agent: string) => ({
-      getConfig: () => ({ lightModel: options.lightModels?.[agent] ?? null }),
-    }),
-  };
-  const efforts = { accepts: () => options.acceptsEffort ?? false };
-  const config = new LessonsConfigService(
-    adapters as unknown as AgentAdapterRegistry,
-    efforts as unknown as EffortsService,
-  );
+  const config = new LessonsConfigService();
   config.set({ ...DEFAULT_LESSONS_CONFIG, ...options.config });
   const events = new LessonsEventBus();
   const memory = {
@@ -565,8 +554,6 @@ describe('LessonReflectionService.start', () => {
   it('drops the reflector’s model, effort and profile when the input switches to another agent', async () => {
     const fixture = build({
       source: { agentKind: 'codex' },
-      lightModels: { claude: 'claude-light' },
-      acceptsEffort: true,
       config: {
         mode: 'auto',
         reflector: choiceOf({
@@ -583,21 +570,24 @@ describe('LessonReflectionService.start', () => {
     await fixture.service.start('src', { agentKind: 'claude' });
 
     const input = fixture.chats.createChat.mock.calls[0]![0];
-    expect(input).toMatchObject({
-      agentKind: 'claude',
-      model: 'claude-light',
-      effort: 'high',
-    });
+    expect(input).toMatchObject({ agentKind: 'claude' });
+    expect(input.model).toBeUndefined();
+    expect(input.effort).toBeUndefined();
     expect(input.configDir).toBeUndefined();
     expect(input.contextWindow).toBeUndefined();
     expect(input.modelParameters).toBeUndefined();
   });
 
-  it('with no reflector runs as the thread: its CLI and profile on that CLI’s light model at high effort', async () => {
+  it('with no reflector runs as the thread ran: its CLI, profile, model, effort, window and model parameters', async () => {
     const fixture = build({
-      source: { agentKind: 'codex', configDir: '/profiles/thread' },
-      lightModels: { codex: 'codex-light', claude: 'claude-light' },
-      acceptsEffort: true,
+      source: {
+        agentKind: 'codex',
+        configDir: '/profiles/thread',
+        model: 'gpt-6',
+        effort: 'xhigh',
+        contextWindow: '400k',
+        modelParameters: '{"verbosity":"low"}',
+      },
     });
 
     await fixture.service.start('src', {});
@@ -605,23 +595,23 @@ describe('LessonReflectionService.start', () => {
     expect(fixture.chats.createChat).toHaveBeenCalledWith(
       expect.objectContaining({
         agentKind: 'codex',
-        model: 'codex-light',
-        effort: 'high',
+        model: 'gpt-6',
+        effort: 'xhigh',
         configDir: '/profiles/thread',
+        contextWindow: '400k',
+        modelParameters: { verbosity: 'low' },
       }),
     );
   });
 
-  it('with no reflector sets no effort when the light model does not accept high', async () => {
-    const fixture = build({
-      lightModels: { claude: 'claude-light' },
-      acceptsEffort: false,
-    });
+  it('with no reflector keeps the CLI defaults a thread ran on', async () => {
+    const fixture = build({ source: { agentKind: 'claude' } });
 
     await fixture.service.start('src', {});
 
     const input = fixture.chats.createChat.mock.calls[0]![0];
-    expect(input).toMatchObject({ agentKind: 'claude', model: 'claude-light' });
+    expect(input).toMatchObject({ agentKind: 'claude' });
+    expect(input.model).toBeUndefined();
     expect(input.effort).toBeUndefined();
   });
 
@@ -788,8 +778,7 @@ describe('LessonReflectionService — review findings', () => {
 
   it('falls back to the thread’s own agent when the reflector names an agent this app does not know', async () => {
     const fixture = build({
-      source: { agentKind: 'claude' },
-      lightModels: { claude: 'claude-light' },
+      source: { agentKind: 'claude', model: 'sonnet' },
       config: {
         mode: 'auto',
         reflector: choiceOf({
@@ -803,7 +792,7 @@ describe('LessonReflectionService — review findings', () => {
     await fixture.service.start('src', {});
 
     const input = fixture.chats.createChat.mock.calls[0]![0];
-    expect(input).toMatchObject({ agentKind: 'claude', model: 'claude-light' });
+    expect(input).toMatchObject({ agentKind: 'claude', model: 'sonnet' });
     expect(input.effort).toBeUndefined();
   });
 

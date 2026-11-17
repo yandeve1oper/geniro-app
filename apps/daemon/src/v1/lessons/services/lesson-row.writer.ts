@@ -7,7 +7,11 @@ import { AgentEventBus } from '../../agents/services/agent-events.bus';
 import { ItemCallIndexService } from '../../agents/services/item-call-index.service';
 import { ItemSeqAllocator } from '../../agents/services/item-seq.allocator';
 import { persistItemAndEmit } from '../../agents/utils/persist-item';
-import type { LessonOutcomePayload, LessonsPayload } from '../lessons.types';
+import type {
+  LessonOutcomePayload,
+  LessonsFiled,
+  LessonsPayload,
+} from '../lessons.types';
 import { LessonsEventBus } from './lessons-events.bus';
 
 /**
@@ -27,7 +31,11 @@ export class LessonRowWriter {
     @Optional() private readonly events?: LessonsEventBus,
   ) {}
 
-  async write(runId: string, row: LessonRow): Promise<void> {
+  async write(
+    runId: string,
+    row: LessonRow,
+    filed?: LessonsFiled,
+  ): Promise<void> {
     const em = this.em.fork();
     if ((await this.runDao.getById(runId, em)) === null) {
       this.events?.publishChanged(runId);
@@ -50,7 +58,7 @@ export class LessonRowWriter {
         payload: row.payload,
       },
     );
-    this.events?.publishChanged(runId);
+    this.events?.publishChanged(runId, filed);
   }
 }
 

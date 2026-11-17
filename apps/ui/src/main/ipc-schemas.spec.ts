@@ -316,6 +316,16 @@ describe('notificationSchema', () => {
     );
   });
 
+  it('takes a lessons banner, which always names its thread', () => {
+    expect(
+      notificationSchema.safeParse({ ...banner, kind: 'lessons' }).success,
+    ).toBe(true);
+    expect(
+      notificationSchema.safeParse({ ...banner, kind: 'lessons', runId: '' })
+        .success,
+    ).toBe(false);
+  });
+
   it('bounds the run id', () => {
     expect(
       notificationSchema.safeParse({ ...banner, runId: 'r'.repeat(129) })

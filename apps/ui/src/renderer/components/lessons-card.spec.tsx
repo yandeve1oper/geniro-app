@@ -715,16 +715,24 @@ describe('LessonsCard — a refines or broken-again lesson in memory', () => {
     expect(onMoveUp).toHaveBeenCalledWith(LESSON_BROKEN_AGAIN.id);
   });
 
-  it('says Move up goes into the project instructions when the thread has a project', async () => {
+  it('keeps Move up on the memory index when the thread has a project, with the project instructions one pick away', async () => {
+    const onSave = vi.fn(async () => undefined);
     const el = await render({
       lessons: [LESSON_BROKEN_AGAIN],
       places: PROJECT_PLACES,
       onMoveUp: vi.fn(async () => undefined),
+      onSave,
     });
 
-    expect(primaryButton(el).textContent).toBe(
-      'Move up to project instructions',
-    );
+    expect(primaryButton(el).textContent).toBe('Move up to the memory index');
+
+    await press(targetTrigger(el));
+    await press(optionNamed('Project instructions'));
+    await press(primaryButton(el));
+
+    expect(onSave).toHaveBeenCalledWith(LESSON_BROKEN_AGAIN.id, {
+      target: { kind: 'project_instructions' },
+    });
   });
 });
 

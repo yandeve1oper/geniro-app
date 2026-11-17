@@ -155,13 +155,11 @@ export const LessonPlacesSchema = z
 export type LessonPlaces = z.infer<typeof LessonPlacesSchema>;
 
 /**
- * Where "Move up" puts a rule broken again: the project's instructions when
- * the thread has a project, else the memory index (the entry approved).
+ * Where "Move up" puts a rule broken again: its entry into every chat's memory
+ * index (approved), the least-reaching step. The project's instructions stay a
+ * target the user picks from the lesson's menu.
  */
-export const LESSON_MOVE_UP_PLACES = [
-  'project_instructions',
-  'memory_index',
-] as const;
+export const LESSON_MOVE_UP_PLACES = ['memory_index'] as const;
 export type LessonMoveUpPlace = (typeof LESSON_MOVE_UP_PLACES)[number];
 
 /** How a proposal relates to what agents are already told. */
@@ -283,8 +281,8 @@ export type LessonModelChoice = z.infer<typeof LessonModelChoiceSchema>;
 
 /**
  * The lessons settings Electron main pushes (`PUT /v1/lessons/config`).
- * A null reflector reflects as the thread did — its CLI and profile — on that
- * CLI's light model; a null checker runs no check.
+ * A null reflector reflects as the thread ran — its CLI, profile, model,
+ * effort, window and model parameters; a null checker runs no check.
  *
  * TWIN PARSER: `lessonsSchema` in `apps/ui/src/main/ipc-schemas.ts`.
  */
@@ -453,9 +451,20 @@ export const EditLessonSchema = z.object({
 });
 export type EditLesson = z.infer<typeof EditLessonSchema>;
 
-/** The `lessons_changed` broadcast: a segment or proposal of this thread changed. */
+export interface LessonsFiled {
+  saved: number;
+  waiting: number;
+}
+
+/**
+ * The `lessons_changed` broadcast: a segment or proposal of this thread
+ * changed. `filed` rides only the write of a reflection's card.
+ *
+ * TWIN PARSER: `parseLessonsChanged` in `apps/ui/src/renderer/daemon-client.ts`.
+ */
 export interface LessonsChangedEvent {
   runId: string | null;
+  filed?: LessonsFiled;
 }
 
 export const LessonsReflectStartedSchema = z.object({
@@ -527,7 +536,12 @@ export const LessonProposalWireSchema = z
       .enum(LESSON_MOVE_UP_PLACES)
       .nullable()
       .describe(
-        'Where "Move up" would put a rule that was broken again; null when it does not apply',
+        'Where "Move up" would put a rule that was broken again; null when it does not apply or its entry is already in the index',
+      ),
+    undoable: z
+      .boolean()
+      .describe(
+        'Saved to memory as an entry of its own, so Undo and Edit apply',
       ),
     sourceExists: z
       .boolean()

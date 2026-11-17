@@ -103,6 +103,9 @@ vi.mock('./daemon-client', () => ({
     onMemoryChanged(): () => void {
       return () => {};
     }
+    onLessonsChanged(): () => void {
+      return () => {};
+    }
     onResourceAlertsChanged(): () => void {
       return () => {};
     }
@@ -827,6 +830,7 @@ describe('App — the menu counts what waits on you', () => {
     pending: number;
     knowledgeWaiting: number;
     cliUpdates?: number;
+    lessonsWaiting?: number;
   }): Promise<void> {
     chatsMock.waits = [];
     window.geniro = createPreloadStub({
@@ -853,6 +857,16 @@ describe('App — the menu counts what waits on you', () => {
         const url = String(input);
         if (url.includes('/v1/memories/review/summary')) {
           return Promise.resolve(jsonResponse({ pending: counts.pending }));
+        }
+        if (url.includes('/v1/lessons/proposals')) {
+          return Promise.resolve(
+            jsonResponse({
+              proposals: Array.from(
+                { length: counts.lessonsWaiting ?? 0 },
+                () => ({}),
+              ),
+            }),
+          );
         }
         if (url.includes('/v1/knowledge/counts')) {
           return Promise.resolve(
@@ -918,6 +932,16 @@ describe('App — the menu counts what waits on you', () => {
     await bootWithCounts({ pending: 4, knowledgeWaiting: 0, cliUpdates: 2 });
 
     expect(railCount('Settings')).toBe('6');
+  });
+
+  it('adds the lessons waiting on a decision to the Settings count', async () => {
+    await bootWithCounts({
+      pending: 4,
+      knowledgeWaiting: 0,
+      lessonsWaiting: 3,
+    });
+
+    expect(railCount('Settings')).toBe('7');
   });
 
   it('draws no count at zero', async () => {

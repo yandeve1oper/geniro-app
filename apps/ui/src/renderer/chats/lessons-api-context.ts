@@ -4,6 +4,9 @@ import type { LessonDocumentsReader } from '../components/lessons-card';
 import type { DaemonApis } from '../daemon-api';
 import { describeDaemonError } from '../daemon-api';
 
+/** The statuses of a lesson still waiting on the user's decision. */
+export const WAITING_LESSON_STATUSES = 'proposed,check_failed';
+
 /**
  * The lessons API client (`/v1/lessons`). Provided by `Chats`, which holds the
  * daemon handle; a lessons card drawn without it has its buttons disabled.

@@ -10,6 +10,7 @@ import {
   agentNoticeBody,
   diffRunNotifications,
   endingIsProvisional,
+  lessonsFiledNotice,
   notificationBody,
   type RunNotificationTrigger,
   shareSignInNotice,
@@ -302,6 +303,48 @@ export function useShareSignInNotifications<TRun extends { id: string }>({
         ...notice,
         runId: event.runId,
         title: run === undefined ? 'Geniro' : labelRef.current(run),
+      });
+    });
+  }, [client]);
+}
+
+export function useLessonsFiledNotifications<TRun extends { id: string }>({
+  client,
+  runs,
+  labelOf,
+  activeRunId,
+}: {
+  client: Pick<DaemonClient, 'onLessonsChanged'> | null;
+  runs: readonly TRun[];
+  labelOf: (run: TRun) => string;
+  activeRunId: string | null;
+}): void {
+  const runsRef = useRef(runs);
+  runsRef.current = runs;
+  const labelRef = useRef(labelOf);
+  labelRef.current = labelOf;
+  const activeRef = useRef(activeRunId);
+  activeRef.current = activeRunId;
+  useEffect(() => {
+    if (client === null) {
+      return;
+    }
+    return client.onLessonsChanged((event) => {
+      if (event.runId === null || event.filed === undefined) {
+        return;
+      }
+      const notice = lessonsFiledNotice(event.filed);
+      if (notice === null) {
+        return;
+      }
+      if (event.runId === activeRef.current && document.hasFocus()) {
+        return;
+      }
+      const run = runsRef.current.find((each) => each.id === event.runId);
+      post({
+        ...notice,
+        runId: event.runId,
+        title: run === undefined ? 'Lessons' : labelRef.current(run),
       });
     });
   }, [client]);

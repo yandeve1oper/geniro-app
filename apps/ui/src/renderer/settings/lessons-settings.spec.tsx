@@ -7,6 +7,7 @@ import {
   type CliDetection,
   DEFAULT_SETTINGS,
   type LessonsSettings,
+  type MemoryAgentWrites,
   type MemoryTriageConfig,
   type Settings,
 } from '../../shared/contracts';
@@ -113,6 +114,7 @@ async function render(
     lessonsApi?: DaemonApis['lessons'] | null;
     client?: Pick<DaemonClient, 'onLessonsChanged'> | null;
     cliDetections?: readonly CliDetection[] | null;
+    agentWrites?: MemoryAgentWrites | null;
   } = {},
 ): Promise<void> {
   await act(async () => {
@@ -128,6 +130,9 @@ async function render(
         lessonsApi={options.lessonsApi ?? null}
         client={options.client ?? null}
         remote={options.remote ?? false}
+        agentWrites={
+          options.agentWrites === undefined ? 'active' : options.agentWrites
+        }
       />,
     );
   });
@@ -193,34 +198,42 @@ describe('Lessons settings', () => {
     ]);
   });
 
-  it('shows the light model of each installed CLI as the default reflection, and none of the missing ones', async () => {
+  it('names the thread as it ran as the default memory model, with no light model of any CLI', async () => {
     install(DEFAULT_SETTINGS.lessons);
     await render();
 
+    expect(text()).toContain('Memory model');
     expect(text()).toContain('Same as the thread');
     expect(text()).toContain(
-      "The thread's own CLI and profile, on its light model at high effort",
+      "Each reflection runs on the thread's own CLI, profile, model and effort — exactly what the thread ran.",
     );
-    expect(text()).toContain('claude: haiku · codex: gpt-6-luna');
-    expect(text()).not.toContain('cursor-agent');
+    expect(text()).not.toMatch(/its light model|haiku|gpt-6-luna/);
   });
 
-  it('names a CLI with no light model as running on its own default model', async () => {
+  it('says a memory lesson is saved at once while agent notes are saved at once', async () => {
     install(DEFAULT_SETTINGS.lessons);
-    await render({
-      cliDetections: [{ kind: 'cursor-agent', found: true }] as CliDetection[],
-    });
+    await render({ agentWrites: 'active' });
 
     expect(text()).toContain(
-      "cursor-agent: no light model known, runs on the CLI's default model",
+      'A lesson for memory is saved at once, as Agent notes above says: agents find it by search right away',
     );
+  });
+
+  it('says a memory lesson waits for review while agent notes wait for review', async () => {
+    install(DEFAULT_SETTINGS.lessons);
+    await render({ agentWrites: 'pending' });
+
+    expect(text()).toContain(
+      'A lesson for memory waits for your review, as Agent notes above says',
+    );
+    expect(text()).not.toContain('saved at once');
   });
 
   it('choosing an agent starts from the first installed CLI, with the shared agent and model pickers', async () => {
     install(DEFAULT_SETTINGS.lessons);
     await render();
 
-    await press(segment('Reflect with', 'Choose an agent'));
+    await press(segment('Memory model', 'Choose an agent'));
 
     expect(writes).toEqual([
       {
@@ -237,15 +250,27 @@ describe('Lessons settings', () => {
         },
       },
     ]);
-    expect(picker('Reflection agent')?.textContent).toMatch(/claude/i);
+    expect(picker('Memory model agent')?.textContent).toMatch(/claude/i);
     expect(picker('Model and its settings')).not.toBeNull();
+  });
+
+  it('going back to Same as the thread saves no memory model', async () => {
+    install({ ...DEFAULT_SETTINGS.lessons, reflector: REFLECTOR });
+    await render();
+
+    await press(segment('Memory model', 'Same as the thread'));
+
+    expect(writes).toEqual([
+      { lessons: { ...DEFAULT_SETTINGS.lessons, reflector: null } },
+    ]);
+    expect(text()).toContain("Each reflection runs on the thread's own CLI");
   });
 
   it('a new CLI for the reflection starts from its own default, not the last model', async () => {
     install({ ...DEFAULT_SETTINGS.lessons, reflector: REFLECTOR });
     await render();
 
-    await press(picker('Reflection agent')!);
+    await press(picker('Memory model agent')!);
     await press(option('codex'));
 
     expect(writes).toEqual([
@@ -351,7 +376,7 @@ describe('Lessons settings', () => {
     expect(segment('Reflections', 'Off').disabled).toBe(true);
     expect(
       container
-        .querySelector('[role="group"][aria-label="Reflect with"]')
+        .querySelector('[role="group"][aria-label="Memory model"]')
         ?.closest('[inert]'),
     ).not.toBeNull();
     expect(

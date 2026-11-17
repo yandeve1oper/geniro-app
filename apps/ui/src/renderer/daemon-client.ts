@@ -1219,10 +1219,18 @@ export function parseMemoryChanged(data: unknown): MemoryChangedEvent | null {
 /** A `lessons_changed` broadcast: the thread whose lesson offers or proposals changed. */
 export interface LessonsChangedEvent {
   runId: string | null;
+  filed?: { saved: number; waiting: number };
+}
+
+function countOf(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
 }
 
 /**
- * Read a `lessons_changed` payload, or null when it is not one.
+ * Read a `lessons_changed` payload, or null when it is not one. A `filed` that
+ * is not two counts is dropped, never the change itself.
  *
  * TWIN PARSER: mirrors the daemon's `LessonsChangedEvent`
  * (`apps/daemon/src/v1/lessons/lessons.types.ts`).
@@ -1231,11 +1239,19 @@ export function parseLessonsChanged(data: unknown): LessonsChangedEvent | null {
   if (typeof data !== 'object' || data === null) {
     return null;
   }
-  const { runId } = data as Record<string, unknown>;
+  const { runId, filed } = data as Record<string, unknown>;
   if (runId !== null && typeof runId !== 'string') {
     return null;
   }
-  return { runId };
+  if (typeof filed !== 'object' || filed === null) {
+    return { runId };
+  }
+  const { saved, waiting } = filed as Record<string, unknown>;
+  const savedCount = countOf(saved);
+  const waitingCount = countOf(waiting);
+  return savedCount === null || waitingCount === null
+    ? { runId }
+    : { runId, filed: { saved: savedCount, waiting: waitingCount } };
 }
 
 /** One share row written or removed — never its link. */

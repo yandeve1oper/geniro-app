@@ -96,7 +96,10 @@ export class LessonProposalService {
       rows.map((row) => row.sourceRunId),
       em,
     );
-    return rows.map((row) => toWire(row, existing.has(row.sourceRunId)));
+    const moveUps = await this.moveUpsOf(rows);
+    return rows.map((row) =>
+      toWire(row, existing.has(row.sourceRunId), moveUps.get(row.id) ?? null),
+    );
   }
 
   save(id: string, input: SaveLesson): Promise<LessonProposalWire> {
@@ -175,16 +178,13 @@ export class LessonProposalService {
         'only a lesson whose rule was broken again moves up',
       );
     }
-    if (place === 'project_instructions') {
-      const target: LessonTarget = { kind: 'project_instructions' };
-      return this.decided(row, em, {
-        title: row.title,
-        rule: row.rule,
-        target,
-        landed: await this.writeTo(row, target, row.title, row.rule),
-      });
-    }
     const entry = await this.liveEntry(handle);
+    if (entry.indexed) {
+      throw new ConflictException(
+        'LESSON_ALREADY_INDEXED',
+        `${handle} is already in every chat's memory index — save the lesson to the project's instructions from its menu instead`,
+      );
+    }
     savedEntryOrThrow(
       await this.memory.setStatus({ kind: 'user' }, entry.id, 'active'),
     );
@@ -343,17 +343,13 @@ export class LessonProposalService {
     if (row === null) {
       throw new NotFoundException('LESSON_NOT_FOUND', `no lesson ${id}`);
     }
-    if (
-      row.status !== 'saved' ||
-      row.resultRef === null ||
-      targetOf(row).kind !== 'memory'
-    ) {
+    if (!savedToMemory(row)) {
       throw new ConflictException(
         'LESSON_NOT_FILED',
         `this lesson is ${row.status}, not saved to memory`,
       );
     }
-    if (row.resultRef === dedupOf(row).handle) {
+    if (!ownsEntry(row)) {
       throw new ConflictException(
         'LESSON_NOT_FILED',
         `this lesson changed the existing entry ${row.resultRef} — change it in Settings → Memory`,
@@ -418,7 +414,30 @@ export class LessonProposalService {
     em: EntityManager,
   ): Promise<LessonProposalWire> {
     const existing = await this.runDao.existingIds([row.sourceRunId], em);
-    return toWire(row, existing.has(row.sourceRunId));
+    const moveUps = await this.moveUpsOf([row]);
+    return toWire(
+      row,
+      existing.has(row.sourceRunId),
+      moveUps.get(row.id) ?? null,
+    );
+  }
+
+  private async moveUpsOf(
+    rows: readonly LessonProposal[],
+  ): Promise<Map<string, LessonMoveUpPlace>> {
+    const places = new Map<string, LessonMoveUpPlace>();
+    for (const row of rows) {
+      const place = moveUpOf(row);
+      const handle = dedupOf(row).handle;
+      if (place === null || handle === null) {
+        continue;
+      }
+      const entry = await this.entryByHandle(handle);
+      if (entry !== null && !entry.indexed) {
+        places.set(row.id, place);
+      }
+    }
+    return places;
   }
 
   /**
@@ -669,7 +688,7 @@ export function withLessonLine(
  * offered it.
  */
 export function moveUpOf(
-  row: Pick<LessonProposal, 'dedup' | 'target' | 'projectId'>,
+  row: Pick<LessonProposal, 'dedup' | 'target'>,
 ): LessonMoveUpPlace | null {
   const dedup = JSON.parse(row.dedup) as LessonDedup;
   const target = JSON.parse(row.target) as LessonTarget;
@@ -680,7 +699,7 @@ export function moveUpOf(
   ) {
     return null;
   }
-  return row.projectId === null ? 'memory_index' : 'project_instructions';
+  return 'memory_index';
 }
 
 /** What the thread had a place for; a row filed before places were kept reads them off its own columns. */
@@ -752,9 +771,22 @@ function dedupOf(row: LessonProposal): LessonDedup {
   return JSON.parse(row.dedup) as LessonDedup;
 }
 
+function savedToMemory(row: LessonProposal): boolean {
+  return (
+    row.status === 'saved' &&
+    row.resultRef !== null &&
+    targetOf(row).kind === 'memory'
+  );
+}
+
+function ownsEntry(row: LessonProposal): boolean {
+  return savedToMemory(row) && row.resultRef !== dedupOf(row).handle;
+}
+
 function toWire(
   row: LessonProposal,
   sourceExists: boolean,
+  moveUp: LessonMoveUpPlace | null,
 ): LessonProposalWire {
   const target = targetOf(row);
   return {
@@ -778,7 +810,8 @@ function toWire(
     memoryHandle: target.kind === 'memory' ? row.resultRef : null,
     resultRef: row.resultRef,
     places: placesOf(row),
-    moveUp: moveUpOf(row),
+    moveUp,
+    undoable: ownsEntry(row),
     sourceExists,
     createdAt: row.createdAt.toISOString(),
     decidedAt: row.decidedAt?.toISOString() ?? null,

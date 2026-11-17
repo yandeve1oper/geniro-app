@@ -1,3 +1,4 @@
+import { cva } from 'class-variance-authority';
 import { Check, ChevronRight } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -214,6 +215,18 @@ export type SettingsSection =
   | 'knowledge'
   | 'storage';
 
+const sectionCountVariants = cva(
+  'ml-auto rounded-full px-1.5 text-xs leading-5 font-medium tabular-nums',
+  {
+    variants: {
+      tone: {
+        update: 'bg-update text-update-foreground',
+        waiting: 'bg-primary text-primary-foreground',
+      },
+    },
+  },
+);
+
 const SECTION_LABEL: Record<SettingsSection, string> = {
   general: 'General',
   'fast-actions': 'Fast actions',
@@ -276,6 +289,7 @@ export function Settings({
   client = null,
   memoryFocus = null,
   onMemoryFocusDone,
+  memoryWaiting = null,
 }: {
   handle: DaemonHandle | null;
   /** The live socket, for the panes that follow the daemon's announcements. */
@@ -283,6 +297,7 @@ export function Settings({
   /** An entry's handle Settings → Memory opens on, as a transcript row asks. */
   memoryFocus?: string | null;
   onMemoryFocusDone?: () => void;
+  memoryWaiting?: number | null;
   /**
    * The pane to show. Owned by the app shell rather than by this screen so
    * another screen can open Settings AT a section — which is how the composer's
@@ -1311,15 +1326,25 @@ export function Settings({
               <span
                 data-slot="section-updates"
                 title={`${cliUpdatesAvailable} agent ${cliUpdatesAvailable === 1 ? 'update' : 'updates'} available`}
-                className="ml-auto rounded-full bg-update px-1.5 text-xs leading-5 font-medium text-update-foreground tabular-nums">
+                className={sectionCountVariants({ tone: 'update' })}>
                 {cliUpdatesAvailable}
+              </span>
+            ) : null}
+            {key === 'memory' && (memoryWaiting ?? 0) > 0 ? (
+              <span
+                data-slot="section-waiting"
+                title={`${memoryWaiting} waiting for your review`}
+                className={sectionCountVariants({ tone: 'waiting' })}>
+                {memoryWaiting}
               </span>
             ) : null}
             <ChevronRight
               aria-hidden="true"
               className={cn(
                 'size-4 text-muted-foreground sm:hidden',
-                !(key === 'general' && cliUpdatesAvailable > 0) && 'ml-auto',
+                !(key === 'general' && cliUpdatesAvailable > 0) &&
+                  !(key === 'memory' && (memoryWaiting ?? 0) > 0) &&
+                  'ml-auto',
               )}
             />
           </button>

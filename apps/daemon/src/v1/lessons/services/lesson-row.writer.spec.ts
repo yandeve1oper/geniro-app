@@ -263,4 +263,42 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
 
     expect(announced).toEqual(['live', 'missing']);
   });
+
+  it('carries what a reflection filed on the announce of its card, and nothing on any other write', async () => {
+    const events = new LessonsEventBus();
+    const announced: unknown[] = [];
+    events.allChanges().subscribe((event) => announced.push(event));
+    writer = new LessonRowWriter(
+      orm.em.fork(),
+      runDao,
+      itemDao,
+      bus(published),
+      calls(),
+      seqs(42),
+      events,
+    );
+    await runDao.create({ id: 'live', archivedAt: null });
+    const card = {
+      kind: 'lessons' as const,
+      payload: {
+        reflectionRunId: 'refl',
+        segmentId: 'seg',
+        fromSeq: -1,
+        toSeq: 4,
+        agentKind: 'claude' as const,
+        model: 'opus',
+        proposals: [],
+        places: { project: false, team: false, projectId: null, members: [] },
+        check: null,
+      },
+    };
+
+    await writer.write('live', card, { saved: 2, waiting: 1 });
+    await writer.write('live', card);
+
+    expect(announced).toEqual([
+      { runId: 'live', filed: { saved: 2, waiting: 1 } },
+      { runId: 'live' },
+    ]);
+  });
 });

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { type Observable, Subject } from 'rxjs';
 
-import type { LessonsChangedEvent } from '../lessons.types';
+import type { LessonsChangedEvent, LessonsFiled } from '../lessons.types';
 
 /**
  * A thread's lesson segments or proposals changed — an offer appeared, was
@@ -13,8 +13,8 @@ import type { LessonsChangedEvent } from '../lessons.types';
 export class LessonsEventBus {
   private readonly changes = new Subject<LessonsChangedEvent>();
 
-  publishChanged(runId: string | null): void {
-    this.changes.next({ runId });
+  publishChanged(runId: string | null, filed?: LessonsFiled): void {
+    this.changes.next(filed === undefined ? { runId } : { runId, filed });
   }
 
   allChanges(): Observable<LessonsChangedEvent> {

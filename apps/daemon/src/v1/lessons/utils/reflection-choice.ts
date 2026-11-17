@@ -1,9 +1,7 @@
+import { readModelParameters } from '../../agents/utils/model-parameters';
 import type { Run } from '../../runs/entity/run.entity';
 import { AgentKind, AgentKindSchema } from '../../runs/runs.types';
 import type { LessonModelChoice, ReflectLessons } from '../lessons.types';
-
-/** The effort a reflection on the thread's own CLI runs at when the model offers it. */
-export const LESSON_DEFAULT_EFFORT = 'high';
 
 /** What a reflection or a check on one thread runs as. */
 export interface ReflectionChoice {
@@ -15,29 +13,28 @@ export interface ReflectionChoice {
   modelParameters: Record<string, string>;
 }
 
-/** The facts about a CLI a default choice reads. */
-export interface ReflectionChoiceFacts {
-  lightModelOf: (agent: AgentKind) => string | null;
-  acceptsEffort: (
-    agent: AgentKind,
-    effort: string,
-    model: string | null,
-    configDir: string | null,
-  ) => boolean;
-}
+export type ReflectionSource = Pick<
+  Run,
+  | 'agentKind'
+  | 'configDir'
+  | 'model'
+  | 'effort'
+  | 'contextWindow'
+  | 'modelParameters'
+>;
 
 /**
  * What a reflection on `source` runs as: what a press named over the settings
- * choice, else the settings choice whole, else the thread's own CLI and
- * profile on that CLI's light model at high effort when the model offers it.
- * A press naming another CLI than the settings' drops the settings' model,
- * effort and profile, which belong to that CLI.
+ * choice, else the settings choice whole, else the thread as it ran — its CLI,
+ * profile, model, effort, window and model parameters. A press naming another
+ * CLI than the one it falls back to drops that choice's model, effort and
+ * profile, which belong to the other CLI; one naming another model drops the
+ * thread's effort, window and parameters, which belong to the other model.
  */
 export function reflectionChoiceOf(
   settings: LessonModelChoice | null,
-  source: Pick<Run, 'agentKind' | 'configDir'>,
+  source: ReflectionSource,
   input: Pick<ReflectLessons, 'agentKind' | 'model' | 'effort' | 'configDir'>,
-  facts: ReflectionChoiceFacts,
 ): ReflectionChoice {
   const chosen = settingsChoiceOf(settings);
   const agentKind =
@@ -53,22 +50,26 @@ export function reflectionChoiceOf(
       configDir: input.configDir ?? chosen.configDir,
     };
   }
-  const configDir =
-    input.configDir ??
-    (source.agentKind === agentKind ? source.configDir : null);
-  const model = input.model ?? facts.lightModelOf(agentKind);
-  const effort =
-    input.effort ??
-    (facts.acceptsEffort(agentKind, LESSON_DEFAULT_EFFORT, model, configDir)
-      ? LESSON_DEFAULT_EFFORT
-      : null);
+  if (source.agentKind !== agentKind) {
+    return {
+      agentKind,
+      model: input.model ?? null,
+      effort: input.effort ?? null,
+      configDir: input.configDir ?? null,
+      contextWindow: null,
+      modelParameters: {},
+    };
+  }
+  const sameModel = input.model === undefined || input.model === source.model;
   return {
     agentKind,
-    model,
-    effort,
-    configDir,
-    contextWindow: null,
-    modelParameters: {},
+    model: input.model ?? source.model,
+    effort: input.effort ?? (sameModel ? source.effort : null),
+    configDir: input.configDir ?? source.configDir,
+    contextWindow: sameModel ? source.contextWindow : null,
+    modelParameters: sameModel
+      ? readModelParameters(source.modelParameters)
+      : {},
   };
 }
 

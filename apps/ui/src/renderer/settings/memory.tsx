@@ -85,7 +85,12 @@ import {
 import { type CheckClient, useMemoryCheck } from './use-memory-check';
 import { type CleanupClient, useMemoryCleanup } from './use-memory-cleanup';
 import { useMemoryTriage } from './use-memory-triage';
-import { useWaitingLessons, WaitingLessons } from './waiting-lessons';
+import {
+  SavedLessons,
+  useSavedLessons,
+  useWaitingLessons,
+  WaitingLessons,
+} from './waiting-lessons';
 
 type MemoriesClient = Pick<
   MemoriesApi,
@@ -452,6 +457,10 @@ export function Memory({
     null,
   );
   const waitingLessons = useWaitingLessons({
+    lessonsApi,
+    client: lessonsClient,
+  });
+  const savedLessons = useSavedLessons({
     lessonsApi,
     client: lessonsClient,
   });
@@ -1033,7 +1042,7 @@ export function Memory({
         <SettingsPanelRow
           label="Agent notes"
           htmlFor="settings-memory-agent-writes"
-          description="Saved at once: agents find a new note by search right away, under Search only. Wait for my review: no agent sees it until you approve it.">
+          description="Also decides a lesson's memory note. Saved at once: agents find a new note by search right away, under Search only. Wait for my review: no agent sees it until you approve it.">
           <Select
             id="settings-memory-agent-writes"
             aria-label="What happens to an agent's note"
@@ -1153,6 +1162,7 @@ export function Memory({
         lessonsApi={lessonsApi}
         client={lessonsClient}
         remote={remote}
+        agentWrites={memory === null ? null : current.agentWrites}
       />
 
       <section aria-label="Entries" className="flex flex-col gap-3">
@@ -1306,12 +1316,13 @@ export function Memory({
                 />
               ) : null}
               {lessonsShown ? (
-                <div className="mt-2">
+                <div className="mt-2 flex flex-col gap-6">
                   <WaitingLessons
                     waiting={waitingLessons}
                     lessonsApi={lessonsApi}
                     knowledgeApi={knowledgeApi}
                   />
+                  <SavedLessons saved={savedLessons} lessonsApi={lessonsApi} />
                 </div>
               ) : loaded && entries.length === 0 ? (
                 focus !== null ? (
