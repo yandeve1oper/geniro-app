@@ -262,6 +262,7 @@ import {
 } from './not-sent-messages';
 import { NotesDialog } from './notes-dialog';
 import { OlderMessagesControl } from './older-messages-control';
+import { type PendingSend, withPendingSend } from './pending-send';
 import { ProgressChip, ProgressDialog } from './progress-dialog';
 import { ProjectSelect } from './project-select';
 import { PromptCacheNotice } from './prompt-cache-notice';
@@ -1372,6 +1373,7 @@ export function Chats({
     activeRunId,
     activeRunIdRef,
     items,
+    itemsRef,
     anchors,
     callConversations,
     delegateConversations,
@@ -4549,6 +4551,10 @@ export function Chats({
     [client, refreshGroups],
   );
 
+  const [pendingSends, setPendingSends] = useState<
+    ReadonlyMap<string, PendingSend>
+  >(() => new Map());
+
   /**
    * Start one turn: mark the run working, send, render the user message
    * (addItem de-dupes when the WS copy arrives).
@@ -4613,6 +4619,23 @@ export function Chats({
           run.id === runId ? { ...run, status: 'running' } : run,
         ),
       );
+      let held: PendingSend | null = null;
+      const holdWhileRestoring = (): void => {
+        const pending: PendingSend = {
+          runId,
+          text,
+          imageCount: images?.length ?? 0,
+          sentAt: new Date().toISOString(),
+          // Another run's window says nothing about this run's seqs, so its
+          // own row can only take the place of the held one at the settle.
+          afterSeq:
+            runId === activeRunIdRef.current
+              ? (itemsRef.current.at(-1)?.seq ?? -1)
+              : Number.MAX_SAFE_INTEGER,
+        };
+        held = pending;
+        setPendingSends((prev) => new Map(prev).set(runId, pending));
+      };
       try {
         const sendMessageDto = {
           text,
@@ -4633,6 +4656,7 @@ export function Chats({
               : chatApi.sendChatMessage({ runId, sendMessageDto }),
           run ?? null,
           restoreWorktree,
+          holdWhileRestoring,
         );
         addItem(userItem, true);
       } catch (err) {
@@ -4646,6 +4670,15 @@ export function Chats({
           );
         }
         throw err;
+      } finally {
+        setPendingSends((prev) => {
+          if (held === null || prev.get(runId) !== held) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.delete(runId);
+          return next;
+        });
       }
     },
     [chatApi, teamApi, addItem, restoreWorktree],
@@ -6876,6 +6909,8 @@ export function Chats({
     () => runningCallCallees(runState.calls),
     [runState.calls],
   );
+  const activePendingSend =
+    activeRunId === null ? undefined : pendingSends.get(activeRunId);
   const transcriptEntries = useMemo(
     () =>
       // No live rows over a thread whose first page has not landed. The
@@ -6887,7 +6922,7 @@ export function Chats({
       loadingHistory && durableEntries.length === 0
         ? durableEntries
         : withLiveText(
-            durableEntries,
+            withPendingSend(durableEntries, activePendingSend, items),
             liveText,
             workingAgents,
             activeRun?.id ?? null,
@@ -6896,6 +6931,8 @@ export function Chats({
     [
       loadingHistory,
       durableEntries,
+      activePendingSend,
+      items,
       liveText,
       workingAgents,
       activeRun?.id,

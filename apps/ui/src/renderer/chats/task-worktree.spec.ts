@@ -121,11 +121,45 @@ describe('sendRestoringWorktree', () => {
     const busy = refusal(409, 'RUN_BUSY', 'a turn is already running');
     const send = vi.fn<() => Promise<string>>().mockRejectedValue(busy);
     const restore = vi.fn(async () => true);
+    const onRestoring = vi.fn();
 
-    await expect(sendRestoringWorktree(send, taskChat, restore)).rejects.toBe(
-      busy,
-    );
+    await expect(
+      sendRestoringWorktree(send, taskChat, restore, onRestoring),
+    ).rejects.toBe(busy);
     expect(restore).not.toHaveBeenCalled();
+    expect(onRestoring).not.toHaveBeenCalled();
+  });
+
+  it('says the send is held before the restore starts', async () => {
+    const send = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(missingCwd())
+      .mockResolvedValueOnce('sent');
+    const onRestoring = vi.fn();
+    const restore = vi.fn(async () => {
+      expect(onRestoring).toHaveBeenCalledTimes(1);
+      return true;
+    });
+
+    await expect(
+      sendRestoringWorktree(send, taskChat, restore, onRestoring),
+    ).resolves.toBe('sent');
+    expect(restore).toHaveBeenCalledTimes(1);
+    expect(onRestoring).toHaveBeenCalledTimes(1);
+  });
+
+  it('says nothing is held when the first send goes through', async () => {
+    const onRestoring = vi.fn();
+
+    await expect(
+      sendRestoringWorktree(
+        async () => 'sent',
+        taskChat,
+        async () => true,
+        onRestoring,
+      ),
+    ).resolves.toBe('sent');
+    expect(onRestoring).not.toHaveBeenCalled();
   });
 
   it('sends only ONCE more, and shows a second refusal as it is', async () => {

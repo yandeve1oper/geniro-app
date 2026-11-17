@@ -75,16 +75,24 @@ export async function restoreRunWorktree(
  * a second refusal after a successful restore is some other problem, and the
  * caller shows it. A chat whose folder is no card's worktree has nothing of
  * geniro's to restore, so its refusal is rethrown untouched.
+ *
+ * `onRestoring` is told when the restore starts: cutting the worktree again can
+ * take seconds, and the send is held for all of them.
  */
 export async function sendRestoringWorktree<T>(
   send: () => Promise<T>,
   run: WorktreeRun | null,
   restore: (run: WorktreeRun) => Promise<boolean>,
+  onRestoring: () => void = () => {},
 ): Promise<T> {
   try {
     return await send();
   } catch (err: unknown) {
-    if (run === null || !isMissingCwdError(err) || !(await restore(run))) {
+    if (run === null || !isMissingCwdError(err)) {
+      throw err;
+    }
+    onRestoring();
+    if (!(await restore(run))) {
       throw err;
     }
     return send();

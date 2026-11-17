@@ -2092,6 +2092,207 @@ describe('Chats transcript auto-scroll', () => {
     expect(container.textContent).not.toContain('cwd does not exist');
   });
 
+  it('shows the message while its collected worktree is being put back', async () => {
+    api.listChats.mockResolvedValue([
+      { ...run1, taskId: 't1', cwd: '/userData/worktrees/t1' },
+    ]);
+    api.listRunItems.mockResolvedValue([msg(0, 'user', 'hi')]);
+    api.sendChatMessage
+      .mockRejectedValueOnce(
+        new Error(
+          'daemon POST /v1/chats/r1/messages failed (400): {"code":"INVALID_CWD","message":"cwd does not exist: /userData/worktrees/t1"}',
+        ),
+      )
+      .mockResolvedValueOnce(msg(10, 'user', 'and this?'));
+    tasksApi.readTask
+      .mockReset()
+      .mockResolvedValue({ id: 't1', projectId: 'p1', folder: '/repo' });
+    let finishWorktree!: () => void;
+    window.geniro.prepareTaskWorktree = vi.fn(
+      () =>
+        new Promise<
+          Awaited<ReturnType<typeof window.geniro.prepareTaskWorktree>>
+        >((resolve) => {
+          finishWorktree = () =>
+            resolve({
+              ok: true,
+              path: '/userData/worktrees/t1',
+              branch: 'geniro/task-t1',
+              reused: false,
+              error: null,
+            });
+        }),
+    );
+    const { client, emitItem } = makeClient();
+    const container = await mount(client);
+    await clickRun(container, 'My chat');
+    await act(async () => {
+      emitItem(terminal(5));
+    });
+
+    const textarea = container.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value',
+      )!.set!.call(textarea, 'and this?');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      composerButton(container, 'Send')!.dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
+    });
+
+    const userBubbles = (): (string | null)[] =>
+      [...container.querySelectorAll('[data-role="user"]')].map(
+        (bubble) => bubble.textContent,
+      );
+    expect(window.geniro.prepareTaskWorktree).toHaveBeenCalled();
+    expect(api.sendChatMessage).toHaveBeenCalledTimes(1);
+    expect(userBubbles()).toEqual(['hi', 'and this?']);
+
+    await act(async () => {
+      finishWorktree();
+    });
+    expect(api.sendChatMessage).toHaveBeenCalledTimes(2);
+    expect(userBubbles()).toEqual(['hi', 'and this?']);
+  });
+
+  it('takes the held message back out when the send after the restore is refused', async () => {
+    api.listChats.mockResolvedValue([
+      { ...run1, taskId: 't1', cwd: '/userData/worktrees/t1' },
+    ]);
+    api.listRunItems.mockResolvedValue([msg(0, 'user', 'hi')]);
+    api.sendChatMessage
+      .mockRejectedValueOnce(
+        new Error(
+          'daemon POST /v1/chats/r1/messages failed (400): {"code":"INVALID_CWD","message":"cwd does not exist: /userData/worktrees/t1"}',
+        ),
+      )
+      .mockRejectedValueOnce(
+        new Error(
+          'daemon POST /v1/chats/r1/messages failed (500): {"code":"INTERNAL","message":"the agent could not start"}',
+        ),
+      );
+    tasksApi.readTask
+      .mockReset()
+      .mockResolvedValue({ id: 't1', projectId: 'p1', folder: '/repo' });
+    let finishWorktree!: () => void;
+    window.geniro.prepareTaskWorktree = vi.fn(
+      () =>
+        new Promise<
+          Awaited<ReturnType<typeof window.geniro.prepareTaskWorktree>>
+        >((resolve) => {
+          finishWorktree = () =>
+            resolve({
+              ok: true,
+              path: '/userData/worktrees/t1',
+              branch: 'geniro/task-t1',
+              reused: false,
+              error: null,
+            });
+        }),
+    );
+    const { client, emitItem } = makeClient();
+    const container = await mount(client);
+    await clickRun(container, 'My chat');
+    await act(async () => {
+      emitItem(terminal(5));
+    });
+
+    const textarea = container.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value',
+      )!.set!.call(textarea, 'and this?');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      composerButton(container, 'Send')!.dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
+    });
+    const userBubbles = (): (string | null)[] =>
+      [...container.querySelectorAll('[data-role="user"]')].map(
+        (bubble) => bubble.textContent,
+      );
+    expect(userBubbles()).toEqual(['hi', 'and this?']);
+
+    await act(async () => {
+      finishWorktree();
+    });
+    expect(api.sendChatMessage).toHaveBeenCalledTimes(2);
+    expect(userBubbles()).toEqual(['hi']);
+    expect(container.textContent).toContain('the agent could not start');
+    expect(container.querySelector('textarea')!.value).toBe('and this?');
+  });
+
+  it('takes the held message back out when its worktree cannot be put back', async () => {
+    api.listChats.mockResolvedValue([
+      { ...run1, taskId: 't1', cwd: '/userData/worktrees/t1' },
+    ]);
+    api.listRunItems.mockResolvedValue([msg(0, 'user', 'hi')]);
+    api.sendChatMessage.mockRejectedValueOnce(
+      new Error(
+        'daemon POST /v1/chats/r1/messages failed (400): {"code":"INVALID_CWD","message":"cwd does not exist: /userData/worktrees/t1"}',
+      ),
+    );
+    tasksApi.readTask
+      .mockReset()
+      .mockResolvedValue({ id: 't1', projectId: 'p1', folder: '/repo' });
+    let failWorktree!: () => void;
+    window.geniro.prepareTaskWorktree = vi.fn(
+      () =>
+        new Promise<
+          Awaited<ReturnType<typeof window.geniro.prepareTaskWorktree>>
+        >((resolve) => {
+          failWorktree = () =>
+            resolve({
+              ok: false,
+              path: null,
+              branch: null,
+              reused: false,
+              error: 'branch is gone',
+            });
+        }),
+    );
+    const { client, emitItem } = makeClient();
+    const container = await mount(client);
+    await clickRun(container, 'My chat');
+    await act(async () => {
+      emitItem(terminal(5));
+    });
+
+    const textarea = container.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value',
+      )!.set!.call(textarea, 'and this?');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      composerButton(container, 'Send')!.dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
+    });
+    const userBubbles = (): (string | null)[] =>
+      [...container.querySelectorAll('[data-role="user"]')].map(
+        (bubble) => bubble.textContent,
+      );
+    expect(userBubbles()).toEqual(['hi', 'and this?']);
+
+    await act(async () => {
+      failWorktree();
+    });
+    expect(api.sendChatMessage).toHaveBeenCalledTimes(1);
+    expect(userBubbles()).toEqual(['hi']);
+    expect(container.textContent).toContain('cwd does not exist');
+    expect(container.querySelector('textarea')!.value).toBe('and this?');
+  });
+
   it('jumps to the newest message when a chat with history is OPENED', async () => {
     // Opening is not "a new item arrived": activateRun empties the transcript
     // first, so the browser clamps the scroller to 0 and the history then

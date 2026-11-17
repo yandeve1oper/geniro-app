@@ -405,6 +405,8 @@ export interface ChatRunState {
    */
   activeRunIdRef: RefObject<string | null>;
   items: ChatItem[];
+  /** {@link items} as of the last commit, for readers that run after an await. */
+  itemsRef: RefObject<ChatItem[]>;
   /**
    * Rows OUTSIDE the loaded window that rows inside it belong to — a call's
    * start and settle, a delegate's launch — as the daemon picked them for each
@@ -3326,6 +3328,7 @@ export function useChatRun(scope: ChatRunScope): ChatRunState {
     activeRunId,
     activeRunIdRef,
     items,
+    itemsRef,
     anchors: structure,
     callConversations,
     delegateConversations,
