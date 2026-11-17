@@ -1,8 +1,7 @@
 import { cva, type VariantProps } from 'class-variance-authority';
-import { HelpCircle } from 'lucide-react';
 import type React from 'react';
 
-import { HoverPopover } from './hover-popover';
+import { HelpHint } from './help-hint';
 import { Label } from './ui/label';
 import { cn } from './ui/utils';
 
@@ -162,24 +161,9 @@ export function SettingsPanelRow({
               {label}
             </Label>
             {hint === undefined ? null : (
-              <HoverPopover
-                slot="settings-panel-hint"
-                label={`About ${label}`}
-                panelLabel={label}
-                side="bottom"
-                align="start"
-                triggerClassName="text-muted-foreground hover:text-foreground"
-                panelClassName="w-80 p-3"
-                trigger={
-                  <HelpCircle
-                    aria-hidden="true"
-                    className="size-3.5 shrink-0"
-                  />
-                }>
-                <p className="text-xs leading-relaxed text-popover-foreground">
-                  {hint}
-                </p>
-              </HoverPopover>
+              <HelpHint subject={label} slot="settings-panel-hint">
+                <p>{hint}</p>
+              </HelpHint>
             )}
           </span>
           {description === undefined ? null : (
