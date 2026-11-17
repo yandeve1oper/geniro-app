@@ -3055,6 +3055,34 @@ describe('ClaudeAdapter — fast mode', () => {
     expect(bare.slice(bare.indexOf('--disallowedTools') + 1)[0]).toBe(
       'Monitor',
     );
+    expect(
+      JSON.parse(bare[bare.indexOf('--settings') + 1]!),
+    ).not.toHaveProperty('deniedMcpServers');
+  });
+
+  it('denies a member’s switched-off MCP servers in the turn’s settings, so the CLI never starts them, and never geniro’s own', () => {
+    const { spawn, captured } = fakeSpawn();
+    new ClaudeAdapter({ spawn, waitForMcpServers: false }).start(
+      {
+        prompt: 'go',
+        cwd: '/proj',
+        mcpDisabled: ['codegraph', 'claude.ai Gmail', 'geniro-run-1'],
+        mcpEndpoint: {
+          url: 'http://127.0.0.1:1/v1/mcp/r/n',
+          token: 't',
+          serverName: 'geniro-run-1',
+        },
+      },
+      () => {},
+    );
+    const args = captured.args!;
+    const settings = JSON.parse(args[args.indexOf('--settings') + 1]!) as {
+      deniedMcpServers: unknown;
+    };
+    expect(settings.deniedMcpServers).toEqual([
+      { serverName: 'claude.ai Gmail' },
+      { serverName: 'codegraph' },
+    ]);
   });
 
   it('gives a read-only turn only Read, Grep and Glob, and no MCP server but geniro’s own', () => {
@@ -3084,6 +3112,9 @@ describe('ClaudeAdapter — fast mode', () => {
     ]);
     expect(args).toContain('--mcp-config');
     expect(args).toContain('--strict-mcp-config');
+    expect(JSON.parse(args[args.indexOf('--settings') + 1]!)).toMatchObject({
+      deniedMcpServers: [{ serverName: 'claude-in-chrome' }],
+    });
 
     const open = fakeSpawn();
     new ClaudeAdapter({ spawn: open.spawn, waitForMcpServers: false }).start(

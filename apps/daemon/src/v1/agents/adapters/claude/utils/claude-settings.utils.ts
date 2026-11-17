@@ -1,6 +1,8 @@
 import {
   CLAUDE_CROSS_SESSION_INBOUND_KEY,
   CLAUDE_CROSS_SESSION_INBOUND_REFUSE,
+  CLAUDE_DENIED_MCP_SERVER_NAME_FIELD,
+  CLAUDE_DENIED_MCP_SERVERS_KEY,
   CLAUDE_FAST_MODE_PARAMETER_ID,
   CLAUDE_LANGUAGE_SETTING_KEY,
   CLAUDE_SETTINGS_FLAG,
@@ -17,6 +19,12 @@ export interface ClaudeTurnSettings {
    * `--settings {"env"}` the base puts ahead of it.
    */
   env?: Readonly<Record<string, string>>;
+  /**
+   * The config names of the servers this turn switches off
+   * (`claudeSwitchedOffServers`), which the CLI is told never to start
+   * (`CLAUDE_DENIED_MCP_SERVERS_KEY`). Empty or absent, the key is left out.
+   */
+  deniedMcpServers?: readonly string[];
 }
 
 /**
@@ -42,6 +50,11 @@ export function claudeSettingsArgs(settings: ClaudeTurnSettings): string[] {
   }
   if (settings.env && Object.keys(settings.env).length > 0) {
     value.env = settings.env;
+  }
+  if (settings.deniedMcpServers && settings.deniedMcpServers.length > 0) {
+    value[CLAUDE_DENIED_MCP_SERVERS_KEY] = settings.deniedMcpServers.map(
+      (name) => ({ [CLAUDE_DENIED_MCP_SERVER_NAME_FIELD]: name }),
+    );
   }
   return [CLAUDE_SETTINGS_FLAG, JSON.stringify(value)];
 }

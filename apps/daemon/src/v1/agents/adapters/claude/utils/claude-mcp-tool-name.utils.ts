@@ -53,8 +53,10 @@ export function claudeMcpServerRule(server: string): string {
  * 125 tools with no flag; `--disallowedTools mcp__codegraph
  * mcp__plugin_playwright_playwright` → 96, every `mcp__codegraph__*` and
  * `mcp__plugin_playwright_playwright__*` gone, both servers still listed
- * `connected`. The CLI still DIALS a disallowed server; the model is never
- * offered its tools, which is the switch the member asked for.
+ * `connected`. Alone, a rule here hides the tools and the CLI still DIALS the
+ * server; the model is never offered its tools, which is the switch the member
+ * asked for. What keeps a switched-off server from starting is the settings
+ * deny list (`CLAUDE_DENIED_MCP_SERVERS_KEY`, `claudeSettingsArgs`).
  *
  * geniro's OWN server (`ownServer`, the per-run endpoint) is never withheld,
  * whatever the member lists: a member switching it off would lose its call surface
@@ -64,16 +66,31 @@ export function claudeDisallowedToolArgs(
   servers: readonly string[] | undefined,
   ownServer: string | null,
 ): string[] {
-  const own = ownServer === null ? null : claudeMcpServerSegment(ownServer);
   const rules = [
     ...new Set(
-      (servers ?? [])
-        .filter((server) => server.length > 0)
-        .filter((server) => claudeMcpServerSegment(server) !== own)
-        .map(claudeMcpServerRule),
+      claudeSwitchedOffServers(servers, ownServer).map(claudeMcpServerRule),
     ),
   ];
   return [CLAUDE_DISALLOWED_TOOLS_FLAG, ...CLAUDE_WITHHELD_TOOLS, ...rules];
+}
+
+/**
+ * The config names of the servers a turn switches off: empty names, repeats
+ * and geniro's own server (matched by its segment, as the CLI names it) are
+ * dropped. The settings deny list and the tool rules both read it.
+ */
+export function claudeSwitchedOffServers(
+  servers: readonly string[] | undefined,
+  ownServer: string | null,
+): string[] {
+  const own = ownServer === null ? null : claudeMcpServerSegment(ownServer);
+  return [
+    ...new Set(
+      (servers ?? [])
+        .filter((server) => server.length > 0)
+        .filter((server) => claudeMcpServerSegment(server) !== own),
+    ),
+  ];
 }
 
 /**

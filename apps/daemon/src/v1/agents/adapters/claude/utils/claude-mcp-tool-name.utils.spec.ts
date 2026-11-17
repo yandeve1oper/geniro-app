@@ -4,6 +4,7 @@ import {
   claudeDisallowedToolArgs,
   claudeMcpServerRule,
   claudeMcpServerSegment,
+  claudeSwitchedOffServers,
   claudeToolCallMetric,
 } from './claude-mcp-tool-name.utils';
 
@@ -77,6 +78,29 @@ describe('claudeDisallowedToolArgs', () => {
       'Monitor',
       'ListAgents',
     ]);
+  });
+});
+
+describe('claudeSwitchedOffServers', () => {
+  it('returns the names as the member lists them, de-duplicated, without empty ones', () => {
+    expect(
+      claudeSwitchedOffServers(
+        ['codegraph', '', 'claude.ai Gmail', 'codegraph'],
+        null,
+      ),
+    ).toEqual(['codegraph', 'claude.ai Gmail']);
+  });
+
+  it('never returns geniro’s own server, matched by its segment as the CLI names it', () => {
+    expect(
+      claudeSwitchedOffServers(['geniro-abc', 'codegraph'], 'geniro-abc'),
+    ).toEqual(['codegraph']);
+    expect(claudeSwitchedOffServers(['a..b'], 'a  b')).toEqual([]);
+  });
+
+  it('is empty when nothing is switched off', () => {
+    expect(claudeSwitchedOffServers(undefined, null)).toEqual([]);
+    expect(claudeSwitchedOffServers([], 'geniro-run')).toEqual([]);
   });
 });
 

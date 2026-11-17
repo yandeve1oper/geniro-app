@@ -54,4 +54,29 @@ describe('claudeSettingsArgs', () => {
     ).toEqual({ ...REFUSE, language: 'Russian', env });
     expect(settingsOf(claudeSettingsArgs({ env }))).toEqual({ ...REFUSE, env });
   });
+
+  it('names each switched-off server in deniedMcpServers, in the CLI’s own shape', () => {
+    expect(
+      settingsOf(
+        claudeSettingsArgs({
+          deniedMcpServers: ['codegraph', 'plugin:playwright:playwright'],
+        }),
+      ),
+    ).toEqual({
+      ...REFUSE,
+      deniedMcpServers: [
+        { serverName: 'codegraph' },
+        { serverName: 'plugin:playwright:playwright' },
+      ],
+    });
+  });
+
+  it('leaves the key out, byte for byte, when nothing is switched off', () => {
+    expect(claudeSettingsArgs({ deniedMcpServers: [] })).toEqual(
+      claudeSettingsArgs({}),
+    );
+    expect(settingsOf(claudeSettingsArgs({}))).not.toHaveProperty(
+      'deniedMcpServers',
+    );
+  });
 });

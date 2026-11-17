@@ -27,7 +27,7 @@ description: "Team call runtime — call tokens, the call broker, the agent pool
   - `node_state` belongs to member 1; spend rows name their own member's agent and model.
   - `calleeSummary` never names a member's config directory (it goes to the caller's provider).
 - `mcpDisabled` per member and pool member writes no CLI config and joins `sessionKey`; geniro's own server is never switched off.
-  - claude: `--disallowedTools mcp__<normalized>`, in the one variadic flag that always carries `Monitor` (`CLAUDE_WITHHELD_TOOLS`: geniro's `monitor` replaces claude's own, so every CLI has one mechanism).
+  - claude: `deniedMcpServers` in the turn's `--settings` (`CLAUDE_DENIED_MCP_SERVERS_KEY`: the CLI never starts the server), plus `--disallowedTools mcp__<normalized>` in the one variadic flag that always carries `Monitor` (`CLAUDE_WITHHELD_TOOLS`: geniro's `monitor` replaces claude's own, so every CLI has one mechanism).
   - codex: overrides only for names its config defines (an unknown name fails `thread/start`).
   - cursor: throwaway `CURSOR_DATA_DIR` with symlinks into the user's store.
 - `CALLEE_FAILED[<class>]` (`rate_limited` / `auth_expired` / `daemon_restart` / `crashed`): the message passes through `redactSecrets`. `resetsAt` stays verbatim. Patterns are per-CLI config and must never carry the `g` flag.

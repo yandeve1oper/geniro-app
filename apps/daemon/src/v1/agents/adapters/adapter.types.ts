@@ -3581,8 +3581,9 @@ export interface AgentTurnInput {
    * or empty switches nothing off; chats never set it.
    *
    * Adapter-agnostic like {@link isolateMcpServers}: the caller says which
-   * servers, each CLI decides how (claude `--disallowedTools`, codex a thread
-   * config override, cursor a per-turn copy of its disabled list), and a CLI
+   * servers, each CLI decides how (claude a `deniedMcpServers` entry in its turn
+   * settings plus its `--disallowedTools` rules, codex a thread config
+   * override, cursor a per-turn copy of its disabled list), and a CLI
    * with no per-turn mechanism declares that in
    * `AdapterConfig.mcp.turnToggleUnavailableReason` and ignores the field.
    * It writes into no config of the CLI's: it changes nothing outside this
