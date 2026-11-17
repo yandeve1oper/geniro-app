@@ -207,7 +207,7 @@ export const Updating: Story = {
   args: {
     clis: UPDATE_CLIS,
     onUpdate: () => undefined,
-    updating: 'cursor-agent',
+    updating: new Set(['cursor-agent'] as const),
   },
 };
 

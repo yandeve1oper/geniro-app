@@ -73,6 +73,8 @@
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
   --color-override: var(--override);
+  --color-update: var(--update);
+  --color-update-foreground: var(--update-foreground);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-input: var(--input);

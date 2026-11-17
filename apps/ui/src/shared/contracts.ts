@@ -1248,6 +1248,16 @@ export interface CliUpdateResult {
   reason: string | null;
 }
 
+/**
+ * Every CLI update main is running or has finished, held in main so a window
+ * that left Settings and came back still shows a running update as running.
+ */
+export interface CliUpdates {
+  updating: CliKind[];
+  /** The last finished update per CLI, kept until a fresh reading is asked for. */
+  results: Partial<Record<CliKind, CliUpdateResult>>;
+}
+
 /** What running one CLI's own installer actually did. */
 export interface CliInstallResult {
   kind: CliKind;
@@ -1911,6 +1921,18 @@ export interface GeniroApi {
    * press against it.
    */
   updateCli(kind: CliKind): Promise<CliUpdateResult>;
+  /** The CLI updates running now and the last one finished per CLI. */
+  getCliUpdates(): Promise<CliUpdates>;
+  /** Drop the finished updates' outcomes, for a fresh reading (`Re-check`). */
+  forgetCliUpdateResults(): Promise<CliUpdates>;
+  /** Subscribe to CLI update changes: one starting, one finishing. */
+  onCliUpdates(listener: (state: CliUpdates) => void): () => void;
+  /**
+   * Make an empty folder for a new configuration of `agent`, under geniro's
+   * own data folder, and answer its path. The name only seeds the folder's
+   * name; a taken one gets a numeric suffix.
+   */
+  createConfigProfileDir(agent: CliKind, name: string): Promise<string>;
   /**
    * Install one agent CLI on a machine that does not have it, by running the
    * VENDOR's own installer (`main/agents/<cli>.ts` → `installer`), and report
@@ -2445,6 +2467,10 @@ export const IPC = {
   updateSettings: 'geniro:updateSettings',
   detectClis: 'geniro:detectClis',
   updateCli: 'geniro:updateCli',
+  getCliUpdates: 'geniro:getCliUpdates',
+  forgetCliUpdateResults: 'geniro:forgetCliUpdateResults',
+  onCliUpdates: 'geniro:onCliUpdates',
+  createConfigProfileDir: 'geniro:createConfigProfileDir',
   installCli: 'geniro:installCli',
   completeOnboarding: 'geniro:completeOnboarding',
   pickTeamImport: 'geniro:pickTeamImport',

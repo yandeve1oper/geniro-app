@@ -5,6 +5,7 @@ import { dirname, sep } from 'node:path';
 import { promisify } from 'node:util';
 
 import type {
+  CliDetection,
   CliKind,
   CliUpdateResult,
   CliUpdateState,
@@ -255,6 +256,7 @@ function outputTail(value: unknown): string | null {
 export async function runCliUpdate(
   kind: CliKind,
   settings: Settings,
+  verification: CliUpdateVerification = NO_VERIFICATION,
 ): Promise<CliUpdateResult> {
   const path = resolveBinary(kind, settings.cliPaths[kind]);
   if (!path) {
@@ -307,15 +309,99 @@ export async function runCliUpdate(
       ),
     };
   }
+  const readVersion = (): Promise<string | null> =>
+    probeVersion(kind, resolveBinary(kind, settings.cliPaths[kind]) ?? path);
+  const settled = await settledVersion(
+    previousVersion,
+    readVersion,
+    verification,
+  );
+  if (settled.unchanged) {
+    const reason = `${kind}'s updater finished, but ${kind} still answers ${settled.version}.`;
+    return {
+      kind,
+      ok: false,
+      previousVersion,
+      version: settled.version,
+      output: reason,
+      reason,
+    };
+  }
   return {
     kind,
     ok: true,
     previousVersion,
-    version: await probeVersion(
-      kind,
-      resolveBinary(kind, settings.cliPaths[kind]) ?? path,
-    ),
+    version: settled.version,
     output: null,
     reason: null,
   };
+}
+
+/**
+ * How long to keep reading `--version` after an updater exited cleanly on the
+ * same version while a newer one was known to exist. Some updaters hand the
+ * install to a process of their own and exit before it lands.
+ */
+export interface CliUpdateVerification {
+  /** The check before the press said a newer version exists. */
+  expectsNewer: Promise<boolean>;
+  settleTimeoutMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Whether the last detection, when there is one, said `kind` has a newer version. */
+export async function detectionExpectsNewer(
+  kind: CliKind,
+  detection: Promise<readonly CliDetection[]> | null,
+): Promise<boolean> {
+  if (detection === null) {
+    return false;
+  }
+  const detections = await detection.catch(() => []);
+  return (
+    detections.find((entry) => entry.kind === kind)?.update.available === true
+  );
+}
+
+const NO_VERIFICATION: CliUpdateVerification = {
+  expectsNewer: Promise.resolve(false),
+};
+
+const SETTLE_TIMEOUT_MS = 3 * 60_000;
+const SETTLE_POLL_MS = 2000;
+
+const wait = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The version the binary answers once the update has landed. `unchanged` means
+ * a newer version was known and the binary still answered the old one at the
+ * deadline: the updater exited cleanly without installing it.
+ */
+async function settledVersion(
+  previousVersion: string | null,
+  readVersion: () => Promise<string | null>,
+  verification: CliUpdateVerification,
+): Promise<{ version: string | null; unchanged: boolean }> {
+  const first = await readVersion();
+  if (
+    first === null ||
+    first !== previousVersion ||
+    !(await verification.expectsNewer.catch(() => false))
+  ) {
+    return { version: first, unchanged: false };
+  }
+  const sleep = verification.sleep ?? wait;
+  const pollMs = verification.pollMs ?? SETTLE_POLL_MS;
+  let waited = 0;
+  while (waited < (verification.settleTimeoutMs ?? SETTLE_TIMEOUT_MS)) {
+    await sleep(pollMs);
+    waited += pollMs;
+    const next = await readVersion();
+    if (next !== null && next !== previousVersion) {
+      return { version: next, unchanged: false };
+    }
+  }
+  return { version: first, unchanged: true };
 }

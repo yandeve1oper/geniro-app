@@ -16,9 +16,11 @@ import type { RemoteAccessState } from '../shared/remote';
 import { clearBrowserCache, readAppStorage } from './app-storage';
 import { runBrowserAgentRequest } from './browser/browser-agent';
 import { type BrowserService, resolveAddress } from './browser/browser-service';
-import { detectClisCached } from './cli-detect';
+import { detectClisCached, lastDetection } from './cli-detect';
 import { runCliInstall } from './cli-install';
-import { runCliUpdate } from './cli-update';
+import { detectionExpectsNewer, runCliUpdate } from './cli-update';
+import { createCliUpdateService } from './cli-update-service';
+import { createConfigProfileDir } from './config-profile-dir';
 import type { DaemonSupervisor } from './daemon-supervisor';
 import { readFinishedTasks } from './finished-tasks';
 import {
@@ -63,6 +65,7 @@ import {
   chatExportSaveSchema,
   cliKindSchema,
   commitShaSchema,
+  configProfileNameSchema,
   detectClisOptionsSchema,
   epochMsSchema,
   gitDirSchema,
@@ -228,6 +231,21 @@ export function registerIpc(
   // function every other handler here does — so the toggle it consults is
   // always the file's current state, never a value captured at registration.
   const notifications = new NotificationService(readSettings);
+  const cliUpdates = createCliUpdateService({
+    run: (kind) => {
+      const settings = readSettings();
+      return runCliUpdate(kind, settings, {
+        expectsNewer: detectionExpectsNewer(kind, lastDetection()),
+      });
+    },
+    broadcast: (state) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC.onCliUpdates, state);
+        }
+      }
+    },
+  });
 
   const registry = new IpcRegistry();
   // The one seam every channel below goes through: it registers with Electron
@@ -458,7 +476,22 @@ export function registerIpc(
   // has somewhere to say what the updater did and an IPC rejection reaches the
   // renderer as an opaque `Error invoking remote method`.
   handle(IPC.updateCli, ALLOW_REMOTELY, (_event, kind: unknown) =>
-    runCliUpdate(cliKindSchema.parse(kind), readSettings()),
+    cliUpdates.update(cliKindSchema.parse(kind)),
+  );
+  handle(IPC.getCliUpdates, ALLOW_REMOTELY, () => cliUpdates.getState());
+  handle(IPC.forgetCliUpdateResults, ALLOW_REMOTELY, () =>
+    cliUpdates.forgetResults(),
+  );
+
+  handle(
+    IPC.createConfigProfileDir,
+    denyRemotely('creates a folder on the computer running geniro'),
+    (_event, agent: unknown, name: unknown) =>
+      createConfigProfileDir(
+        app.getPath('userData'),
+        cliKindSchema.parse(agent),
+        configProfileNameSchema.parse(name),
+      ),
   );
 
   // Allowed remotely for the updater's reason: what runs is the vendor's fixed

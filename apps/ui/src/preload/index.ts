@@ -81,6 +81,25 @@ const api: GeniroApi = {
     ipcRenderer.invoke(IPC.updateCli, kind) as ReturnType<
       GeniroApi['updateCli']
     >,
+  getCliUpdates: () =>
+    ipcRenderer.invoke(IPC.getCliUpdates) as ReturnType<
+      GeniroApi['getCliUpdates']
+    >,
+  forgetCliUpdateResults: () =>
+    ipcRenderer.invoke(IPC.forgetCliUpdateResults) as ReturnType<
+      GeniroApi['forgetCliUpdateResults']
+    >,
+  onCliUpdates: (listener) => {
+    const handler = (_event: IpcRendererEvent, state: unknown): void => {
+      listener(state as Parameters<typeof listener>[0]);
+    };
+    ipcRenderer.on(IPC.onCliUpdates, handler);
+    return () => ipcRenderer.removeListener(IPC.onCliUpdates, handler);
+  },
+  createConfigProfileDir: (agent, name) =>
+    ipcRenderer.invoke(IPC.createConfigProfileDir, agent, name) as ReturnType<
+      GeniroApi['createConfigProfileDir']
+    >,
   installCli: (kind) =>
     ipcRenderer.invoke(IPC.installCli, kind) as ReturnType<
       GeniroApi['installCli']

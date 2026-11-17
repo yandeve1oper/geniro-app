@@ -149,6 +149,7 @@ const DENIED_CHANNEL_KEYS: (keyof typeof IPC)[] = [
   'pickProjectFolder',
   'pickAgentBinary',
   'pickTaskFiles',
+  'createConfigProfileDir',
   'pickTeamImport',
   'pickTeamExport',
   'saveChatExport',

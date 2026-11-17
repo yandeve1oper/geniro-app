@@ -30,6 +30,8 @@ Child processes and environment:
 - `login-shell-path.ts` spawns the interactive shell with stdin on `/dev/null` and SIGKILLs it at its deadline. Otherwise a `.zshrc` that reads stdin hangs daemon start and ⌘Q.
 - `cli-detect.ts`: a `loggedIn` of `null` means unknown, never signed-out. Read a CLI's structured reply where it has one (`cursor-agent status --format json`). Otherwise read the exit code and the wording together (codex answers on stderr).
 - `cli-install.ts` runs the descriptor's `installer` as `curl -fsSL <url> | <shell>`, and only on the user's press. It reports success only once detection resolves the new binary's `--version`.
+- `cli-update-service.ts` owns every CLI update (one run per CLI, a second press joins it) and broadcasts `onCliUpdates`, so a remounted Settings, or a phone polling `getCliUpdates`, still shows one running. `runCliUpdate` keeps reading `--version` after a clean exit while the last detection said a newer version exists (`lastDetection`, never a new probe), and reports a failure when the deadline passes on the old version.
+- `config-profile-dir.ts` makes a new configuration's folder under `<userData>/agent-configs/<cli>/<slug>` (0700, never an existing one). `denyRemotely`.
 - Main's own failures go to the daemon's log (`reportMainLog`, the `ui` channel), never to stdout. A packaged Finder launch discards main's stdout.
 - A window whose renderer dies is reloaded (`shouldReloadAfterRendererGone`), except on `clean-exit`, while quitting, or when it died again within `RENDERER_RELOAD_WINDOW_MS` of the last reload.
 

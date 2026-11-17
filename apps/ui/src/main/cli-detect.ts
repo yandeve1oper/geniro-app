@@ -166,6 +166,11 @@ export function detectClisCached(
   return entry.answer;
 }
 
+/** The last detection made, or null when there is none; never starts a probe. */
+export function lastDetection(): Promise<CliDetection[]> | null {
+  return held?.answer ?? null;
+}
+
 /**
  * Probe the host for each supported CLI agent (path, reported version, and
  * whether it reports itself signed in).

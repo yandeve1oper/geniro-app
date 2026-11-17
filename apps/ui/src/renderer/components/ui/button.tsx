@@ -16,6 +16,7 @@ const buttonVariants = cva(
           'border border-border bg-card text-foreground hover:bg-accent hover:text-accent-foreground',
         secondary:
           'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+        update: 'bg-update text-update-foreground hover:bg-update/90',
         // A withheld ghost button must not fill on hover: the fill is the only
         // thing that says it is a button, so it would promise a press that
         // does nothing.

@@ -121,12 +121,8 @@ export interface AgentConfigListProps {
    * controls beside it — a card renders no update band without it.
    */
   onUpdate?: (kind: CliKind) => void;
-  /**
-   * The CLI whose update is running, or null. The caller's, for the reason
-   * {@link signingIn} is: one update runs at a time across the screen, and a
-   * flag kept in here would let two cards each believe they own it.
-   */
-  updating?: CliKind | null;
+  /** The CLIs whose update is running, as main reports them. */
+  updating?: ReadonlySet<CliKind>;
   /**
    * What the last finished update did, per CLI.
    *
@@ -190,7 +186,7 @@ export type CliUpdateRow = {
 
 const UPDATE_TEXT: Record<CliUpdateRow['tone'], string> = {
   ok: 'text-success',
-  news: 'text-foreground',
+  news: 'text-update',
   muted: 'text-muted-foreground',
   bad: 'text-destructive',
 };
@@ -306,7 +302,7 @@ function CliUpdateBand({
         // the first is writing.
         <Button
           type="button"
-          variant="outline"
+          variant={row.tone === 'news' ? 'update' : 'outline'}
           size="sm"
           className="shrink-0"
           disabled={updating}
@@ -453,7 +449,7 @@ export function AgentConfigList({
   onSignOut,
   signingIn = null,
   onUpdate,
-  updating = null,
+  updating,
   updateResults,
   onInstall,
   installing,
@@ -499,6 +495,20 @@ export function AgentConfigList({
                     <span className="truncate text-xs text-muted-foreground">
                       {status.version}
                     </span>
+                  ) : null}
+                  {found &&
+                  onUpdate &&
+                  detection &&
+                  (updating?.has(kind) === true ||
+                    cliUpdateRow(detection.update, updateResults?.[kind])
+                      .tone === 'news') ? (
+                    <Badge
+                      data-slot="update-available"
+                      className="shrink-0 rounded-full border-transparent bg-update/10 text-update">
+                      {updating?.has(kind) === true
+                        ? 'Updating…'
+                        : 'Update available'}
+                    </Badge>
                   ) : null}
                   <Badge
                     className={cn(
@@ -553,7 +563,7 @@ export function AgentConfigList({
                 kind={kind}
                 update={detection.update}
                 result={updateResults?.[kind]}
-                updating={updating === kind}
+                updating={updating?.has(kind) === true}
                 onUpdate={onUpdate}
               />
             ) : null}

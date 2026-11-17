@@ -52,6 +52,47 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('ConfigProfileList — a new configuration', () => {
+  it('offers signing in to a new configuration beside adding a folder, only when it can', () => {
+    const onCreateNew = vi.fn();
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => {
+      root.render(
+        <ConfigProfileList
+          agent="codex"
+          profiles={[]}
+          onChange={() => undefined}
+          onPickDirectory={async () => null}
+          onCreateNew={onCreateNew}
+        />,
+      );
+    });
+    const labels = [...container.querySelectorAll('button')].map(
+      (b) => b.textContent,
+    );
+    expect(labels).toEqual([
+      'Sign in to a new configuration',
+      'Add existing folder',
+    ]);
+
+    act(() => {
+      container
+        .querySelector('button')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onCreateNew).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the single Add configuration button where no sign-in is possible', () => {
+    const { el } = render([]);
+    expect(
+      [...el.querySelectorAll('button')].map((b) => b.textContent),
+    ).toEqual(['Add configuration']);
+  });
+});
+
 /**
  * Type into a controlled field the way React's own onChange sees it.
  *

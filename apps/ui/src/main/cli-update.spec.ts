@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CliKind } from '../shared/contracts';
+import type { CliDetection, CliKind } from '../shared/contracts';
 import { DEFAULT_SETTINGS } from '../shared/contracts';
 
 const mocks = vi.hoisted(() => ({
@@ -22,7 +22,12 @@ import { join } from 'node:path';
 
 import { CLAUDE_DESCRIPTOR } from './agents/claude';
 import { CODEX_DESCRIPTOR } from './agents/codex';
-import { probeUpdate, runCliUpdate, updateFailureReason } from './cli-update';
+import {
+  detectionExpectsNewer,
+  probeUpdate,
+  runCliUpdate,
+  updateFailureReason,
+} from './cli-update';
 
 /** A probe context for the probes that read neither the version nor a profile. */
 const NO_CONTEXT = { version: Promise.resolve(null), configDirs: [] };
@@ -305,6 +310,60 @@ describe('runCliUpdate', () => {
     ]);
   });
 
+  it('keeps reading the version until a handed-off install lands, when a newer one was known', async () => {
+    mocks.binary = '/bin/codex';
+    stubUpdate(['0.166.0', '0.166.0', '0.166.0', '0.169.0']);
+    const sleep = vi.fn(() => Promise.resolve());
+
+    const result = await runCliUpdate('codex', settings, {
+      expectsNewer: Promise.resolve(true),
+      pollMs: 10,
+      settleTimeoutMs: 1000,
+      sleep,
+    });
+
+    expect(result.version).toBe('0.169.0');
+    expect(result.previousVersion).toBe('0.166.0');
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not wait when nothing newer was known, so "already on the latest" stays immediate', async () => {
+    mocks.binary = '/bin/claude';
+    stubUpdate(['2.1.255', '2.1.255', '2.1.256']);
+    const sleep = vi.fn(() => Promise.resolve());
+
+    const result = await runCliUpdate('claude', settings, {
+      expectsNewer: Promise.resolve(false),
+      sleep,
+    });
+
+    expect(result.version).toBe('2.1.255');
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('reports a failure at the deadline when the binary never left the old version', async () => {
+    mocks.binary = '/bin/codex';
+    stubUpdate(['0.166.0', '0.166.0', '0.166.0', '0.166.0', '0.166.0']);
+    const sleep = vi.fn(() => Promise.resolve());
+
+    const result = await runCliUpdate('codex', settings, {
+      expectsNewer: Promise.resolve(true),
+      pollMs: 10,
+      settleTimeoutMs: 30,
+      sleep,
+    });
+
+    expect(result).toEqual({
+      kind: 'codex',
+      ok: false,
+      previousVersion: '0.166.0',
+      version: '0.166.0',
+      output: "codex's updater finished, but codex still answers 0.166.0.",
+      reason: "codex's updater finished, but codex still answers 0.166.0.",
+    });
+    expect(sleep).toHaveBeenCalledTimes(3);
+  });
+
   it('re-reads the version even when the updater FAILED', async () => {
     // An updater that swapped the binary and then exited non-zero has still
     // changed what the next turn runs, so reporting the pre-run figure would
@@ -373,6 +432,37 @@ describe('runCliUpdate', () => {
         `/bin/${kind}`,
       ]);
     }
+  });
+});
+
+describe('detectionExpectsNewer', () => {
+  const detection = (
+    kind: CliKind,
+    available: boolean | null,
+  ): CliDetection => ({
+    kind,
+    found: true,
+    path: `/bin/${kind}`,
+    version: '1.0.0',
+    loggedIn: null,
+    update: { available, latestVersion: null, checkUnavailableReason: null },
+  });
+
+  it('reads the pressed CLI’s own answer from the last detection', async () => {
+    const last = Promise.resolve([
+      detection('claude', true),
+      detection('codex', null),
+    ]);
+
+    await expect(detectionExpectsNewer('claude', last)).resolves.toBe(true);
+    await expect(detectionExpectsNewer('codex', last)).resolves.toBe(false);
+  });
+
+  it('expects nothing without a detection, or from one that failed', async () => {
+    await expect(detectionExpectsNewer('claude', null)).resolves.toBe(false);
+    await expect(
+      detectionExpectsNewer('claude', Promise.reject(new Error('probe'))),
+    ).resolves.toBe(false);
   });
 });
 

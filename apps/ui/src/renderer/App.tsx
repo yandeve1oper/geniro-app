@@ -64,6 +64,7 @@ const Teams = lazy(() =>
   import('./teams/Teams').then((m) => ({ default: m.Teams })),
 );
 import type { SettingsSection } from './settings/Settings';
+import { useCliUpdatesAvailable } from './settings/use-cli-updates-available';
 import { useMemoryPendingCount } from './settings/use-memory-pending-count';
 
 const Settings = lazy(() =>
@@ -574,6 +575,7 @@ export function App(): React.JSX.Element {
   }, [openRunId]);
   const knowledgeCounts = useKnowledgeCounts(apis, clientRef.current);
   const memoryPending = useMemoryPendingCount(apis, clientRef.current);
+  const cliUpdatesAvailable = useCliUpdatesAvailable();
   const agentName = useLatestCallback(
     (kind: string): string => agentShortName(agentIdentities, kind),
     [agentIdentities],
@@ -587,9 +589,9 @@ export function App(): React.JSX.Element {
     () => ({
       chats: owedCount(waiting),
       knowledge: knowledgeCounts?.waiting ?? 0,
-      settings: memoryPending ?? 0,
+      settings: (memoryPending ?? 0) + cliUpdatesAvailable,
     }),
-    [waiting, knowledgeCounts, memoryPending],
+    [waiting, knowledgeCounts, memoryPending, cliUpdatesAvailable],
   );
   const waitingByRun = useMemo(
     () => new Map(waiting.map((reading) => [reading.runId, reading.state])),

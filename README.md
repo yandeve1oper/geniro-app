@@ -192,8 +192,8 @@ Geniro drives each agent headlessly through its own CLI. No SDKs and no API keys
 | <img src="https://img.shields.io/badge/-Cursor%20Agent-000000?style=flat-square&logo=cursor&logoColor=white" alt="Cursor Agent"> | `cursor-agent acp` (Agent Client Protocol) | Account spend shown from your own login, for every config profile's own account, down to each call of a team member |
 | <img src="https://img.shields.io/badge/-Codex-412991?style=flat-square" alt="Codex"> | `codex app-server` (JSON-RPC) | Runs Ollama models too |
 
-- **Install and sign in from the app.** Geniro runs each vendor's official installer when you press the button, and signs you in without opening a terminal.
-- **Several accounts per CLI.** Config profiles give each account a name and a colour. Pick one per chat, or per member in a team.
+- **Install, sign in and update from the app.** Geniro runs each vendor's official installer when you press the button, and signs you in without opening a terminal. When a CLI says a newer version exists, its card shows **Update available** in its own colour, and the Settings icon and the **General** section count the CLIs waiting. **Update** runs the CLI's own updater and stays busy until the new version answers, even if you leave Settings meanwhile.
+- **Several accounts per CLI.** Config profiles give each account a name and a colour. Pick one per chat, or per member in a team. **Sign in to a new configuration** names one, makes its folder in Geniro's data folder and signs you in there straight away; tick the MCP servers your other configurations of that CLI define to copy them in. **Add existing folder** still points at a config folder you already have.
 - **MCP servers.** List, add, edit as JSON (**Edit JSON** beside **Add**, to change or remove any server) and toggle the servers each CLI knows, and switch them off for one team member.
 - **Your instructions, everywhere.** Write custom instructions once, and choose a language every agent replies in.
 

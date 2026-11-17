@@ -81,6 +81,9 @@
   --warning: #dcb268;
   --warning-foreground: #201c17;
   --override: #7ba4d8;
+  /* A newer version waiting to be installed: distinct from every status tone. */
+  --update: #7cc4d6;
+  --update-foreground: #201c17;
   /* Syntax palette, contrast-checked as TEXT on --muted (#2a2827), the code
      surface — the same bar and the same surface `light.css` uses. Punctuation
      again sits at AA-large only, by the same argument: it is structural noise

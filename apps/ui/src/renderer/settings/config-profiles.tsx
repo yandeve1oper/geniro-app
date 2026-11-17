@@ -1,4 +1,4 @@
-import { FolderOpen, Plus, Trash2 } from 'lucide-react';
+import { FolderOpen, LogIn, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import {
@@ -51,6 +51,7 @@ export function ConfigProfileList({
   onPickDirectory,
   onSignIn,
   onSignOut,
+  onCreateNew,
   signingIn = null,
   busy = false,
   logins = {},
@@ -101,6 +102,11 @@ export function ConfigProfileList({
    */
   onSignIn?: (dir: string) => void;
   onSignOut?: (dir: string) => void;
+  /**
+   * Start a configuration geniro makes the folder for, signing in there. Absent
+   * where there is no daemon to sign in through.
+   */
+  onCreateNew?: () => void;
   /**
    * The profile whose sign-in has been ASKED for and not yet answered.
    *
@@ -175,22 +181,12 @@ export function ConfigProfileList({
     if (profiles.length >= MAX_CONFIG_PROFILES) {
       return;
     }
+    // The folder's own last segment, which is very often already the answer
+    // (`.claude-work` → `claude-work`). A blank name would fail the schema's
+    // `min(1)` on the very next write, so the row has to open on something real.
     onChange([
       ...profiles,
-      {
-        id: randomId(),
-        agent,
-        // The folder's own last segment, which is very often already the
-        // answer (`.claude-work` → `claude-work`). A blank name would fail the
-        // schema's `min(1)` on the very next write, so the row has to open on
-        // something real rather than on a placeholder.
-        name: defaultName(dir),
-        dir,
-        // Cycled rather than fixed, so a user who adds three in a row gets
-        // three distinguishable rows without touching the colour picker —
-        // which is the whole point of the colour.
-        color: PROFILE_COLORS[profiles.length % PROFILE_COLORS.length]!,
-      },
+      newConfigProfile(agent, defaultName(dir), dir, profiles.length),
     ]);
   };
 
@@ -348,18 +344,55 @@ export function ConfigProfileList({
       {/* Withheld at the cap rather than failing on press: the write would be
           refused by the schema and the user would be told nothing. */}
       {profiles.length < MAX_CONFIG_PROFILES ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="w-fit gap-1.5"
-          onClick={() => void add()}>
-          <Plus className="size-3.5 shrink-0" />
-          {compact ? 'Add profile' : 'Add configuration'}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {onCreateNew ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-fit gap-1.5"
+              disabled={busy}
+              onClick={onCreateNew}>
+              <LogIn className="size-3.5 shrink-0" />
+              Sign in to a new configuration
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-fit gap-1.5"
+            onClick={() => void add()}>
+            <Plus className="size-3.5 shrink-0" />
+            {compact
+              ? 'Add profile'
+              : onCreateNew
+                ? 'Add existing folder'
+                : 'Add configuration'}
+          </Button>
+        </div>
       ) : null}
     </div>
   );
+}
+
+/**
+ * A new list entry. The colour is cycled by how many the CLI already has, so
+ * three added in a row are told apart without touching the colour picker.
+ */
+export function newConfigProfile(
+  agent: CliKind,
+  name: string,
+  dir: string,
+  existingOfAgent: number,
+): ConfigProfile {
+  return {
+    id: randomId(),
+    agent,
+    name,
+    dir,
+    color: PROFILE_COLORS[existingOfAgent % PROFILE_COLORS.length]!,
+  };
 }
 
 /**

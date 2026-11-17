@@ -396,6 +396,7 @@ Daemon side of the contract (zod wire schemas, `@ZodResponse`, operationIds, `se
   - Local audio and video in `<audio>`, `<video>` and `<source>` `src` are copied, from the same folders and judged by bytes, into `media/<sha256>.<ext>` (`v<N>.media.json` maps each path to its copy), and the served page points them at `GET /v1/artifacts/:runId/:artifactId/media/:file?key=` (Range answered `206`), on a paired device through the gateway's one cookie-free arm; a saved or shared copy carries no media.
   - What the user picked on the page is kept in `answers.json` beside the versions, for every version of it.
   - Limits refuse rather than truncate (512KB of HTML). Dropped with the run by `RunTeardownService`.
+- **Configurations geniro made → `<userData>/agent-configs/<cli>/<slug>/`** (`apps/ui/src/main/config-profile-dir.ts`): the folder a "Sign in to a new configuration" creates; the CLI keeps that account's login in it. Removing the configuration leaves the folder, as it does a folder the user picked.
 - **Task worktrees → `<userData>/worktrees/<taskId>/`**, registry `<userData>/worktrees.json` (`apps/ui/src/main/worktree-service.ts`).
   - Every git call belongs to the Electron main process; the daemon runs no git and is only told the path. Lifetime, removal and branch rules: `apps/ui/src/main/AGENTS.md` → _Task worktrees_.
 - **What the data folder holds, and its clean-ups → Settings → Storage** (`v1/storage` in the daemon, `app-storage.ts` in main). Every delete is a press with a confirm; chats go only through the archive sweep's teardown.

@@ -193,6 +193,20 @@ export function createPreloadStub(
       });
     },
 
+    getCliUpdates: () => {
+      note('getCliUpdates');
+      return Promise.resolve({ updating: [], results: {} });
+    },
+    forgetCliUpdateResults: () => {
+      note('forgetCliUpdateResults');
+      return Promise.resolve({ updating: [], results: {} });
+    },
+    onCliUpdates: () => noSubscription('onCliUpdates'),
+    createConfigProfileDir: (agent, name) => {
+      note('createConfigProfileDir');
+      return Promise.resolve(`/tmp/geniro-stub/agent-configs/${agent}/${name}`);
+    },
+
     installCli: (kind): Promise<CliInstallResult> => {
       note('installCli');
       return Promise.resolve({
