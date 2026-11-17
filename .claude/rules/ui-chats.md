@@ -34,6 +34,7 @@ Anchors and run state:
 - Whatever replaces anchors calls `forget`. A page landing after a live answer merges.
 - Rows refused by `addItem`'s away-from-tail guard bring no anchors.
 - Never rebuild a call heuristically from its later rows: it draws ghost cards.
+- A call row whose card is not in the fold yet (a live row ahead of its asked-for start) is drawn nowhere, never as its callee's block in the run's own flow (`isUnplacedCallRow`); only `UNCLAIMABLE_KINDS` stay in that flow.
 - `useRunState` re-reads on open, reconnect, a structural row or a status announce, never on an activity phrase. The window supplies details; the daemon decides what has ENDED: a shell, delegate or call the page reads as running that began at or before the read's `throughSeq` and that the read says is over, is over (`withoutDaemonEndedShells`, `applyDaemonReadings` in `durable-transcript.ts`, `callEndedPerDaemon`). The same read carries each delegate's whole-run tool count, which `applyDaemonReadings` lays on its card with the delegate's rows above `throughSeq` added. The open turns' unanswered calls (`openToolCalls`) are folded in with the page, so a foreground command shows while the reader is elsewhere. Open requests off the tail are the daemon's too.
 
 Jumps (search, global search, timeline, the working-agents card) — `chats/use-transcript-jump.ts`, DOM contract in `chats/jump-target.ts`:

@@ -216,6 +216,96 @@ describe('a call whose start is ABOVE the window, read through its anchors', () 
     expect(entries.some((entry) => entry.type === 'call-block')).toBe(false);
   });
 
+  describe('a live row of a call whose start has not reached the window yet', () => {
+    const inCall = (row: ChatItem, callId: string): ChatItem => ({
+      ...row,
+      inCall: callId,
+    });
+    const middleRow = (
+      kind: ChatItem['kind'],
+      payload: Record<string, unknown>,
+    ): ChatItem =>
+      inCall(
+        item(kind, { ...payload, callId: 'call-23' }, 'middle'),
+        'call-23',
+      );
+
+    it('draws none of its rows in the run’s own flow while its start is still being asked for', () => {
+      const reply = item(
+        'message',
+        { text: 'Regressions: none.' },
+        'manager',
+        'assistant',
+      );
+      const toolCall = middleRow('tool_call', {
+        id: 'toolu-1',
+        name: 'Bash',
+        input: { command: 'ls' },
+      });
+      const toolResult = middleRow('tool_result', {
+        id: 'toolu-1',
+        name: null,
+        result: 'ok',
+      });
+
+      const entries = groupTranscript([reply, toolCall, toolResult], {
+        anchorIds: anchorsOf(toolCall, toolResult),
+      });
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        type: 'item',
+        item: { id: reply.id },
+      });
+    });
+
+    it('puts the same rows into the call’s card once its start lands', () => {
+      const started = inCall(
+        item(
+          'call_started',
+          {
+            callId: 'call-23',
+            calleeNodeId: 'middle',
+            callerNodeId: 'engineer',
+            title: 'Part 2c',
+            message: 'Run the rest.',
+            mode: 'async',
+          },
+          'engineer',
+        ),
+        'call-18',
+      );
+      const toolCall = middleRow('tool_call', {
+        id: 'toolu-2',
+        name: 'Bash',
+        input: { command: 'ls' },
+      });
+
+      const entries = groupTranscript([started, toolCall], {
+        anchorIds: anchorsOf(started, toolCall),
+      });
+
+      expect(entries).toHaveLength(1);
+      const block = entries[0] as CallBlockEntry;
+      expect(block.type).toBe('call-block');
+      expect(block.callIds).toEqual(['call-23']);
+      expect(countTools(block.entries)).toBe(1);
+    });
+
+    it('still draws a page the callee published, which belongs to the run’s own flow', () => {
+      const page = middleRow('show_artifact', {
+        artifactId: 'plan',
+        version: 1,
+        title: 'Plan',
+        key: 'k'.repeat(64),
+      });
+
+      const entries = groupTranscript([page], { anchorIds: anchorsOf(page) });
+
+      expect(entries.map((entry) => entry.type)).toEqual(['artifact']);
+    });
+  });
+
   it('keeps a conversation WHOLE and never stacks its earlier starts as rows', () => {
     // A continuation's earlier calls arrive as anchors: the card names every
     // call of the conversation, and their start rows build it rather than

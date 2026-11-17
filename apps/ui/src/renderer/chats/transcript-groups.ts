@@ -29,6 +29,7 @@ import {
   MESSAGE_THREAD,
   SAVE_PROJECT_INSTRUCTIONS,
 } from './geniro-tool';
+import { isCallRow } from './history-anchors';
 import {
   foldLessonOutcomes,
   type LessonsCardData,
@@ -2664,6 +2665,24 @@ const UNCLAIMABLE_KINDS = new Set<ChatItem['kind']>([
 
 const BLOCK_STATUSES = new Set(['running', 'completed', 'failed', 'cancelled']);
 
+/**
+ * A row of a call, held only to build that call's card, whose card is not in
+ * the fold yet: a live row that arrived before the anchors its start is asked
+ * for. It is drawn nowhere until the start lands, never as its callee's block
+ * in the run's own flow.
+ */
+function isUnplacedCallRow(
+  item: ChatItem,
+  anchorIds: ReadonlySet<string> | undefined,
+): boolean {
+  return (
+    anchorIds !== undefined &&
+    anchorIds.has(item.id) &&
+    isCallRow(item) &&
+    !UNCLAIMABLE_KINDS.has(item.kind)
+  );
+}
+
 /** A pending agent-call block under assembly (one per call_started). */
 interface CallShell {
   started: ChatItem;
@@ -3003,7 +3022,7 @@ export function groupTranscript(
   const openGroups = new Map<string, ToolGroupEntry>();
 
   for (const item of items) {
-    if (claimed.has(item.id)) {
+    if (claimed.has(item.id) || isUnplacedCallRow(item, anchorIds)) {
       continue;
     }
     if (item.kind === 'call_started') {
