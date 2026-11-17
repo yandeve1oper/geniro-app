@@ -30,8 +30,8 @@ const HOST_SOURCE = 'geniro-host';
 const FRAME_SOURCE = 'geniro-artifact';
 
 /**
- * One of the page's own pictures, which a click on a link to it opens in the image
- * viewer.
+ * One of the page's own pictures: a click on it, or on a link to it, opens it in
+ * the image viewer.
  *
  * TWIN PARSER: `ARTIFACT_PICTURE_SOURCE` in
  * apps/daemon/src/v1/agents/utils/artifact-page.ts.
@@ -167,7 +167,8 @@ const MAX_INLINE_HEIGHT = 520;
  * A link in the page never navigates the frame. The page posts the link to the
  * host, which opens a web or mail address in the system browser. No window is
  * created for the page, so the sandbox grants no popups. A link to one of the
- * page's own pictures arrives as `picture` and opens in the app's image viewer.
+ * page's own pictures, or a click on one, arrives as `picture` and opens in the
+ * app's image viewer.
  *
  * An Escape pressed inside the frame never reaches this document, so the page
  * posts the ones it did not act on as `escape`, which closes the overlay on top —

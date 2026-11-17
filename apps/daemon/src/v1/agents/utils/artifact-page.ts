@@ -209,8 +209,9 @@ export const ARTIFACT_HOST_SOURCE = 'geniro-host';
 export const ARTIFACT_FRAME_SOURCE = 'geniro-artifact';
 
 /**
- * A link target that is one of the page's own pictures, as the store inlines it
- * (`withInlineImages`) and the page runtime repoints a click-to-enlarge link to.
+ * The source of one of the page's own pictures, as the store inlines it
+ * (`withInlineImages`). The wrapper matches a clicked `<img>` and a link target
+ * against it, and the page runtime repoints a `href` or `data-*` to one.
  *
  * TWIN PARSER: `PICTURE_SOURCE` in apps/ui/src/renderer/chats/artifact-frame.tsx.
  */
@@ -226,9 +227,10 @@ export const ARTIFACT_ESCAPE_SETTLE_MS = 50;
 
 /**
  * geniro's own script inside the page — the only code here the agent did not
- * write, and it does seven things: it applies the theme, reports the height, relays
- * link clicks and folder buttons, carries the page's answers both ways, hands over
- * an Escape the page ignored, and announces itself to the host once it runs.
+ * write, and it does seven things: it applies the theme, reports the height,
+ * relays link and picture clicks and folder buttons, carries the page's answers
+ * both ways, hands over an Escape the page ignored, and announces itself to the
+ * host once it runs.
  *
  * It RELAYS a click on an element carrying `data-geniro-open="<absolute path>"` as
  * `open-path`, which the host shows in Finder (a plain folder opens, anything else
@@ -263,7 +265,16 @@ export const ARTIFACT_ESCAPE_SETTLE_MS = 50;
  * sandbox grants the page no popups, so this is the only way a link leaves the
  * frame. A link to one of the page's own pictures ({@link ARTIFACT_PICTURE_SOURCE})
  * is sent as `picture` instead, which the host opens in its image viewer: no
- * browser opens a `data:` address, so as a link it went nowhere.
+ * browser opens a `data:` address.
+ *
+ * A click on one of the page's own pictures is sent as `picture` too, and the
+ * page's handlers for that click do not run: the wrapper listens on `window` in
+ * the capture phase, ahead of the page's listeners on the document and on the
+ * picture, so the page's own zoom never opens and an Escape closes the picture,
+ * not the page.
+ * A picture inside a link, a button, a label, a summary or an element carrying
+ * `data-geniro-open` is left to that element, and so is a picture of any other
+ * source (an svg, for one).
  *
  * And it HANDS the host an Escape the page did not act on. A key pressed while
  * focus is inside the frame never reaches the host's document, so without this
@@ -282,6 +293,7 @@ export const ARTIFACT_WRAPPER_SCRIPT = `
   var root = document.documentElement;
   var last = -1;
   var picture = new RegExp(${JSON.stringify(ARTIFACT_PICTURE_SOURCE)});
+  var controls = 'a[href], area[href], button, [role="button"], label, summary, [data-geniro-open]';
   function post(message) {
     message.source = ${JSON.stringify(ARTIFACT_FRAME_SOURCE)};
     parent.postMessage(message, '*');
@@ -333,6 +345,15 @@ export const ARTIFACT_WRAPPER_SCRIPT = `
   });
   window.addEventListener('load', report);
   window.addEventListener('resize', report);
+  window.addEventListener('click', function (event) {
+    var node = event.target;
+    if (!node || node.tagName !== 'IMG' || event.button !== 0) return;
+    var src = node.currentSrc || node.getAttribute('src') || '';
+    if (!picture.test(src) || node.closest(controls)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    post({ type: 'picture', src: src, alt: node.getAttribute('alt') || '' });
+  }, true);
   // A link never navigates the frame, which has no history to come back to. The
   // host opens it, and only for a click it saw. A same-page anchor keeps
   // scrolling as it always did.

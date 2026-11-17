@@ -50,8 +50,8 @@ export function showArtifactInstructions(
     'copies each one into the page when you publish it, so the picture survives a restart and a revision, ' +
     'and the HTML stays small. PREFER that to a data: URI, which sits inside the HTML and counts against its ' +
     'size limit. ' +
-    'Only <img src> is copied: a path anywhere else on the page does not load, so a click-to-enlarge viewer ' +
-    'sets its own src from the clicked <img>’s src. ' +
+    'Only <img src> is copied (a path anywhere else on the page does not load), and a click on a picture ' +
+    'opens it in the app’s own viewer, so the page needs no click-to-enlarge viewer of its own. ' +
     'A local picture must be a png, jpeg, webp, gif or avif, judged by its contents rather than its name ' +
     `(an svg is refused), at most ${megabytes(MAX_ARTIFACT_IMAGE_BYTES)} MB each, ` +
     `${megabytes(MAX_ARTIFACT_PAGE_IMAGE_BYTES)} MB in all (a picture counts each time the page ` +

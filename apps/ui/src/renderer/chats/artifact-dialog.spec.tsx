@@ -77,3 +77,58 @@ describe('ArtifactDialog — a link the full-screen page opens', () => {
     expect(openUrl).not.toHaveBeenCalled();
   });
 });
+
+describe('ArtifactDialog — a picture the page shows, then the page', () => {
+  const PICTURE = 'data:image/png;base64,iVBORw0KGgo=';
+
+  const pictureShown = (): boolean =>
+    document.querySelector(`img[src="${PICTURE}"]`) !== null;
+
+  const focusFrame = (): void => {
+    act(() => {
+      document.querySelector('iframe')?.focus();
+    });
+  };
+
+  const postFromFrame = async (
+    data: Record<string, unknown>,
+  ): Promise<void> => {
+    const frame = document.querySelector('iframe');
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { source: 'geniro-artifact', ...data },
+          source: frame?.contentWindow ?? null,
+        }),
+      );
+    });
+  };
+
+  it('closes the picture on the first Escape, and the page on the second', async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      root.render(
+        <ArtifactUrlContext.Provider value={() => PAGE_URL}>
+          <ArtifactDialog artifact={ARTIFACT} open onClose={onClose} />
+        </ArtifactUrlContext.Provider>,
+      );
+    });
+
+    focusFrame();
+    await postFromFrame({ type: 'picture', src: PICTURE, alt: 'Before' });
+    expect(pictureShown()).toBe(true);
+
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
+    expect(pictureShown()).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.querySelector('iframe')).not.toBeNull();
+
+    focusFrame();
+    await postFromFrame({ type: 'escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});

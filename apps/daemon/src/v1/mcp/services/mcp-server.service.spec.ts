@@ -5874,10 +5874,12 @@ describe('McpServerService — what the descriptions tell a model', () => {
     expect(example!.startsWith('/tmp/')).toBe(true);
   });
 
-  it('says a click-to-enlarge viewer reads the picture’s own src, the only place a path is copied from', async () => {
+  it('says only <img src> is copied, and that a click on a picture opens it in the app’s own viewer', async () => {
     const description = find(await everyHostTool(), HOST_ARTIFACT_TOOL);
     expect(description).toContain('Only <img src> is copied');
-    expect(description).toMatch(/click-to-enlarge viewer sets its own src/);
+    expect(description).toContain(
+      'a click on a picture opens it in the app’s own viewer',
+    );
   });
 
   it('says in the html field that a picture goes in by path, and what the html limit is', async () => {
