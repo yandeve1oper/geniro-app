@@ -6,6 +6,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 
+import type { LeftProcessesCause } from '../chat.types';
 import { ItemDao } from '../dao/item.dao';
 import { RunDao } from '../dao/run.dao';
 import { executableOf, maskedCommand } from '../utils/command-text';
@@ -13,7 +14,6 @@ import { mapEventToItem } from '../utils/event-to-item';
 import { GROUP_KILL_GRACE_MS } from '../utils/kill-tree';
 import { persistItemAndEmit } from '../utils/persist-item';
 import type { ScannedProcess } from '../utils/run-process-scan';
-import type { LeftProcessesCause } from '../chat.types';
 import {
   finishedStoppedNote,
   idleStoppedNote,

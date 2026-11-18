@@ -18,11 +18,11 @@ import {
 } from 'vitest';
 
 import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
+import { keptSessionAdapter } from '../../agents/__tests__/kept-session';
 import { ItemDao } from '../../agents/dao/item.dao';
 import { RunDao } from '../../agents/dao/run.dao';
 import type { AgentAdapterRegistry } from '../../agents/services/agent-adapter.registry';
 import { AgentEventBus } from '../../agents/services/agent-events.bus';
-import { keptSessionAdapter } from '../../agents/__tests__/kept-session';
 import { AgentSessionRegistry } from '../../agents/services/agent-session.registry';
 import { ItemCallIndexService } from '../../agents/services/item-call-index.service';
 import { ItemSeqAllocator } from '../../agents/services/item-seq.allocator';
