@@ -228,6 +228,28 @@ describe('replayTail', () => {
     },
   );
 
+  it('reads past geniro’s compaction row, written after the compaction turn ended', () => {
+    const ended = { ...item('turn_complete'), id: 'end', seq: 1 };
+    const compacted = {
+      ...item('system', { message: 'compacted', conversationReplaced: true }),
+      id: 'compacted',
+      seq: 2,
+    };
+
+    expect(replayTail([ended, compacted])).toBe(ended);
+  });
+
+  it('answers a trailing system row that is not a compaction', () => {
+    const ended = { ...item('turn_complete'), id: 'end', seq: 1 };
+    const notice = {
+      ...item('system', { message: 'monitor output', severity: 'info' }),
+      id: 'notice',
+      seq: 2,
+    };
+
+    expect(replayTail([ended, notice])).toBe(notice);
+  });
+
   it('answers the last row when it is not bookkeeping', () => {
     const ended = { ...item('turn_complete'), id: 'end', seq: 1 };
     const message = { ...item('message'), id: 'msg', seq: 2 };

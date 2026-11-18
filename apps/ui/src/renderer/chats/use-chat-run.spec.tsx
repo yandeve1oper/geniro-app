@@ -138,6 +138,24 @@ function turnEnd(
   };
 }
 
+/** The row the daemon writes once geniro's compaction turn has ended. */
+function conversationReplacedRow(runId: string, seq: number): ChatItem {
+  return {
+    id: `${runId}-c${seq}`,
+    runId,
+    memberId: null,
+    seq,
+    kind: 'system',
+    role: null,
+    payload: {
+      message: 'Conversation compacted.',
+      severity: 'info',
+      conversationReplaced: true,
+    },
+    createdAt: 'now',
+  };
+}
+
 /** A fake DaemonClient whose listeners the test fires by hand. */
 function makeClient(): {
   client: DaemonClient;
@@ -1510,6 +1528,7 @@ describe('useChatRun', () => {
       'only bookkeeping',
       [{ ...msg('r1', 3, 'assistant', ''), kind: 'shell_info' }],
     ],
+    ['geniro’s compaction row', [conversationReplacedRow('r1', 3)]],
   ] as const)(
     'leaves the working state down when a stray `running` lands between the turn end and its settle, with %s after the turn end',
     async (_label, after) => {
@@ -2143,6 +2162,51 @@ describe('useChatRun', () => {
     });
 
     expect(harness.state().streaming).toBe(false);
+  });
+
+  it('releases the queue and ends the working state after a reconnect whose replay ends on a compaction', async () => {
+    // The socket dropped during `/compact` and the row still says running: the
+    // replay's turn end is the only sighting of the compaction being over.
+    const { client, emitItem, fireDisconnect, fireReconnect } = makeClient();
+    chatApi.listRunItems.mockResolvedValue([msg('r1', 0, 'user', 'go')]);
+    const harness = await mount(client);
+    harness.queued.add('r1');
+    await open(harness, 'r1');
+    await act(async () => {
+      emitItem(msg('r1', 1, 'user', '/compact'));
+    });
+    expect(harness.state().streaming).toBe(true);
+
+    chatApi.listRunItems.mockResolvedValue([
+      msg('r1', 2, 'assistant', '# Handover'),
+      turnEnd('r1', 3),
+      conversationReplacedRow('r1', 4),
+    ]);
+    await act(async () => {
+      fireDisconnect();
+      fireReconnect();
+      await Promise.resolve();
+    });
+
+    expect(harness.state().streaming).toBe(false);
+    expect(harness.drain).toHaveBeenCalledWith('r1');
+  });
+
+  it('releases the queue on opening a chat whose transcript ends on a compaction its row has not caught up with', async () => {
+    chatApi.listRunItems.mockResolvedValue([
+      msg('r1', 1, 'user', '/compact'),
+      msg('r1', 2, 'assistant', '# Handover'),
+      turnEnd('r1', 3),
+      conversationReplacedRow('r1', 4),
+    ]);
+    const { client } = makeClient();
+    const harness = await mount(client);
+    harness.queued.add('r1');
+
+    await open(harness, 'r1');
+
+    expect(harness.state().streaming).toBe(false);
+    expect(harness.drain).toHaveBeenCalledWith('r1');
   });
 
   it('shows a turn this window did NOT send as working the moment it starts', async () => {
