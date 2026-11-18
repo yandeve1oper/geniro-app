@@ -652,6 +652,12 @@ export interface AgentTask {
  */
 export type AgentEvent = AgentEventOrigin & AgentEventBody;
 
+/** An event carrying what the agent is saying or thinking right now. */
+export type LiveWordsEvent = Extract<
+  AgentEvent,
+  { type: 'text_delta' | 'thinking_progress' | 'reasoning_delta' }
+>;
+
 /**
  * What the USER can do about a failed turn, when the failure has a known cure.
  *
@@ -870,9 +876,8 @@ type AgentEventBody =
        * put its scratch notes in the assistant's own bubble.
        *
        * It exists because {@link AgentEvent} `thinking_progress` cannot carry
-       * them. That event answers the same question for a CLI whose thinking is
-       * REDACTED (headless claude), where a running token total is all there
-       * is — so a CLI that does disclose the text had no channel at all, and
+       * them. That event answers the same question with a running token total
+       * — so a CLI that does disclose the text had no channel at all, and
        * its reasoning reached the transcript only when the block closed. On
        * cursor that is measured at up to several minutes of a screen showing
        * nothing but `Working…` while thought chunks were arriving the whole
@@ -936,12 +941,11 @@ type AgentEventBody =
       /**
        * The model is REASONING, with the tokens it has spent so far.
        *
-       * For a CLI that REDACTS its thinking: headless claude ships the block
-       * with an encrypted `signature` and an empty body (probe-verified —
-       * `--include-partial-messages` does not reveal it), so a running total is
-       * the only honest signal that the agent is working during an otherwise
-       * silent stretch. A CLI that discloses the words sends `reasoning_delta`
-       * instead. EPHEMERAL, exactly like {@link AgentEvent} `text_delta`: never
+       * Headless claude sends it whether or not the turn asked for the words
+       * (`reasoning_delta`): without `--thinking-display summarized` the block
+       * ships with an encrypted `signature` and an empty body, so a running
+       * total is the only signal that the agent is working during an otherwise
+       * silent stretch. EPHEMERAL, exactly like {@link AgentEvent} `text_delta`: never
        * persisted, never replayed.
        */
       type: 'thinking_progress';
@@ -3533,6 +3537,12 @@ export interface AgentTurnInput {
    */
   streamPartials?: boolean;
   /**
+   * Ask the CLI for the words of its reasoning, not only how long it reasons.
+   * Set from {@link LiveStreamSupport.reasoning}; a CLI that discloses them
+   * unasked ignores it.
+   */
+  streamReasoning?: boolean;
+  /**
    * This turn may stop and ASK THE USER a question.
    *
    * Adapter-agnostic on purpose: the caller states the intent, and each CLI
@@ -4338,6 +4348,19 @@ export interface AccountSpendQuery {
  */
 export type AgentOptionSpec = Readonly<z.infer<typeof AgentOptionSpecSchema>>;
 
+/** What the INSTALLED binary can put on a live stream — see `AdapterConfig.liveStream`. */
+export interface LiveStreamSupport {
+  /** Partial assistant text and tool-call framing: a turn may set `streamPartials`. */
+  readonly partials: boolean;
+  /** The words of its reasoning: a turn may set `streamReasoning`. */
+  readonly reasoning: boolean;
+}
+
+export const NO_LIVE_STREAM: LiveStreamSupport = {
+  partials: false,
+  reasoning: false,
+};
+
 /**
  * Everything about ONE CLI that is STATIC — true of the binary before any turn
  * runs, and knowable without asking it anything.
@@ -4827,7 +4850,7 @@ export interface AdapterConfig {
   /**
    * How to establish whether the INSTALLED binary can stream partial assistant
    * text. Null when the CLI has no such mode at all, which answers
-   * `supportsLiveStream` false without spawning anything.
+   * `liveStreamSupport` {@link NO_LIVE_STREAM} without spawning anything.
    */
   readonly liveStream: {
     /** Utility argv whose stdout is searched — `--help` is the cheapest honest source. */
@@ -4839,6 +4862,27 @@ export interface AdapterConfig {
      * makes the two reads incapable of drifting apart.
      */
     readonly flag: string;
+    /**
+     * How a turn asks the CLI to put the words of its reasoning on that stream.
+     * Null for a CLI that streams them unasked or not at all.
+     */
+    readonly reasoning: {
+      /** The argv pushed when a turn asks for `streamReasoning`. */
+      readonly args: readonly string[];
+      /**
+       * Utility argv the binary refuses while parsing its arguments, before
+       * any hook or request runs.
+       */
+      readonly probeArgs: readonly string[];
+      /** Matches that refusal, both streams read, when the binary takes `args`. */
+      readonly accepted: RegExp;
+      /**
+       * The probe's deadline: a binary that took the probe's value would wait
+       * on its open stdin rather than refuse, and this keeps that from holding
+       * a first turn.
+       */
+      readonly probeTimeoutMs: number;
+    } | null;
   } | null;
 
   // ── Commands the CLI reports about ITSELF ───────────────────────────────

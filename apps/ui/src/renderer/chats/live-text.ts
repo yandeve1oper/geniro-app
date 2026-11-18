@@ -70,9 +70,9 @@ export interface LiveTextEvent {
    * What the agent is thinking, as it thinks it — the WHOLE tail of the current
    * stretch — or null when there is nothing to show.
    *
-   * The alternative to {@link LiveTextEvent.thinkingTokens} rather than its
-   * companion, and which one arrives is a property of the CLI: claude redacts
-   * its thinking and sends a token count, cursor streams the words. So null
+   * Which of this and {@link LiveTextEvent.thinkingTokens} arrives is a
+   * property of the CLI: cursor and codex stream the words, claude sends a
+   * token count and, where its binary can summarize, the words too. So null
    * here means "no text", never "not thinking".
    */
   thinkingText: string | null;
@@ -238,7 +238,7 @@ export function parseLiveText(data: unknown): LiveTextEvent | null {
     // `thinkingStretch`'s job, not this field's.
     thinkingTokens: nonNegativeNumber(record.thinkingTokens),
     // An EMPTY string reads as null on purpose: it is what a stretch with
-    // nothing said yet and a CLI that redacts its thinking both amount to, and
+    // nothing said yet and a CLI that withholds its thinking both amount to, and
     // treating it as text would draw an empty reasoning bubble for both.
     thinkingText:
       typeof record.thinkingText === 'string' && record.thinkingText !== ''

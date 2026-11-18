@@ -1685,9 +1685,36 @@ describe('mapClaudeStreamEvent', () => {
     ).toEqual([]);
   });
 
-  it('ignores a thinking increment — headless claude redacts the text', () => {
-    // Captured verbatim: the body is empty and only a token estimate rides
-    // along, so there is nothing to stream.
+  it('streams the words of a thinking increment as reasoning', () => {
+    expect(
+      mapClaudeStreamEvent({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta', thinking: 'I need to check' },
+        },
+      }),
+    ).toEqual([{ type: 'reasoning_delta', text: 'I need to check' }]);
+  });
+
+  it("says nothing about a DELEGATE's thinking", () => {
+    expect(
+      mapClaudeStreamEvent({
+        type: 'stream_event',
+        parent_tool_use_id: 'toolu_parent',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta', thinking: 'the delegate thinks' },
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('ignores a thinking increment whose text the CLI withheld', () => {
+    // Captured verbatim from a turn without `--thinking-display summarized`:
+    // the body is empty and only a token estimate rides along.
     expect(
       mapClaudeStreamEvent({
         type: 'stream_event',

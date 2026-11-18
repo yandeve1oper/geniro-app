@@ -5065,10 +5065,9 @@ export function withLiveText(
       continue;
     }
     // Words render as the assistant message they are about to become; a
-    // reasoning stretch rides the `reasoning` kind, carrying whichever of the
-    // two things its CLI gives — the thinking TEXT where it discloses it, and
-    // otherwise a running token count, which is all a CLI that redacts the
-    // block (headless claude) can offer.
+    // reasoning stretch rides the `reasoning` kind, carrying whatever its CLI
+    // gives — the thinking TEXT where it discloses it, a running token count,
+    // or both.
     //
     // The stretch id is IN the row's identity, which is what makes each wait
     // its own row: React remounts on the new key, so the clock starts at zero

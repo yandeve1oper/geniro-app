@@ -147,9 +147,9 @@ export function formatElapsed(ms: number): string {
  * component with a clock starting at zero.
  *
  * TWO SHAPES, because the CLIs genuinely differ and neither reading can stand
- * in for the other. Headless claude REDACTS the block, so a running token total
- * is all there is and the row is the one-line note it has always been. Cursor
- * streams the words, and showing them is the whole point: the row is then the
+ * in for the other. Where the CLI sends only a running token total (claude
+ * until its first summary chunk lands), the row is a one-line note. Where it
+ * sends the words, showing them is the whole point: the row is then the
  * same muted italic bubble the durable `reasoning` item becomes, so the text a
  * user watches appear and the text that lands are one thing rendered one way.
  *

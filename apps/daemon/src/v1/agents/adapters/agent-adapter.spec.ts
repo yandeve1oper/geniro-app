@@ -949,7 +949,7 @@ describe('AgentAdapter.listReportedCommands', () => {
   });
 });
 
-describe('AgentAdapter.supportsLiveStream', () => {
+describe('AgentAdapter.liveStreamSupport', () => {
   it('answers false without spawning when the CLI has no such mode', async () => {
     // cursor-agent's `liveStream: null` is the declared fact; the base must
     // honour it by never reaching for the binary at all.
@@ -969,7 +969,10 @@ describe('AgentAdapter.supportsLiveStream', () => {
       execFileFn,
     });
 
-    await expect(adapter.supportsLiveStream()).resolves.toBe(false);
+    await expect(adapter.liveStreamSupport()).resolves.toEqual({
+      partials: false,
+      reasoning: false,
+    });
     expect(spawned).toBe(0);
   });
 });
@@ -2598,34 +2601,45 @@ describe('AgentAdapter.runCommand spawn options', () => {
       { cwd: '/tmp' },
       { onSpawn: (_child, spawnInfo) => seen.push(spawnInfo) },
     );
-    await adapter.supportsLiveStream({
+    await adapter.liveStreamSupport({
       onSpawn: (_child, spawnInfo) => seen.push(spawnInfo),
     });
 
-    expect(seen).toEqual([{ processGroup: true }, { processGroup: false }]);
+    // The live-stream probe asks twice — `--help`, then the thinking-display
+    // refusal — both on the plain path.
+    expect(seen).toEqual([
+      { processGroup: true },
+      { processGroup: false },
+      { processGroup: false },
+    ]);
   });
 
   it('leaves an ordinary utility command on execFile, undetached', async () => {
     // The default path is unchanged — every pre-existing caller (--version,
     // --help probes) must keep spawning exactly as it did, through execFile
     // with node's own deadline.
-    let opts: Record<string, unknown> = {};
+    const optsByCommand = new Map<string, Record<string, unknown>>();
     const execFileFn = ((
       _cmd: string,
-      _args: readonly string[],
+      args: readonly string[],
       options: Record<string, unknown>,
       cb: (err: Error | null, out: string) => void,
     ) => {
-      opts = options;
+      optsByCommand.set(args.join(' '), options);
       cb(null, '');
       return { pid: 999, kill: () => true } as unknown as ChildProcess;
     }) as unknown as typeof execFile;
 
-    await new ClaudeAdapter({ execFileFn }).supportsLiveStream();
+    await new ClaudeAdapter({ execFileFn }).liveStreamSupport();
 
+    const opts = optsByCommand.get('--help') ?? {};
     expect(opts.detached).toBeUndefined();
     expect(opts.timeout).toBe(10_000);
     expect(opts.cwd).toBeUndefined();
+    // The reasoning probe answers at argument parsing, so it gets a shorter bound.
+    expect(
+      optsByCommand.get('-p --thinking-display geniro-probe')?.timeout,
+    ).toBe(3_000);
   });
 });
 

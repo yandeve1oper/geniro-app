@@ -21,15 +21,17 @@ import {
   type InterruptCause,
   interruptCauseClause,
 } from '../../../utils/stop-cause';
-import type {
-  AgentEvent,
-  AgentMcpServer,
-  AgentTurnHandle,
-  AgentTurnInput,
-  ApprovalResolution,
-  InstalledApprovalSupport,
-  SessionCloseCause,
-  TurnImage,
+import {
+  type AgentEvent,
+  type AgentMcpServer,
+  type AgentSession,
+  type AgentTurnHandle,
+  type AgentTurnInput,
+  type ApprovalResolution,
+  type InstalledApprovalSupport,
+  NO_LIVE_STREAM,
+  type SessionCloseCause,
+  type TurnImage,
 } from '../../agents/adapters/adapter.types';
 import type { AgentAdapter } from '../../agents/adapters/agent-adapter';
 import {
@@ -168,6 +170,7 @@ import {
 } from '../../agents/utils/host-teams';
 import { threadCardFields } from '../../agents/utils/host-thread-message';
 import { asRecord, parseJsonColumn } from '../../agents/utils/json-util';
+import { isLiveWordsEvent } from '../../agents/utils/live-words';
 import { sanitizeModelParameters } from '../../agents/utils/model-parameters';
 import { offersMonitorTools } from '../../agents/utils/monitor-offer';
 import { wakesOnMonitorProgress } from '../../agents/utils/monitor-text';
@@ -368,6 +371,14 @@ const MAX_CALL_WAKES = 10;
  * callee's monitors are stopped and the call settles on the answer it has.
  */
 const MAX_MONITOR_WAKES = 50;
+
+/**
+ * How long a member's live words wait before asking for its badge again after
+ * an ask found nothing to take. Words arrive many times a second, each ask
+ * reads node state, and a member busy in another conversation declines until
+ * that turn ends.
+ */
+const OFF_TURN_BADGE_REASK_MS = 1_000;
 
 /** How a team conversation took a monitor's output. */
 export type MonitorWake = 'woken' | 'busy' | 'refused';
@@ -5302,11 +5313,12 @@ export class TeamExecutorService
       // (an older claude rejects the flag on argv). Without it a member never
       // streams the `tool_compose` frames the card loader is drawn from, so a
       // team agent writing an artifact showed nothing until the card landed.
-      const streamPartials = await adapter
-        .supportsLiveStream()
-        .catch(() => false);
+      const liveStream = await adapter
+        .liveStreamSupport()
+        .catch(() => NO_LIVE_STREAM);
       const input: AgentTurnInput = {
-        ...(streamPartials ? { streamPartials: true } : {}),
+        ...(liveStream.partials ? { streamPartials: true } : {}),
+        ...(liveStream.reasoning ? { streamReasoning: true } : {}),
         prompt: withCarriedContext(
           carried,
           [
@@ -5659,6 +5671,16 @@ export class TeamExecutorService
             );
             return;
           }
+          // The member's words and reasoning as they are written, each turn
+          // and call under its own key — the team twin of `ChatService`'s
+          // arms. Ephemeral: the durable row retires the tail below, and a
+          // delegate's stream never reaches the member's tail.
+          if (isLiveWordsEvent(event)) {
+            if (event.parentToolUseId === undefined) {
+              this.partials.feed(runId, ownerKey, node.id, event);
+            }
+            return;
+          }
           if (event.type === 'tool_compose') {
             // The model is serializing a tool call — the team twin of
             // `ChatService`'s site, and ephemeral like it: the live plane's
@@ -6008,8 +6030,11 @@ export class TeamExecutorService
           // Anything durable ends a silent reasoning stretch — the tool call
           // the model went quiet to prepare carries no text delta to close it
           // (see `PartialStreamService.endThinking`). Kept in step with the
-          // chat path, which does the same at its own persist seam.
-          this.partials.endThinking(runId, ownerKey, node.id);
+          // chat path, which does the same at its own persist seam — and, as
+          // there, never for a delegate's row: the member is still reasoning.
+          if (event.parentToolUseId === undefined) {
+            this.partials.endThinking(runId, ownerKey, node.id);
+          }
           this.backgroundWork.record(runId, event, node.id);
           const mapped = mapEventToItem(event);
           // A compaction the agent finished: stamped onto its summary, or
@@ -6051,6 +6076,14 @@ export class TeamExecutorService
                     }
                   : {}),
               });
+              // Only the member's own message: a delegate's is the durable copy
+              // of words that were never on this tail.
+              if (
+                mapped.kind === 'message' &&
+                event.parentToolUseId === undefined
+              ) {
+                this.partials.retire(runId, ownerKey, node.id);
+              }
               if (callContext) {
                 // A tool call in flight holds the watchdog off until it
                 // answers: the callee is waiting on its own work, however long
@@ -6214,7 +6247,26 @@ export class TeamExecutorService
       // The main-thread tool calls of a stretch the CLI runs by itself, added
       // to the member's totals with its ending, as a turn of ours adds its own.
       let offTurnToolCalls = 0;
+      /**
+       * The process this turn runs in, set once `startTurn` returns. A process
+       * the registry has since replaced may still flush stdout through this
+       * sink; its words must not land on the tail of the conversation's live
+       * process, which writes under the same key.
+       */
+      let turnSession: AgentSession | null = null;
+      /** When a live event of this stretch last asked for the member's badge. */
+      let offTurnBadgeAskedAt = 0;
       const onOffTurnEvent = (event: AgentEvent): void => {
+        // Read as the event ARRIVES: by the time the write chain reaches it,
+        // the process that sent it may have closed, and its own last message
+        // must still take its words down.
+        const liveProcess = this.sessions.peek(sessionKey);
+        const ownsLivePlane =
+          turnSession !== null && liveProcess === turnSession;
+        // No process writes under this key any more, so a message the exiting
+        // one still delivers takes its own words down before its closer would
+        // keep them as a partial row.
+        const mayRetire = ownsLivePlane || liveProcess === null;
         if (
           event.type === 'shell_info' &&
           event.ending !== undefined &&
@@ -6252,12 +6304,117 @@ export class TeamExecutorService
           // A stretch of late calls has no terminal; this event, which maps to
           // no row, is what ends it.
           if (endsOffTurnStretch(event)) {
-            await restoreOffTurnNodeBadge(sessionKey);
+            if (ownsLivePlane) {
+              offTurnBadgeAskedAt = 0;
+              await restoreOffTurnNodeBadge(sessionKey);
+            }
+            return;
+          }
+          const callId = callContext ? callContext.callId : null;
+          // A stretch's spend counts from nothing, as a turn's does.
+          if (event.type === 'off_turn_started') {
+            if (ownsLivePlane) {
+              this.partials.startTurn(runId, ownerKey);
+            }
+            return;
+          }
+          const takeBadgeOnce = async (): Promise<void> => {
+            const now = Date.now();
+            if (now - offTurnBadgeAskedAt >= OFF_TURN_BADGE_REASK_MS) {
+              offTurnBadgeAskedAt = now;
+              await takeOffTurnNodeBadge(sessionKey, node.id, callId);
+            }
+          };
+          if (isLiveWordsEvent(event)) {
+            if (event.parentToolUseId === undefined && ownsLivePlane) {
+              await takeBadgeOnce();
+              this.partials.feed(runId, ownerKey, node.id, event);
+            }
+            return;
+          }
+          if (event.type === 'tool_compose') {
+            if (ownsLivePlane) {
+              await takeBadgeOnce();
+              this.partials.composing(runId, ownerKey, node.id, event);
+            }
+            return;
+          }
+          // The member's own readings of a stretch it runs by itself, as a
+          // chat's between-turn arms publish them.
+          if (event.type === 'delegate_progress') {
+            // A final reading also files the delegate's stored figures, so it
+            // is kept whichever process delivers it.
+            if (ownsLivePlane || event.final) {
+              this.partials.delegate(runId, ownerKey, node.id, event);
+            }
+            return;
+          }
+          if (event.type === 'usage_progress') {
+            if (ownsLivePlane) {
+              this.partials.spend(runId, ownerKey, node.id, event);
+            }
+            return;
+          }
+          if (event.type === 'cost_progress') {
+            if (ownsLivePlane) {
+              this.partials.cost(
+                runId,
+                ownerKey,
+                node.id,
+                event.costUsd,
+                event.estimatedCostUsd ?? null,
+              );
+            }
+            return;
+          }
+          if (event.type === 'context_progress') {
+            if (!ownsLivePlane) {
+              return;
+            }
+            const ownWindow =
+              event.contextWindowTokens !== undefined &&
+              event.contextWindowTokens !== null &&
+              this.partials.rememberWindow(
+                runId,
+                ownerKey,
+                event.contextWindowTokens,
+                event.contextModel ?? null,
+                node.contextWindow ?? null,
+              );
+            this.partials.context(
+              runId,
+              ownerKey,
+              node.id,
+              event.contextTokens,
+            );
+            // The level a client with no live plane reads, filed where the
+            // in-turn arm files it.
+            const reading = {
+              contextTokens: event.contextTokens,
+              contextWindowTokens:
+                (ownWindow ? event.contextWindowTokens : null) ??
+                this.partials.windowFor(runId, ownerKey),
+            };
+            if (!separateCallState) {
+              await this.nodeStateDao
+                .rememberContext(runId, node.id, reading, em)
+                .catch(() => {});
+            }
+            if (callContext) {
+              await this.callContextDao
+                .rememberContext(
+                  runId,
+                  callContext.callId,
+                  node.id,
+                  reading,
+                  em,
+                )
+                .catch(() => {});
+            }
             return;
           }
           const mapped = mapEventToItem(event);
           const settles = terminalStatus(event) !== null;
-          const callId = callContext ? callContext.callId : null;
           // AHEAD of the rows this event produces, so the live row stands above
           // the work rather than appearing under the last of it.
           //
@@ -6280,6 +6437,7 @@ export class TeamExecutorService
             event.parentToolUseId !== undefined &&
             this.backgroundWork.isDelegateOut(runId, event.parentToolUseId);
           if (
+            ownsLivePlane &&
             mapped !== null &&
             !settles &&
             !bracketedDelegateRow &&
@@ -6297,12 +6455,22 @@ export class TeamExecutorService
           if (!mapped) {
             return;
           }
+          if (ownsLivePlane && event.parentToolUseId === undefined) {
+            this.partials.endThinking(runId, ownerKey, node.id);
+          }
           await persistItem(node.id, mapped.kind, mapped.role, {
             ...(mapped.payload as Record<string, unknown>),
             nodeId: node.id,
             ...(callId ? { callId } : {}),
             ...usageOwner(mapped.kind),
           });
+          if (
+            mayRetire &&
+            mapped.kind === 'message' &&
+            event.parentToolUseId === undefined
+          ) {
+            this.partials.retire(runId, ownerKey, node.id);
+          }
           // A turn the callee's kept process ran on its own after the call
           // settled refreshed that conversation's cache: the caller's listing
           // and its cold-resume refusal must see it, as the nodes route does.
@@ -6330,7 +6498,8 @@ export class TeamExecutorService
           }
           // AFTER the terminal row, which is the continuation ENDING: the badge
           // goes back to whatever this stretch took it from.
-          if (settles) {
+          if (settles && ownsLivePlane) {
+            offTurnBadgeAskedAt = 0;
             await restoreOffTurnNodeBadge(sessionKey);
           }
         });
@@ -6437,6 +6606,7 @@ export class TeamExecutorService
           onBetweenTurnApproval,
           onOffTurnEvent,
         );
+        turnSession = this.sessions.peek(sessionKey);
       } catch (err) {
         disposeQuestions?.();
         restoreCarried();
@@ -6489,6 +6659,16 @@ export class TeamExecutorService
           }
           for (const scope of scopes) {
             await closeStrandedWork(scope, false, cause === 'user-stop');
+            const callId =
+              scope !== null && 'callId' in scope ? scope.callId : null;
+            const tail = this.partials.takeTail(
+              runId,
+              partialOwnerKey(node.id, callId),
+              node.id,
+            );
+            if (tail !== null) {
+              await persistPartialTail(tail, callId);
+            }
           }
           // The process that owed this stretch's terminal event is gone, so
           // nothing else could ever end it — the second of the two endings
@@ -6498,11 +6678,40 @@ export class TeamExecutorService
         });
       });
 
+      let tailTaken = false;
+      /** Words the user watched being written that no message covers, kept as one partial message. */
+      const persistPartialTail = async (
+        tail: string,
+        callId: string | null,
+      ): Promise<void> => {
+        if (this.deleting.has(runId)) {
+          return;
+        }
+        await persistItem(node.id, 'message', 'assistant', {
+          text: tail,
+          partial: true,
+          nodeId: node.id,
+          ...(callId === null ? {} : { callId }),
+        });
+      };
       const finish = (): NodeTurnResult => {
         // What this turn spent that no row carries is either recorded by now
         // or will be by a line this key no longer answers for — so the live
         // figure comes down with the turn, never to be added twice.
         this.partials.retireCost(runId, ownerKey, node.id);
+        // A turn that died mid-block keeps its words, as a chat's finalizer
+        // does. Taken at the first `finish` only: a later one runs after the
+        // kept process may already be writing a stretch of its own under the
+        // same key.
+        const tail = tailTaken
+          ? null
+          : this.partials.takeTail(runId, ownerKey, node.id);
+        tailTaken = true;
+        if (tail !== null) {
+          enqueue(() =>
+            persistPartialTail(tail, callContext ? callContext.callId : null),
+          );
+        }
         // A turn that failed, was stopped, or exited with no terminal at all
         // still called its tools; only `turn_complete` adds them earlier. No
         // usage came with them, so the time stays unmeasured.

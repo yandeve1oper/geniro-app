@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import type { AgentKind } from '../../runs/runs.types';
-import type { DelegateFigures } from '../adapters/adapter.types';
+import type {
+  DelegateFigures,
+  LiveWordsEvent,
+} from '../adapters/adapter.types';
 import { type RunDeltaEvent, SINGLE_AGENT_NODE } from '../chat.types';
 import { AgentEventBus } from './agent-events.bus';
 import { contextWindowKey, ContextWindowStore } from './context-window.store';
@@ -46,10 +49,10 @@ interface LiveState {
   /**
    * The CURRENT stretch's reasoning text so far, or '' when there is none.
    *
-   * Only a CLI that DISCLOSES its thinking ever fills this — claude redacts
-   * the block entirely and reports a token count instead, which is why the two
-   * are separate fields rather than one. Either one being present means a
-   * stretch is open ({@link PartialStreamService.isReasoning}).
+   * Only a CLI that DISCLOSES its thinking ever fills this; a token count is
+   * a separate field because claude reports one with or without the words.
+   * Either one being present means a stretch is open
+   * ({@link PartialStreamService.isReasoning}).
    */
   thinkingText: string;
   /** When the CURRENT stretch began (epoch ms), or null when not reasoning. */
@@ -192,6 +195,26 @@ export class PartialStreamService {
     /** The durable twin of every delegate's figures — `Run.delegateSpend`. */
     private readonly delegateSpend: DelegateSpendStore,
   ) {}
+
+  /** Put one words or reasoning event on its owner's live state. */
+  feed(
+    runId: string,
+    ownerKey: string,
+    memberId: string | null,
+    event: LiveWordsEvent,
+  ): void {
+    switch (event.type) {
+      case 'text_delta':
+        this.append(runId, ownerKey, memberId, event.text);
+        return;
+      case 'thinking_progress':
+        this.thinking(runId, ownerKey, memberId, event.tokens);
+        return;
+      case 'reasoning_delta':
+        this.reasoning(runId, ownerKey, memberId, event.text);
+        return;
+    }
+  }
 
   /** Extend an owner's tail and publish it. */
   append(
@@ -380,9 +403,9 @@ export class PartialStreamService {
   /**
    * Whether a reasoning stretch is open — EITHER channel counts.
    *
-   * One predicate rather than a check per call site: a CLI fills one of the two
-   * and never both, so a site that asked about only the token total would treat
-   * a cursor stretch as closed and open a second one on its next chunk.
+   * One predicate rather than a check per call site: cursor fills only the
+   * words, so a site that asked about only the token total would treat a
+   * cursor stretch as closed and open a second one on its next chunk.
    */
   private isReasoning(state: LiveState): boolean {
     return state.thinkingCurrent !== null || state.thinkingText !== '';
@@ -838,7 +861,7 @@ export class PartialStreamService {
       ownerKey,
       text: state.text,
       thinkingTokens: state.thinkingCurrent,
-      // Null rather than '' when there is none, so "this CLI redacts its
+      // Null rather than '' when there is none, so "this CLI withholds its
       // thinking" and "this stretch has not produced a word yet" are the same
       // reading on the wire — neither has text to show.
       thinkingText: state.thinkingText === '' ? null : state.thinkingText,

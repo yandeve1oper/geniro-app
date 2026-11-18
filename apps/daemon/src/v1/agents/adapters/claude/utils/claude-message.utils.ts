@@ -1373,10 +1373,9 @@ function mapClaudeLine(
  * - `input_json_delta`'s TEXT is still dropped, which is the point of sending a
  *   byte count instead: a large Write's whole file content would otherwise
  *   cross the wire twice for no benefit.
- * - `thinking_delta` carries `thinking: ""` — claude redacts reasoning text in
- *   headless mode (probe-verified: the block ships an encrypted `signature`
- *   and an empty body), so there is nothing to show. Reasoning-delta streaming
- *   is also explicitly out of scope for v1.
+ * - `thinking_delta` → `reasoning_delta` when it carries text. Headless claude
+ *   sends an empty body unless the turn asked for `--thinking-display
+ *   summarized` (`CLAUDE_THINKING_DISPLAY_ARGS`), so an empty one is dropped.
  * - `message_start` / `message_delta` / `message_stop` are framing the durable
  *   events already express.
  *
@@ -1433,6 +1432,10 @@ export function mapClaudeStreamEvent(
       ? [{ type: 'tool_compose', tool: null, bytes: chunk.length, done: false }]
       : [];
   }
+  if (deltaType === 'thinking_delta') {
+    const thinking = delta ? asString(delta.thinking) : null;
+    return thinking ? [{ type: 'reasoning_delta', text: thinking }] : [];
+  }
   if (deltaType !== 'text_delta') {
     return [];
   }
@@ -1446,8 +1449,8 @@ export function mapClaudeStreamEvent(
  *
  * The CLI emits this several times per reasoning stretch (observed at 6.6s /
  * 7.6s / 10.9s / 11.3s of one turn) with a running `estimated_tokens` and a
- * per-event delta. It needs no argv flag. This is the ONLY thinking signal a
- * headless consumer gets — the text itself is redacted.
+ * per-event delta. It needs no argv flag, and it is the only thinking signal
+ * of a turn that did not ask for `--thinking-display summarized`.
  */
 export function mapClaudeThinkingTokens(
   root: Record<string, unknown>,

@@ -7231,8 +7231,8 @@ export interface RunDeltaEvent {
    *
    * Rides the SAME event as the text tail rather than a second channel: both
    * answer "what is this agent doing right now", both are ephemeral, and one
-   * mechanism cannot get out of sync with itself. Null for a CLI that
-   * discloses the words instead — see {@link RunDeltaEvent.thinkingText}.
+   * mechanism cannot get out of sync with itself. Null for a CLI that reports
+   * no count — see {@link RunDeltaEvent.thinkingText} for the words.
    *
    * PER STRETCH, not cumulative over the turn: a turn that thinks, runs tools,
    * then thinks again is two separate waits, and each is shown as its own row
@@ -7248,11 +7248,11 @@ export interface RunDeltaEvent {
    * {@link RunDeltaEvent.text}: a client that missed an event is correct again
    * on the next one.
    *
-   * The two reasoning channels are alternatives, not a pair, and which one a
-   * turn uses is a property of the CLI: claude REDACTS its thinking and reports
-   * `thinkingTokens`, cursor streams the words and fills this. Null therefore
-   * means "no text", never "not thinking" — `thinkingStretch` is what answers
-   * that, for both.
+   * Which of the two reasoning channels a turn fills is a property of the CLI:
+   * cursor and codex stream the words, claude reports `thinkingTokens` and
+   * streams its summarized words beside them only when its binary takes
+   * `--thinking-display`. Null therefore means "no text", never "not
+   * thinking" — `thinkingStretch` is what answers that, for every CLI.
    */
   thinkingText: string | null;
   /**

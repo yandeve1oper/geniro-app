@@ -99,6 +99,7 @@ import type {
   HandoffInput,
   HandoffResult,
   InstalledApprovalSupport,
+  LiveStreamSupport,
   NativeMemoryReading,
   NO_PLAN_LIMITS,
   RecoveredSubagentOutcome,
@@ -109,6 +110,7 @@ import type {
   TurnDriver,
   TurnInstructionInput,
 } from './adapter.types';
+import { NO_LIVE_STREAM } from './adapter.types';
 import {
   discoverPluginDirs,
   scanCommandFiles,
@@ -1766,17 +1768,18 @@ export abstract class AgentAdapter {
   }
 
   /** Memoized: the binary is asked once per adapter instance, not once per turn. */
-  private liveStreamSupport: Promise<boolean> | null = null;
+  private liveStreamProbe: Promise<LiveStreamSupport> | null = null;
 
   /**
-   * Whether the INSTALLED binary can stream partial assistant text, so a turn
-   * may be started with `streamPartials`.
+   * What the INSTALLED binary can stream: partial assistant text, so a turn
+   * may be started with `streamPartials`, and the words of its reasoning, so
+   * it may be started with `streamReasoning`.
    *
    * Asked rather than assumed because the answer is per-binary, not per-CLI: a
    * flag the current claude accepts is rejected on argv by an older one, which
    * would fail every turn instead of merely not streaming. A CLI with no such
-   * mode (`config.liveStream: null`) answers false forever, without spawning
-   * anything.
+   * mode (`config.liveStream: null`) answers {@link NO_LIVE_STREAM} forever,
+   * without spawning anything.
    *
    * `config.liveStream.probeArgs` is `--help`-shaped by design: the cheapest
    * honest source, since it is the same binary that would reject the flag on
@@ -1784,16 +1787,35 @@ export abstract class AgentAdapter {
    * Never throws — absent output (a missing binary, a timeout) reads as "no",
    * which degrades to block streaming rather than failing turns.
    */
-  supportsLiveStream(options: AgentCommandOptions = {}): Promise<boolean> {
+  liveStreamSupport(
+    options: AgentCommandOptions = {},
+  ): Promise<LiveStreamSupport> {
     const liveStream = this.getConfig().liveStream;
     if (!liveStream) {
-      return Promise.resolve(false);
+      return Promise.resolve(NO_LIVE_STREAM);
     }
-    this.liveStreamSupport ??= this.runCommand(
-      [...liveStream.probeArgs],
-      options,
-    ).then((stdout) => (stdout ?? '').includes(liveStream.flag));
-    return this.liveStreamSupport;
+    const reasoning = liveStream.reasoning;
+    this.liveStreamProbe ??= Promise.all([
+      this.runCommand([...liveStream.probeArgs], options),
+      reasoning === null
+        ? Promise.resolve(null)
+        : this.runCommand([...reasoning.probeArgs], {
+            ...options,
+            captureDiagnosis: true,
+            timeoutMs: reasoning.probeTimeoutMs,
+          }),
+    ]).then(([help, refusal]) => {
+      const partials = (help ?? '').includes(liveStream.flag);
+      return {
+        partials,
+        // The words ride the partial stream, so they need it too.
+        reasoning:
+          partials &&
+          reasoning !== null &&
+          reasoning.accepted.test(refusal ?? ''),
+      };
+    });
+    return this.liveStreamProbe;
   }
 
   /**
@@ -2630,6 +2652,7 @@ export abstract class AgentAdapter {
       input.internalProbe === true,
       input.configDir ?? null,
       input.streamPartials === true,
+      input.streamReasoning === true,
       input.allowUserQuestions === true,
       input.trustWorkspace === true,
       // Read by `buildArgs`, so it is argv, so it belongs here — a turn that

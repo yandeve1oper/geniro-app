@@ -54,6 +54,36 @@ export const CLAUDE_BASE_ARGS: readonly string[] = [
 /** The argv flag that turns whole-block output into token-level deltas. */
 export const CLAUDE_PARTIAL_MESSAGES_FLAG = '--include-partial-messages';
 
+/**
+ * Asks for summarized thinking, which `-p` otherwise withholds: without it
+ * every `thinking_delta` and `thinking` block arrives with an empty body.
+ * Measured on 2.1.325: `--settings {"showThinkingSummaries":true}` has no
+ * effect in `-p`, while this flag sends each summary chunk as `thinking_delta`
+ * text and fills the block. The API bills the full thinking either way.
+ */
+export const CLAUDE_THINKING_DISPLAY_ARGS = [
+  '--thinking-display',
+  'summarized',
+] as const;
+
+/**
+ * Whether the binary takes {@link CLAUDE_THINKING_DISPLAY_ARGS}, asked without
+ * starting anything: `--help` hides the flag, so the probe passes a value no
+ * binary accepts and reads the refusal, which comes at argument parsing, before
+ * any hook or request. 2.1.325 answers `argument 'geniro-probe' is invalid.
+ * Allowed choices are summarized, omitted, highlights.`; a binary without the
+ * flag answers `error: unknown option '--thinking-display'`.
+ */
+export const CLAUDE_THINKING_DISPLAY_PROBE_ARGS = [
+  '-p',
+  '--thinking-display',
+  'geniro-probe',
+] as const;
+
+/** The refusal of a binary that takes {@link CLAUDE_THINKING_DISPLAY_ARGS}. */
+export const CLAUDE_THINKING_DISPLAY_ACCEPTED =
+  /Allowed choices are (?:[^\n]*, )?summarized[,.]/;
+
 export const CLAUDE_MODEL_FLAG = '--model';
 export const CLAUDE_EFFORT_FLAG = '--effort';
 export const CLAUDE_RESUME_FLAG = '--resume';

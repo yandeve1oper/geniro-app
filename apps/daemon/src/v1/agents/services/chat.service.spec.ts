@@ -889,7 +889,7 @@ function fakeAdapter(
 } {
   let onEvent: ((event: AgentEvent) => void) | null = null;
   const resolveCalls: { model: string | null; configDir: string | null }[] = [];
-  /** When set, the pre-spawn probe blocks on it — see supportsLiveStream. */
+  /** When set, the pre-spawn probe blocks on it — see liveStreamSupport. */
   let streamGate: Promise<void> | null = null;
   let resolveDone: (() => void) | null = null;
   const handles: {
@@ -1059,10 +1059,15 @@ function fakeAdapter(
       // Mirrors the real adapters: only claude can stream partial text.
       // A test seam for the claim→register window: the real adapter probes the
       // installed CLI here, so this is where a concurrent delete lands.
-      supportsLiveStream: () =>
-        streamGate === null
-          ? Promise.resolve(kind === 'claude')
-          : streamGate.then(() => kind === 'claude'),
+      liveStreamSupport: () => {
+        const support = {
+          partials: kind === 'claude',
+          reasoning: kind === 'claude',
+        };
+        return streamGate === null
+          ? Promise.resolve(support)
+          : streamGate.then(() => support);
+      },
       listEfforts: () => real.listEfforts(),
       resolveModel: (model: string | null, configDir: string | null) => {
         resolveCalls.push({ model, configDir });
@@ -9402,6 +9407,27 @@ describe('ChatService', () => {
     expect((await runDao.getById(run.id))?.status).toBe('completed');
   });
 
+  it("keeps a stopped process's late message from taking down the live session's words", async () => {
+    const { service, claude, partials } = setup();
+    const run = await service.createChat({ agentKind: 'claude', cwd: dir });
+    await service.sendMessage(run.id, 'go');
+    const old = claude.sessions[0]!;
+    await service.cancel(run.id);
+    claude.emit({ type: 'turn_cancelled' });
+    claude.finish();
+    await drain();
+    await service.sendMessage(run.id, 'continue');
+    claude.emit({ type: 'text_delta', text: 'new words' });
+    await drain();
+
+    old.onBetweenTurnEvent?.({ type: 'text', text: 'an old message' });
+    await drain();
+
+    expect(partials.snapshot(run.id)[0]?.text).toBe('new words');
+    claude.finish();
+    await drain();
+  });
+
   it('cancels through the real Claude session and process termination path', async () => {
     const { service, claude, runDao, itemDao } = setup();
     const { child, spawn } = fakeSpawn();
@@ -10996,6 +11022,77 @@ describe('ChatService — approval modes (parity M1)', () => {
     await drain();
   });
 
+  it('streams the words of a thinking stretch, and takes them down when a row lands', async () => {
+    const { service, claude, deltas } = setup();
+    const run = await service.createChat({ agentKind: 'claude', cwd: dir });
+    await service.sendMessage(run.id, 'go');
+
+    claude.emit({ type: 'thinking_progress', tokens: 40 });
+    claude.emit({ type: 'reasoning_delta', text: 'Reading the brief' });
+    await drain();
+    expect(deltas.at(-1)).toMatchObject({
+      runId: run.id,
+      thinkingTokens: 40,
+      thinkingText: 'Reading the brief',
+    });
+
+    claude.emit({ type: 'tool_call', id: 't1', name: 'Bash', input: {} });
+    await drain();
+    expect(deltas.at(-1)?.thinkingText).toBeNull();
+    expect(deltas.at(-1)?.thinkingStretch).toBeNull();
+
+    claude.finish();
+    await drain();
+  });
+
+  it('streams the thinking of a stretch the CLI runs by itself, and a row it writes ends it', async () => {
+    const { service, claude, deltas } = setup();
+    const run = await service.createChat({
+      agentKind: 'claude',
+      cwd: process.cwd(),
+    });
+    await service.sendMessage(run.id, 'go');
+    await drain();
+    claude.emit({
+      type: 'turn_complete',
+      usage: null,
+      stopReason: null,
+      finalText: null,
+    });
+    claude.finish();
+    await drain();
+
+    claude.sessions[0]?.onBetweenTurnEvent?.({
+      type: 'reasoning_delta',
+      text: 'The build reported back',
+    });
+    await drain();
+    expect(deltas.at(-1)).toMatchObject({
+      runId: run.id,
+      thinkingText: 'The build reported back',
+    });
+
+    claude.sessions[0]?.onBetweenTurnEvent?.({
+      type: 'tool_call',
+      id: 'td',
+      name: 'Read',
+      input: {},
+      parentToolUseId: 'toolu_delegate',
+    });
+    await drain();
+    expect(deltas.at(-1)?.thinkingText).toBe('The build reported back');
+
+    claude.sessions[0]?.onBetweenTurnEvent?.({
+      type: 'tool_call',
+      id: 't2',
+      name: 'Bash',
+      input: {},
+    });
+    await drain();
+    expect(deltas.at(-1)?.thinkingText).toBeNull();
+    expect(deltas.at(-1)?.thinkingStretch).toBeNull();
+  });
+
   it('leaves the turn now running alone when a previous turn’s late work ends inside it', async () => {
     const { service, claude, deltas, itemDao } = setup();
     const run = await service.createChat({ agentKind: 'claude', cwd: dir });
@@ -12136,6 +12233,12 @@ describe('ChatService — approval modes (parity M1)', () => {
     // cursor-agent reports no partial-output mode, so its turn is unchanged.
     expect(
       (cursor.start.mock.calls[0]![0] as AgentTurnInput).streamPartials,
+    ).toBe(false);
+    expect(
+      (claude.start.mock.calls[0]![0] as AgentTurnInput).streamReasoning,
+    ).toBe(true);
+    expect(
+      (cursor.start.mock.calls[0]![0] as AgentTurnInput).streamReasoning,
     ).toBe(false);
   });
 

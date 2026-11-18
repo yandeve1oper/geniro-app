@@ -1092,6 +1092,28 @@ describe('ClaudeAdapter approval seam (ask mode)', () => {
     expect(on.captured.args).toContain('--include-partial-messages');
   });
 
+  it('asks for summarized thinking only when the turn wants its words', () => {
+    const off = fakeSpawn();
+    new ClaudeAdapter({ spawn: off.spawn }).start(
+      { prompt: 'p', cwd: '/proj', streamPartials: true },
+      () => {},
+    );
+    const on = fakeSpawn();
+    new ClaudeAdapter({ spawn: on.spawn }).start(
+      {
+        prompt: 'p',
+        cwd: '/proj',
+        streamPartials: true,
+        streamReasoning: true,
+      },
+      () => {},
+    );
+
+    expect(off.captured.args).not.toContain('--thinking-display');
+    const args = on.captured.args ?? [];
+    expect(args[args.indexOf('--thinking-display') + 1]).toBe('summarized');
+  });
+
   it('turns a stream_event into a live text increment, never a message', () => {
     const { spawn, child } = fakeSpawn();
     const events: AgentEvent[] = [];
@@ -2188,56 +2210,110 @@ describe('ClaudeAdapter — a delegate’s end on the live channel', () => {
 });
 
 describe('ClaudeAdapter — live (token-level) stream support', () => {
-  /** Answers the utility command with canned stdout, capturing its argv. */
-  function fakeHelp(stdout: string | null): {
+  /** Measured on 2.1.325, which takes the flag. */
+  const TAKES_THINKING_DISPLAY =
+    "error: option '--thinking-display <display>' argument 'geniro-probe' is invalid. Allowed choices are summarized, omitted, highlights.\n";
+  /** The commander refusal of a binary that has no such flag. */
+  const LACKS_THINKING_DISPLAY = "error: unknown option '--thinking-display'\n";
+
+  /**
+   * Answers `--help` with `help` on stdout and the thinking-display probe with
+   * `refusal` on stderr and a failing exit, as the binary does; null makes
+   * that command fail with nothing printed.
+   */
+  function fakeCli(
+    help: string | null,
+    refusal: string | null,
+  ): {
     execFileFn: typeof execFile;
-    captured: { args?: readonly string[]; calls: number };
+    calls: (readonly string[])[];
   } {
-    const captured: { args?: readonly string[]; calls: number } = { calls: 0 };
+    const calls: (readonly string[])[] = [];
     const execFileFn = ((
       _cmd: string,
       args: readonly string[],
       _opts: unknown,
-      cb: (err: Error | null, out: string) => void,
+      cb: (err: Error | null, out: string, errOut: string) => void,
     ) => {
-      captured.args = args;
-      captured.calls += 1;
-      cb(stdout === null ? new Error('spawn failed') : null, stdout ?? '');
+      calls.push(args);
+      if (args[0] === '--help') {
+        cb(help === null ? new Error('spawn failed') : null, help ?? '', '');
+      } else {
+        cb(new Error('exit 1'), '', refusal ?? '');
+      }
       return {} as ChildProcess;
     }) as unknown as typeof execFile;
-    return { execFileFn, captured };
+    return { execFileFn, calls };
   }
 
   it('reads support off the binary that would reject the flag', async () => {
     // `--help` is the cheapest honest source: same binary, no account, no turn.
-    const { execFileFn, captured } = fakeHelp(
+    const { execFileFn, calls } = fakeCli(
       '  --verbose\n  --include-partial-messages   Include partial message chunks\n',
+      LACKS_THINKING_DISPLAY,
     );
 
     await expect(
-      new ClaudeAdapter({ execFileFn }).supportsLiveStream(),
-    ).resolves.toBe(true);
-    expect(captured.args).toEqual(['--help']);
+      new ClaudeAdapter({ execFileFn }).liveStreamSupport(),
+    ).resolves.toEqual({ partials: true, reasoning: false });
+    expect(calls).toContainEqual(['--help']);
+  });
+
+  it('offers the words of its thinking where the binary names summarized among the values it takes', async () => {
+    // The flag is hidden from `--help`, so only the parse-time refusal of a
+    // value no binary accepts can tell; it starts no turn and runs no hook.
+    const { execFileFn, calls } = fakeCli(
+      '  --include-partial-messages   Include partial message chunks\n',
+      TAKES_THINKING_DISPLAY,
+    );
+
+    await expect(
+      new ClaudeAdapter({ execFileFn }).liveStreamSupport(),
+    ).resolves.toEqual({ partials: true, reasoning: true });
+    expect(calls).toContainEqual(['-p', '--thinking-display', 'geniro-probe']);
+  });
+
+  it('takes no near-miss value for the one it sends', async () => {
+    const { execFileFn } = fakeCli(
+      '  --include-partial-messages   Include partial message chunks\n',
+      "error: option '--thinking-display <display>' argument 'geniro-probe' is invalid. Allowed choices are summarized-v2, omitted.\n",
+    );
+
+    await expect(
+      new ClaudeAdapter({ execFileFn }).liveStreamSupport(),
+    ).resolves.toEqual({ partials: true, reasoning: false });
+  });
+
+  it('offers no thinking words without the partial stream that carries them', async () => {
+    const { execFileFn } = fakeCli('  --verbose\n', TAKES_THINKING_DISPLAY);
+
+    await expect(
+      new ClaudeAdapter({ execFileFn }).liveStreamSupport(),
+    ).resolves.toEqual({ partials: false, reasoning: false });
   });
 
   it('answers NO for an older CLI, so turns degrade to block streaming', async () => {
     // The whole point of asking: passing the flag to a CLI that does not know
     // it fails every turn on argv, which is far worse than not streaming.
-    const { execFileFn } = fakeHelp('  --verbose\n  --model\n');
+    const { execFileFn } = fakeCli(
+      '  --verbose\n  --model\n',
+      LACKS_THINKING_DISPLAY,
+    );
 
     await expect(
-      new ClaudeAdapter({ execFileFn }).supportsLiveStream(),
-    ).resolves.toBe(false);
+      new ClaudeAdapter({ execFileFn }).liveStreamSupport(),
+    ).resolves.toEqual({ partials: false, reasoning: false });
   });
 
   it('answers NO when the binary could not be asked at all, and asks once', async () => {
-    const { execFileFn, captured } = fakeHelp(null);
+    const { execFileFn, calls } = fakeCli(null, null);
     const adapter = new ClaudeAdapter({ execFileFn });
 
-    await expect(adapter.supportsLiveStream()).resolves.toBe(false);
-    // Memoized per adapter instance: a second turn must not re-spawn --help.
-    await expect(adapter.supportsLiveStream()).resolves.toBe(false);
-    expect(captured.calls).toBe(1);
+    const none = { partials: false, reasoning: false };
+    await expect(adapter.liveStreamSupport()).resolves.toEqual(none);
+    // Memoized per adapter instance: a second turn must not ask the binary again.
+    await expect(adapter.liveStreamSupport()).resolves.toEqual(none);
+    expect(calls).toHaveLength(2);
   });
 });
 

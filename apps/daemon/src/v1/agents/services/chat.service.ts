@@ -35,14 +35,15 @@ import {
   type ItemKind,
   type RunStatus,
 } from '../../runs/runs.types';
-import type {
-  AgentEvent,
-  AgentMcpServer,
-  AgentSession,
-  AgentUsage,
-  ApprovalOption,
-  SessionCloseCause,
-  TurnAutoCompact,
+import {
+  type AgentEvent,
+  type AgentMcpServer,
+  type AgentSession,
+  type AgentUsage,
+  type ApprovalOption,
+  NO_LIVE_STREAM,
+  type SessionCloseCause,
+  type TurnAutoCompact,
 } from '../adapters/adapter.types';
 import type { AgentAdapter } from '../adapters/agent-adapter';
 import {
@@ -198,6 +199,7 @@ import {
 import { threadCardFields } from '../utils/host-thread-message';
 import { itemToWire } from '../utils/item-wire';
 import { asArray, asRecord, asString } from '../utils/json-util';
+import { isLiveWordsEvent } from '../utils/live-words';
 import {
   readModelParameters,
   writeModelParameters,
@@ -4537,23 +4539,9 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
     // in-turn handler gives them. Without these the transcript grows rows with
     // no live row above them, which is the "it says completed while it works"
     // half of the report seen from the other side.
-    if (event.type === 'text_delta') {
+    if (isLiveWordsEvent(event)) {
       if (event.parentToolUseId === undefined) {
-        this.partials.append(runId, SINGLE_AGENT_NODE, null, event.text);
-        await this.restatusAfterOffTurnSignal(runId, event, session);
-      }
-      return;
-    }
-    if (event.type === 'thinking_progress') {
-      if (event.parentToolUseId === undefined) {
-        this.partials.thinking(runId, SINGLE_AGENT_NODE, null, event.tokens);
-        await this.restatusAfterOffTurnSignal(runId, event, session);
-      }
-      return;
-    }
-    if (event.type === 'reasoning_delta') {
-      if (event.parentToolUseId === undefined) {
-        this.partials.reasoning(runId, SINGLE_AGENT_NODE, null, event.text);
+        this.partials.feed(runId, SINGLE_AGENT_NODE, null, event);
         await this.restatusAfterOffTurnSignal(runId, event, session);
       }
       return;
@@ -4707,6 +4695,11 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
       if (!mapped) {
         return;
       }
+      // Anything durable ends a reasoning stretch, as at the in-turn seam.
+      const ownsLivePlane = this.ownsSession(runId, session);
+      if (ownsLivePlane && event.parentToolUseId === undefined) {
+        this.partials.endThinking(runId, SINGLE_AGENT_NODE, null);
+      }
       await this.persist(
         em,
         runId,
@@ -4718,7 +4711,11 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
       // Main thread only, exactly as in the in-turn path above: the tail holds
       // the main agent's words, so a delegate's durable message must not take
       // them away.
-      if (mapped.kind === 'message' && event.parentToolUseId === undefined) {
+      if (
+        ownsLivePlane &&
+        mapped.kind === 'message' &&
+        event.parentToolUseId === undefined
+      ) {
         this.partials.retire(runId, SINGLE_AGENT_NODE, null);
       }
       // The ROW is written whatever produced it — a transcript that hides work
@@ -6699,9 +6696,9 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
 
       // Asked of the adapter, never inferred from the agent kind: the answer
       // is per-INSTALLED-BINARY (an older claude rejects the flag on argv).
-      const streamPartials = await adapter
-        .supportsLiveStream()
-        .catch(() => false);
+      const liveStream = await adapter
+        .liveStreamSupport()
+        .catch(() => NO_LIVE_STREAM);
       if (!this.registry.canStart(runId)) {
         throw new ConflictException(
           'RUN_STOPPING',
@@ -7448,7 +7445,8 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
           // for a CLI whose own model has no way to ask. Null only where the
           // daemon has no bound port to publish.
           ...(mcpEndpoint === null ? {} : { mcpEndpoint }),
-          streamPartials,
+          streamPartials: liveStream.partials,
+          streamReasoning: liveStream.reasoning,
           images: attachments.map((attachment) => ({
             path: this.attachments.pathOf(runId, attachment.id),
             mediaType: attachment.mediaType,
@@ -7464,7 +7462,7 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
               await saveSessionId(event.sessionId);
               return;
             }
-            if (event.type === 'text_delta') {
+            if (isLiveWordsEvent(event)) {
               // EPHEMERAL: no seq, no row, no replay — just the live tail.
               //
               // MAIN THREAD ONLY. There is exactly ONE tail per run, so two
@@ -7472,44 +7470,10 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
               // character and the result is nobody's words. Skipping them loses
               // nothing durable: the completed `text` event still becomes a row,
               // marked as that sub-agent's. Only the live PREVIEW is reserved
-              // for the agent the user is addressing. Per-thread tails would
-              // need a renderer surface to show them in — a feature, not this.
-              if (event.parentToolUseId !== undefined) {
-                return;
+              // for the agent the user is addressing.
+              if (event.parentToolUseId === undefined) {
+                this.partials.feed(runId, SINGLE_AGENT_NODE, null, event);
               }
-              this.partials.append(runId, SINGLE_AGENT_NODE, null, event.text);
-              return;
-            }
-            if (event.type === 'thinking_progress') {
-              // EPHEMERAL, like a text delta: the only honest signal during a
-              // reasoning stretch this CLI has REDACTED. Main thread only, for
-              // the same reason — one counter per run.
-              if (event.parentToolUseId !== undefined) {
-                return;
-              }
-              this.partials.thinking(
-                runId,
-                SINGLE_AGENT_NODE,
-                null,
-                event.tokens,
-              );
-              return;
-            }
-            if (event.type === 'reasoning_delta') {
-              // The other half of the same answer, for a CLI that DISCLOSES
-              // what it is thinking. EPHEMERAL and main-thread-only on exactly
-              // the terms above — there is one live tail per run, so two
-              // sub-agents reasoning at once would interleave into nobody's
-              // words.
-              if (event.parentToolUseId !== undefined) {
-                return;
-              }
-              this.partials.reasoning(
-                runId,
-                SINGLE_AGENT_NODE,
-                null,
-                event.text,
-              );
               return;
             }
             if (event.type === 'tool_compose') {

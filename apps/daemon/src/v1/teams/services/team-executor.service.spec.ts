@@ -40,6 +40,7 @@ import type {
   ApprovalResolution,
   DelegateFigures,
   InstalledApprovalSupport,
+  LiveStreamSupport,
   SessionCloseCause,
 } from '../../agents/adapters/adapter.types';
 import type { AgentAdapter } from '../../agents/adapters/agent-adapter';
@@ -780,6 +781,8 @@ interface FakeTurn {
   betweenTurnApproval: (request: { toolName: string }) => boolean | null;
   /** Whether the process behind this turn is still alive. */
   sessionClosed: boolean;
+  /** The process exited while its stdout still drains: no longer alive, not yet closed. */
+  processExited: boolean;
 }
 
 class FakeAdapter {
@@ -870,10 +873,18 @@ class FakeAdapter {
       ? { ...this.real.getConfig(), hostQuestionDeferredReason: null }
       : this.real.getConfig();
   }
-  /** Answered from the SHIPPED config rather than by running `--help`: the
+  /** What the installed binary is taken to answer, when a test sets it. */
+  liveStream: LiveStreamSupport | null = null;
+  /** Answered from the SHIPPED config rather than by running the probe: the
    *  double fakes the spawn, and a CLI with a partial stream declares it. */
-  supportsLiveStream(): Promise<boolean> {
-    return Promise.resolve(this.getConfig().liveStream !== null);
+  liveStreamSupport(): Promise<LiveStreamSupport> {
+    const liveStream = this.getConfig().liveStream;
+    return Promise.resolve(
+      this.liveStream ?? {
+        partials: liveStream !== null,
+        reasoning: (liveStream?.reasoning ?? null) !== null,
+      },
+    );
   }
 
   validateModel(model: string | null | undefined): Promise<void> {
@@ -979,7 +990,7 @@ class FakeAdapter {
         return canTakeTurn();
       },
       get alive(): boolean {
-        return !closed;
+        return !closed && live?.processExited !== true;
       },
       retired: false,
       parked: false,
@@ -1043,6 +1054,7 @@ class FakeAdapter {
       emitOffTurn: () => undefined,
       betweenTurnApproval: () => null,
       sessionClosed: false,
+      processExited: false,
     };
     this.starts.push(turn);
     return {
@@ -3303,6 +3315,7 @@ describe('TeamExecutorService', () => {
     await drain();
     const turn = claude.starts[0]!;
     expect(turn.input.streamPartials).toBe(true);
+    expect(turn.input.streamReasoning).toBe(true);
     const tool = `mcp__geniro-${run.id.slice(0, 8)}__show_artifact`;
     const composingOf = (): string | null =>
       partials.snapshot(run.id).find((event) => event.ownerKey === 'a')
@@ -3315,6 +3328,148 @@ describe('TeamExecutorService', () => {
     turn.emit({ type: 'tool_compose', tool: null, bytes: 0, done: true });
     await drain();
     expect(composingOf()).toBeNull();
+  });
+
+  it("streams a member turn's words and thinking on the live plane, and takes the words down when its message lands", async () => {
+    const { service, claude, partials } = setup();
+    const run = await service.startRun({
+      slug: 'linear',
+      team: LINEAR,
+      cwd: dir,
+      prompt: 'task',
+    });
+    await drain();
+    const turn = claude.starts[0]!;
+    const liveOf = () =>
+      partials.snapshot(run.id).find((event) => event.ownerKey === 'a');
+
+    turn.emit({ type: 'thinking_progress', tokens: 40 });
+    turn.emit({ type: 'reasoning_delta', text: 'Reading the brief' });
+    await drain();
+    expect(liveOf()).toMatchObject({
+      memberId: 'a',
+      thinkingTokens: 40,
+      thinkingText: 'Reading the brief',
+    });
+
+    turn.emit({
+      type: 'tool_call',
+      id: 'td',
+      name: 'Read',
+      input: {},
+      parentToolUseId: 'toolu_delegate',
+    });
+    await drain();
+    expect(liveOf()?.thinkingText).toBe('Reading the brief');
+
+    turn.emit({ type: 'text_delta', text: 'Here is ' });
+    turn.emit({
+      type: 'text_delta',
+      text: 'a delegate speaking',
+      parentToolUseId: 'toolu_delegate',
+    });
+    turn.emit({ type: 'text_delta', text: 'the plan' });
+    await drain();
+    expect(liveOf()?.text).toBe('Here is the plan');
+    expect(liveOf()?.thinkingText).toBeNull();
+
+    turn.emit({
+      type: 'text',
+      text: 'a delegate speaking',
+      parentToolUseId: 'toolu_delegate',
+    });
+    await drain();
+    expect(liveOf()?.text).toBe('Here is the plan');
+
+    turn.emit({ type: 'text', text: 'Here is the plan' });
+    await drain();
+    expect(liveOf()?.text).toBe('');
+
+    completeTurn(turn, 'done');
+    await drain();
+  });
+
+  it('keeps the words of a member turn that died mid-sentence as one partial message', async () => {
+    const { service, claude, partials, itemDao } = setup();
+    const run = await service.startRun({
+      slug: 'linear',
+      team: LINEAR,
+      cwd: dir,
+      prompt: 'task',
+    });
+    await drain();
+    const turn = claude.starts[0]!;
+
+    turn.emit({ type: 'text_delta', text: 'Half a sen' });
+    await drain();
+    turn.emit({ type: 'error', message: 'the CLI died' });
+    turn.finish();
+    await drain();
+
+    const partialRows = itemDao.items
+      .filter((item) => item.kind === 'message')
+      .map(
+        (item) =>
+          ({
+            memberId: item.memberId,
+            ...(JSON.parse(item.payload as string) as Record<string, unknown>),
+          }) as Record<string, unknown>,
+      )
+      .filter((payload) => payload.partial === true);
+    expect(partialRows).toEqual([
+      { memberId: 'a', text: 'Half a sen', partial: true, nodeId: 'a' },
+    ]);
+    expect(
+      partials.snapshot(run.id).find((event) => event.ownerKey === 'a')?.text ??
+        '',
+    ).toBe('');
+  });
+
+  it("asks for the words of a member's thinking only where its binary takes the flag", async () => {
+    const { service, claude } = setup();
+    claude.liveStream = { partials: true, reasoning: false };
+    await service.startRun({
+      slug: 'linear',
+      team: LINEAR,
+      cwd: dir,
+      prompt: 'task',
+    });
+    await drain();
+
+    expect(claude.starts[0]!.input.streamPartials).toBe(true);
+    expect(claude.starts[0]!.input.streamReasoning).toBeUndefined();
+  });
+
+  it('writes no partial message for a run being deleted', async () => {
+    const { service, claude, itemDao } = setup();
+    const run = await service.startRun({
+      slug: 'linear',
+      team: LINEAR,
+      cwd: dir,
+      prompt: 'task',
+    });
+    await drain();
+    claude.starts[0]!.emit({ type: 'text_delta', text: 'Half a sen' });
+    await drain();
+
+    // Recorded as written, since the delete's purge takes every row away.
+    const written: Item[] = [];
+    const push = itemDao.items.push.bind(itemDao.items);
+    itemDao.items.push = (...rows: Item[]): number => {
+      written.push(...rows);
+      return push(...rows);
+    };
+    await service.deleteRun(run.id);
+    await drain();
+
+    expect(
+      written.filter(
+        (item) =>
+          item.kind === 'message' &&
+          (JSON.parse(item.payload as string) as { partial?: boolean })
+            .partial === true,
+      ),
+    ).toEqual([]);
   });
 
   it("harvests a member turn's slash_commands report for the run cwd, off the transcript", async () => {
@@ -14194,6 +14349,532 @@ describe('TeamExecutorService — a callee process outlives its turn', () => {
       text: 'the build finished: 0 errors',
       callId: 'call-1',
     });
+  });
+
+  it("streams what a callee writes AFTER its turn on that call's live tail", async () => {
+    const { service, claude, callBroker, partials, itemDao } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+    const liveOf = () =>
+      partials
+        .snapshot(run.id)
+        .find((event) => event.ownerKey === 'callee::call-1');
+
+    callee.emitOffTurn({ type: 'reasoning_delta', text: 'The build reported' });
+    await drain();
+    expect(liveOf()).toMatchObject({
+      memberId: 'callee',
+      thinkingText: 'The build reported',
+    });
+    expect(
+      itemDao.items.some(
+        (item) =>
+          item.kind === 'status' &&
+          item.memberId === 'callee' &&
+          (JSON.parse(item.payload as string) as { offTurn?: boolean })
+            .offTurn === true,
+      ),
+    ).toBe(true);
+
+    callee.emitOffTurn({ type: 'text_delta', text: 'The build finished' });
+    await drain();
+    expect(liveOf()).toMatchObject({
+      memberId: 'callee',
+      text: 'The build finished',
+    });
+
+    callee.emitOffTurn({ type: 'text', text: 'The build finished' });
+    await drain();
+    expect(liveOf()?.text).toBe('');
+
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it("ends a callee's off-turn thinking at the next row it writes, and shows the card it composes", async () => {
+    const { service, claude, callBroker, partials } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+    const liveOf = () =>
+      partials
+        .snapshot(run.id)
+        .find((event) => event.ownerKey === 'callee::call-1');
+
+    callee.emitOffTurn({ type: 'thinking_progress', tokens: 30 });
+    await drain();
+    expect(liveOf()?.thinkingStretch).not.toBeNull();
+
+    callee.emitOffTurn({
+      type: 'tool_call',
+      id: 'cd',
+      name: 'Read',
+      input: {},
+      parentToolUseId: 'toolu_delegate',
+    });
+    await drain();
+    expect(liveOf()?.thinkingStretch).not.toBeNull();
+
+    callee.emitOffTurn({
+      type: 'tool_call',
+      id: 'c1',
+      name: 'Bash',
+      input: {},
+    });
+    await drain();
+    expect(liveOf()?.thinkingStretch).toBeNull();
+
+    const tool = `mcp__geniro-${run.id.slice(0, 8)}__show_artifact`;
+    callee.emitOffTurn({ type: 'tool_compose', tool, bytes: 0, done: false });
+    await drain();
+    expect(liveOf()?.composingTool).toBe(tool);
+
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it("keeps a callee's half sentence in its call's card when the call's turn dies", async () => {
+    const { service, claude, callBroker, itemDao } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+
+    callee.emit({ type: 'text_delta', text: 'The build is hal' });
+    await drain();
+    callee.emit({ type: 'error', message: 'the CLI died' });
+    callee.finish();
+    await call;
+    await drain();
+
+    const partialRow = itemDao.items.find(
+      (item) =>
+        item.kind === 'message' &&
+        (JSON.parse(item.payload as string) as { partial?: boolean })
+          .partial === true,
+    );
+    expect(partialRow?.memberId).toBe('callee');
+    expect(JSON.parse(partialRow!.payload as string)).toMatchObject({
+      text: 'The build is hal',
+      callId: 'call-1',
+    });
+
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it("keeps a closed process's late words off the live tail", async () => {
+    const { service, claude, callBroker, partials, sessions } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+    sessions.close(`${run.id}::call:call-1`, 'closed');
+    await drain();
+
+    callee.emitOffTurn({ type: 'text_delta', text: 'from a process now gone' });
+    await drain();
+    expect(
+      partials
+        .snapshot(run.id)
+        .find((event) => event.ownerKey === 'callee::call-1')?.text ?? '',
+    ).toBe('');
+
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it("publishes a callee's own readings of a stretch it runs by itself", async () => {
+    const { service, claude, callBroker, partials, callContextDao } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+
+    callee.emitOffTurn({
+      type: 'usage_progress',
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+    callee.emitOffTurn({ type: 'context_progress', contextTokens: 4200 });
+    await drain();
+
+    expect(
+      partials
+        .snapshot(run.id)
+        .find((event) => event.ownerKey === 'callee::call-1'),
+    ).toMatchObject({ spentOutputTokens: 30, contextTokens: 4200 });
+    expect(callContextDao.rows.get(`${run.id}:call-1`)?.contextTokens).toBe(
+      4200,
+    );
+
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it("keeps a closed process's late rows from taking the member's badge", async () => {
+    const { service, claude, callBroker, itemDao, sessions } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+    sessions.close(`${run.id}::call:call-1`, 'closed');
+    await drain();
+    const offTurnStatuses = (): number =>
+      itemDao.items.filter(
+        (item) =>
+          item.kind === 'status' &&
+          item.memberId === 'callee' &&
+          (JSON.parse(item.payload as string) as { offTurn?: boolean })
+            .offTurn === true,
+      ).length;
+    const before = offTurnStatuses();
+
+    callee.emitOffTurn({
+      type: 'tool_call',
+      id: 'c9',
+      name: 'Bash',
+      input: {},
+    });
+    await drain();
+
+    expect(offTurnStatuses()).toBe(before);
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it('keeps the words a crashed process was writing as one partial message in its call', async () => {
+    const { service, claude, callBroker, itemDao, partials, sessions } =
+      setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+    callee.emitOffTurn({ type: 'text_delta', text: 'The build is hal' });
+    await drain();
+
+    sessions.close(`${run.id}::call:call-1`, 'closed');
+    await drain();
+
+    const partialRows = itemDao.items.filter(
+      (item) =>
+        item.kind === 'message' &&
+        (JSON.parse(item.payload as string) as { partial?: boolean })
+          .partial === true,
+    );
+    expect(partialRows.map((item) => item.memberId)).toEqual(['callee']);
+    expect(JSON.parse(partialRows[0]!.payload as string)).toMatchObject({
+      text: 'The build is hal',
+      callId: 'call-1',
+    });
+    expect(
+      partials
+        .snapshot(run.id)
+        .find((event) => event.ownerKey === 'callee::call-1')?.text ?? '',
+    ).toBe('');
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it("asks for a member's badge at most once a second while its live words stream", async () => {
+    const { service, claude, callBroker, nodeDao } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+    await nodeDao.setStatus(run.id, 'callee', { status: 'running' });
+    const reads = vi.spyOn(nodeDao, 'getByRunNode');
+
+    for (const text of ['one ', 'two ', 'three ']) {
+      callee.emitOffTurn({ type: 'text_delta', text });
+      await drain();
+    }
+
+    expect(
+      reads.mock.calls.filter(([, memberId]) => memberId === 'callee'),
+    ).toHaveLength(1);
+
+    // Once the member's other work ends, a later word takes the badge.
+    await nodeDao.setStatus(run.id, 'callee', { status: 'completed' });
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 1_500);
+    callee.emitOffTurn({ type: 'text_delta', text: 'four' });
+    await drain();
+    vi.mocked(Date.now).mockRestore();
+    expect(nodeDao.row(run.id, 'callee')?.status).toBe('running');
+
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it('writes no partial copy of a message the exiting process still delivered', async () => {
+    const { service, claude, callBroker, itemDao, sessions } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+    callee.emitOffTurn({ type: 'text_delta', text: 'The build passed' });
+    await drain();
+
+    callee.processExited = true;
+    callee.emitOffTurn({ type: 'text', text: 'The build passed' });
+    await drain();
+    sessions.close(`${run.id}::call:call-1`, 'closed');
+    await drain();
+
+    expect(
+      itemDao.items.filter(
+        (item) =>
+          item.kind === 'message' &&
+          (JSON.parse(item.payload as string) as { partial?: boolean })
+            .partial === true,
+      ),
+    ).toEqual([]);
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it("counts a stretch's spend from nothing, not on top of the call's turn", async () => {
+    const { service, claude, callBroker, partials } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    callee.emit({
+      type: 'usage_progress',
+      inputTokens: 500,
+      outputTokens: 200,
+    });
+    await drain();
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+
+    callee.emitOffTurn({ type: 'off_turn_started', at: Date.now() });
+    callee.emitOffTurn({
+      type: 'usage_progress',
+      inputTokens: 50,
+      outputTokens: 30,
+    });
+    await drain();
+
+    expect(
+      partials
+        .snapshot(run.id)
+        .find((event) => event.ownerKey === 'callee::call-1')
+        ?.spentOutputTokens,
+    ).toBe(30);
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it("files a delegate's final reading even from a process that has closed", async () => {
+    const { service, claude, callBroker, partials, sessions } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+    sessions.close(`${run.id}::call:call-1`, 'closed');
+    await drain();
+    const delegate = vi.spyOn(partials, 'delegate');
+
+    callee.emitOffTurn({
+      type: 'delegate_progress',
+      delegateId: 'toolu_d',
+      figures: DELEGATE_FIGURES,
+      final: false,
+    });
+    callee.emitOffTurn({
+      type: 'delegate_progress',
+      delegateId: 'toolu_d',
+      figures: DELEGATE_FIGURES,
+      final: true,
+    });
+    await drain();
+
+    expect(delegate.mock.calls.map(([, , , event]) => event.final)).toEqual([
+      true,
+    ]);
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+  });
+
+  it('lets a process that closes right after its last message still take its words down', async () => {
+    const { service, claude, callBroker, partials, sessions } = setup();
+    const run = await service.startRun({
+      slug: 'bg',
+      team: CALL_TEAM,
+      cwd: dir,
+      prompt: 'go',
+    });
+    await drain();
+    const call = callBroker.callAgent(run.id, 'a', {
+      title: 'why',
+      agent: 'callee',
+      message: 'start the build',
+    });
+    await drain();
+    const callee = claude.starts[1]!;
+    completeTurn(callee, 'started it');
+    await call;
+    await drain();
+    callee.emitOffTurn({ type: 'text_delta', text: 'The build passed' });
+    await drain();
+
+    callee.emitOffTurn({ type: 'text', text: 'The build passed' });
+    sessions.close(`${run.id}::call:call-1`, 'closed');
+    await drain();
+
+    expect(
+      partials
+        .snapshot(run.id)
+        .find((event) => event.ownerKey === 'callee::call-1')?.text ?? '',
+    ).toBe('');
+
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
   });
 
   it('records a compaction the agent finished with no summary, in its turn and after it', async () => {

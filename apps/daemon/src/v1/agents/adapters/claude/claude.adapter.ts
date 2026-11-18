@@ -155,6 +155,9 @@ import {
   CLAUDE_SKIP_PERMISSIONS_FLAG,
   CLAUDE_STRICT_MCP_CONFIG_FLAG,
   CLAUDE_SYSTEM_PROMPT_INLINE_MAX_BYTES,
+  CLAUDE_THINKING_DISPLAY_ACCEPTED,
+  CLAUDE_THINKING_DISPLAY_ARGS,
+  CLAUDE_THINKING_DISPLAY_PROBE_ARGS,
   CLAUDE_TITLE_ARGS,
   CLAUDE_TITLE_DIR_PREFIX,
   CLAUDE_TITLE_MODEL,
@@ -576,6 +579,13 @@ export class ClaudeAdapter extends AgentAdapter {
         /** Utility argv whose stdout is searched for {@link CLAUDE_PARTIAL_MESSAGES_FLAG}. */
         probeArgs: ['--help'],
         flag: CLAUDE_PARTIAL_MESSAGES_FLAG,
+        reasoning: {
+          args: CLAUDE_THINKING_DISPLAY_ARGS,
+          probeArgs: CLAUDE_THINKING_DISPLAY_PROBE_ARGS,
+          accepted: CLAUDE_THINKING_DISPLAY_ACCEPTED,
+          /** The refusal comes in 0.07 s on 2.1.325. */
+          probeTimeoutMs: 3_000,
+        },
       },
       reportedCommands: {
         /** Never reached by the model: the turn is cancelled the moment init lands. */
@@ -2251,6 +2261,9 @@ export class ClaudeAdapter extends AgentAdapter {
     const args = [...CLAUDE_BASE_ARGS];
     if (input.streamPartials) {
       args.push(CLAUDE_PARTIAL_MESSAGES_FLAG);
+    }
+    if (input.streamReasoning) {
+      args.push(...CLAUDE_THINKING_DISPLAY_ARGS);
     }
     if (input.model) {
       args.push(CLAUDE_MODEL_FLAG, this.modelConfiguration(input.model).model!);
