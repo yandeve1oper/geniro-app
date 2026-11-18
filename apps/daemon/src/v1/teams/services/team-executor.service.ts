@@ -287,6 +287,7 @@ import {
   poolSize,
   poolSwitchNotice,
 } from '../utils/agent-pool';
+import { probeCallEndpoint } from '../utils/call-endpoint-self-check';
 import { geniroSideFailure, readCalleeFailure } from '../utils/callee-failure';
 import {
   callerConversationOf,
@@ -9150,9 +9151,10 @@ export class TeamExecutorService
   }
 
   /**
-   * Probe the run's own MCP route with a JSON-RPC initialize (3s cap) and
-   * report a failure through `onFailure`. Fire-and-forget: the pass never
-   * waits on it. No call-capable caller → nothing to check.
+   * Probe the run's own MCP route with a JSON-RPC initialize and report a
+   * failure through `onFailure` (`probeCallEndpoint` says what counts as one).
+   * Fire-and-forget: the pass never waits on it. No call-capable caller →
+   * nothing to check.
    */
   private selfCheckCallEndpoint(
     caller: TeamMember | null,
@@ -9169,36 +9171,13 @@ export class TeamExecutorService
       );
       return;
     }
-    void (async () => {
-      try {
-        const res = await fetch(endpoint.url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            accept: 'application/json, text/event-stream',
-            authorization: `Bearer ${endpoint.token}`,
-          },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 0,
-            method: 'initialize',
-            params: {
-              protocolVersion: '2025-06-18',
-              capabilities: {},
-              clientInfo: { name: 'geniro-selfcheck', version: '0' },
-            },
-          }),
-          signal: AbortSignal.timeout(3000),
-        });
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-      } catch (err) {
+    void probeCallEndpoint(endpoint).then((failure) => {
+      if (failure !== null) {
         onFailure(
-          `agent-call endpoint self-check failed (${err instanceof Error ? err.message : String(err)}) — callers may run without call tools`,
+          `agent-call endpoint self-check failed (${failure}) — callers may run without call tools`,
         );
       }
-    })();
+    });
   }
 
   private async persist(

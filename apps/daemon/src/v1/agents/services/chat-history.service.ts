@@ -14,6 +14,7 @@ import type {
 import { ItemDao } from '../dao/item.dao';
 import { OUTSIDE_ANY_CALL } from '../utils/call-membership';
 import { collapseImageBlocks } from '../utils/collapse-image-blocks';
+import { eventLoopSlicer } from '../utils/event-loop-slices';
 import {
   anchorNeedsOf,
   callRowsIn,
@@ -155,23 +156,12 @@ export class ChatHistoryService {
     if (keys === undefined) {
       return { messages: [], hasOlder: false };
     }
-    const em = this.em.fork();
-    const rows: WireRow[] = [];
-    for (const key of keys) {
-      rows.push(
-        ...(await this.itemDao.newestRowsInCall(
-          runId,
-          key,
-          {
-            kinds: ['message'],
-            said: 'text',
-            ownThread: true,
-            limit: limit + 1,
-          },
-          em,
-        )),
-      );
-    }
+    const rows = await this.itemDao.newestRowsInCalls(runId, keys, {
+      kinds: ['message'],
+      said: 'text',
+      ownThread: true,
+      limit: limit + 1,
+    });
     const newest = rows.sort((a, b) => a.seq - b.seq).slice(-(limit + 1));
     return {
       messages: servedRows(newest.slice(-limit).map(itemToWire)),
@@ -354,97 +344,114 @@ export class ChatHistoryService {
       return [];
     }
     const em = this.em.fork();
+    // Each read is a whole synchronous statement, and a cold page of a long
+    // run reads seconds of them.
+    const slice = eventLoopSlicer();
+    const newest = async (
+      pick: Parameters<ItemDao['newestRowsInCalls']>[2],
+      calls: readonly string[] = callIds,
+    ): Promise<WireRow[]> => {
+      if (calls.length === 0) {
+        return [];
+      }
+      await slice();
+      return this.itemDao.newestRowsInCalls(runId, calls, pick, em);
+    };
     const rows: WireRow[] = [];
-    for (const callId of callIds) {
-      const newest = (
-        pick: Parameters<ItemDao['newestRowsInCall']>[2],
-      ): Promise<WireRow[]> =>
-        this.itemDao.newestRowsInCall(runId, callId, pick, em);
-      for (const read of CARD_READS) {
-        rows.push(...(await newest(read)));
-      }
-      const [whole] = await newest({
-        kinds: ['task_list'],
-        snapshot: true,
-        ownThread: true,
-        limit: 1,
-      });
-      rows.push(
-        ...(await newest({
+    for (const read of CARD_READS) {
+      rows.push(...(await newest(read)));
+    }
+    const wholeLists = new Map(
+      (
+        await newest({
           kinds: ['task_list'],
-          fromSeq: whole?.seq,
-          ownThread: true,
-          limit: TASK_LISTS_PER_CALL,
-        })),
-      );
-      const [status] = await newest({ kinds: ['status'], limit: 1 });
-      if (
-        status !== undefined &&
-        payloadString(parseJsonColumn(status.payload), 'status') === 'running'
-      ) {
-        rows.push(
-          ...(await newest({
-            kinds: ['tool_call'],
-            fromSeq: status.seq,
-            limit: OPEN_TURN_TOOLS_PER_CALL,
-          })),
-          ...(await newest({
-            kinds: ['tool_call'],
-            fromSeq: status.seq,
-            ownThread: true,
-            limit: OPEN_TURN_TOOLS_PER_CALL,
-          })),
-        );
-      }
-      rows.push(
-        ...(await newest({ limit: 1 })),
-        // The newest words and NAMED tools: the folded card's readings walk
-        // back past a blank message and an ACP tool call naming nothing.
-        ...(await newest({
-          kinds: ['message'],
-          said: 'text',
+          snapshot: true,
           ownThread: true,
           limit: 1,
-        })),
-        ...(await newest({
+        })
+      ).flatMap((row) =>
+        row.inCall === null ? [] : [[row.inCall, row.seq] as const],
+      ),
+    );
+    rows.push(
+      ...(await newest({
+        kinds: ['task_list'],
+        fromSeq: wholeLists,
+        ownThread: true,
+        limit: TASK_LISTS_PER_CALL,
+      })),
+    );
+    const openTurns = new Map(
+      (await newest({ kinds: ['status'], limit: 1 })).flatMap((status) =>
+        status.inCall !== null &&
+        payloadString(parseJsonColumn(status.payload), 'status') === 'running'
+          ? [[status.inCall, status.seq] as const]
+          : [],
+      ),
+    );
+    const running = [...openTurns.keys()];
+    rows.push(
+      ...(await newest(
+        {
           kinds: ['tool_call'],
-          said: 'name',
+          fromSeq: openTurns,
+          limit: OPEN_TURN_TOOLS_PER_CALL,
+        },
+        running,
+      )),
+      ...(await newest(
+        {
+          kinds: ['tool_call'],
+          fromSeq: openTurns,
           ownThread: true,
-          limit: NAMED_TOOLS_PER_CALL,
-        })),
-      );
-    }
+          limit: OPEN_TURN_TOOLS_PER_CALL,
+        },
+        running,
+      )),
+      ...(await newest({ limit: 1 })),
+      // The newest words and NAMED tools: the folded card's readings walk
+      // back past a blank message and an ACP tool call naming nothing.
+      ...(await newest({
+        kinds: ['message'],
+        said: 'text',
+        ownThread: true,
+        limit: 1,
+      })),
+      ...(await newest({
+        kinds: ['tool_call'],
+        said: 'name',
+        ownThread: true,
+        limit: NAMED_TOOLS_PER_CALL,
+      })),
+    );
     const unique = new Map(rows.map((row) => [row.id, row] as const));
     // What CLOSES the rows above: a tool call's reply (a command, a delegate's
     // launch), and the call's background shells and delegates, opened and
     // ended — without them a finished command or delegate reads as running.
-    for (const callId of callIds) {
-      const tools = [...unique.values()].filter(
-        (row) => row.inCall === callId && row.kind === 'tool_call',
-      );
-      const toolIds = tools
-        .map((row) => payloadString(parseJsonColumn(row.payload), 'id'))
-        .filter((id) => id !== null);
-      for (const row of [
-        ...(await this.itemDao.rowsInCallById(
-          runId,
-          callId,
-          ['tool_result'],
-          toolIds,
-          em,
-        )),
-        ...(await this.itemDao.newestRowsInCall(
-          runId,
-          callId,
-          {
-            kinds: ['shell_open', 'shell_info', 'subagent_info'],
-            limit: BACKGROUND_ROWS_PER_CALL,
-          },
-          em,
-        )),
-      ]) {
-        unique.set(row.id, row);
+    const toolIds = new Map<string, string[]>();
+    for (const row of unique.values()) {
+      const id =
+        row.kind === 'tool_call' && row.inCall !== null
+          ? payloadString(parseJsonColumn(row.payload), 'id')
+          : null;
+      if (row.inCall !== null && id !== null) {
+        toolIds.set(row.inCall, [...(toolIds.get(row.inCall) ?? []), id]);
       }
+    }
+    await slice();
+    for (const row of [
+      ...(await this.itemDao.rowsInCallsById(
+        runId,
+        ['tool_result'],
+        toolIds,
+        em,
+      )),
+      ...(await newest({
+        kinds: ['shell_open', 'shell_info', 'subagent_info'],
+        limit: BACKGROUND_ROWS_PER_CALL,
+      })),
+    ]) {
+      unique.set(row.id, row);
     }
     return [...unique.values()].map(itemToWire);
   }

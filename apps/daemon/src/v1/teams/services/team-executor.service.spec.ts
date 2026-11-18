@@ -151,6 +151,7 @@ import {
   type InstructionBlock,
   type Team,
 } from '../teams.types';
+import { probeCallEndpoint } from '../utils/call-endpoint-self-check';
 import {
   ANSWERING_A_CALL,
   ANSWERING_WITH_CALLS_OUT,
@@ -167,6 +168,10 @@ import type { TeamHealthService } from './team-health.service';
 import { TeamOverlayService } from './team-overlay.service';
 import { TeamOverlayStoreService } from './team-overlay-store.service';
 import type { TeamStoreService } from './team-store.service';
+
+vi.mock('../utils/call-endpoint-self-check', () => ({
+  probeCallEndpoint: vi.fn(async () => null),
+}));
 
 // ── In-memory fakes (mirroring chat.service.spec's harness) ──────────────────
 class FakeRunDao {
@@ -1120,19 +1125,10 @@ let dir: string;
 
 beforeAll(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'geniro-exec-')));
-  // The run-start MCP self-check probes the daemon's own route over real
-  // loopback HTTP — no server listens in unit tests, and a rejecting fetch
-  // would append a system item at a nondeterministic time. Stub it green;
-  // the failure path gets its own test with a failing stub.
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () => ({ ok: true })),
-  );
 });
 
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
-  vi.unstubAllGlobals();
 });
 
 /** One row of the per-call context table, as the fake DAO keeps it. */
@@ -7723,8 +7719,8 @@ describe('TeamExecutorService — agent calls', () => {
 
   it('reports a failed endpoint self-check as a system item', async () => {
     const { service, claude, itemDao } = setup();
-    vi.mocked(globalThis.fetch).mockRejectedValueOnce(
-      new Error('ECONNREFUSED'),
+    vi.mocked(probeCallEndpoint).mockResolvedValueOnce(
+      'connect ECONNREFUSED 127.0.0.1:1',
     );
     await service.startRun({
       slug: 'c',

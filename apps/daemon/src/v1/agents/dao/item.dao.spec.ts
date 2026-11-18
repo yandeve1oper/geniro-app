@@ -18,7 +18,12 @@ import { Item } from '../../runs/entity/item.entity';
 import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
 import type { ItemKind } from '../../runs/runs.types';
-import type { ChatTextDatabase, HistoryWindow, SeqRange } from '../chat.types';
+import type {
+  ChatTextDatabase,
+  HistoryWindow,
+  SeqRange,
+  WireRow,
+} from '../chat.types';
 import { PULL_REQUEST_NAMING_KINDS } from '../utils/pull-request-capture';
 import { ItemDao } from './item.dao';
 import { RunDao } from './run.dao';
@@ -60,6 +65,30 @@ describe('ItemDao (in-memory sqlite)', () => {
     // rides a fork (see chat.service) — construct on a fresh fork per test.
     dao = new ItemDao(orm.em.fork());
   });
+
+  /** The Kysely connection `getKysely()` reads run on, captured as a read acquires it. */
+  async function kyselyConnection(): Promise<DatabaseConnection> {
+    const acquire = SqliteDriver.prototype.acquireConnection;
+    let connection: DatabaseConnection | null = null;
+    const acquired = vi
+      .spyOn(SqliteDriver.prototype, 'acquireConnection')
+      .mockImplementation(async function (this: SqliteDriver) {
+        connection = await acquire.call(this);
+        return connection;
+      });
+    await dao.kindsOfRun('run-a');
+    acquired.mockRestore();
+    return connection!;
+  }
+
+  /** How many statements `read` sends over the Kysely connection. */
+  async function statementsOf(read: () => Promise<unknown>): Promise<number> {
+    const execute = vi.spyOn(await kyselyConnection(), 'executeQuery');
+    await read();
+    const count = execute.mock.calls.length;
+    execute.mockRestore();
+    return count;
+  }
 
   /** Persist one row through the DAO's own create — the production write path. */
   async function insert(
@@ -165,11 +194,10 @@ describe('ItemDao (in-memory sqlite)', () => {
           }),
         ),
         byIdInCall: seqs(
-          await dao.rowsInCallById(
+          await dao.rowsInCallsById(
             runId,
-            'call-1',
             ['tool_result'],
-            ['toolu_1'],
+            new Map([['call-1', ['toolu_1']]]),
           ),
         ),
         callsById: (await dao.toolCallsByIds(runId, ['toolu_1'])).length,
@@ -181,7 +209,7 @@ describe('ItemDao (in-memory sqlite)', () => {
           c.lastSeq,
         ]),
         ownThread: seqs(
-          await dao.newestRowsInCall(runId, 'call-1', {
+          await dao.newestRowsInCalls(runId, ['call-1'], {
             kinds: ['tool_call'],
             ownThread: true,
             limit: 10,
@@ -1669,17 +1697,8 @@ describe('ItemDao (in-memory sqlite)', () => {
 
     it('reads every column from a covering index, never the row, whose later columns sit past its payload', async () => {
       await insert('run-a', 0, 'subagent_info', '{"id":"d1","callId":"c1"}');
-      const acquire = SqliteDriver.prototype.acquireConnection;
-      let connection: DatabaseConnection | null = null;
-      const acquired = vi
-        .spyOn(SqliteDriver.prototype, 'acquireConnection')
-        .mockImplementation(async function (this: SqliteDriver) {
-          connection = await acquire.call(this);
-          return connection;
-        });
-      await dao.kindsOfRun('run-a');
-      acquired.mockRestore();
-      const execute = vi.spyOn(connection!, 'executeQuery');
+      const connection = await kyselyConnection();
+      const execute = vi.spyOn(connection, 'executeQuery');
 
       await dao.inCallRowsOfKind('run-a', 'subagent_info');
       await dao.kindsOfRun('run-a');
@@ -1688,7 +1707,7 @@ describe('ItemDao (in-memory sqlite)', () => {
       execute.mockRestore();
       expect(statements).toHaveLength(4);
       for (const { sql, parameters } of statements) {
-        const plan = await connection!.executeQuery<{ detail: string }>(
+        const plan = await connection.executeQuery<{ detail: string }>(
           CompiledQuery.raw(`explain query plan ${sql}`, [...parameters]),
         );
         expect(plan.rows.map((step) => step.detail).join(' | ')).toMatch(
@@ -1790,6 +1809,34 @@ describe('ItemDao (in-memory sqlite)', () => {
           dao.rowsOfKinds('run-a', ['subagent_info'], { after: 3 }),
         ),
       ).toMatch(/^SEARCH i0 USING INDEX items_run_id_kind_seq_index /);
+    });
+
+    it('reads the rail’s kinds through the (run, kind, seq) index and answers them in seq order', async () => {
+      await insert('run-a', 0, 'message', '{"text":"a"}');
+      await insert('run-a', 1, 'reasoning');
+      await insert('run-a', 2, 'tool_call');
+      await insert('run-a', 3, 'message', '{"text":"b"}');
+      const connection = await kyselyConnection();
+      const execute = vi.spyOn(connection, 'executeQuery');
+
+      const rows = await dao.spineRowsOfKinds('run-a', [
+        'message',
+        'reasoning',
+      ]);
+
+      const { sql, parameters } = execute.mock.calls[0]![0];
+      execute.mockRestore();
+      const plan = await connection.executeQuery<{ detail: string }>(
+        CompiledQuery.raw(`explain query plan ${sql}`, [...parameters]),
+      );
+      expect(plan.rows.map((step) => step.detail).join(' | ')).toMatch(
+        /^SEARCH items USING INDEX items_run_id_kind_seq_index /,
+      );
+      expect(rows.map((row) => [row.seq, row.kind])).toEqual([
+        [0, 'message'],
+        [1, 'reasoning'],
+        [3, 'message'],
+      ]);
     });
 
     it('answers a single kind without repeating a row', async () => {
@@ -2179,6 +2226,236 @@ describe('ItemDao (in-memory sqlite)', () => {
       expect(await seqs({ outside: { firstSeq: 2, lastSeq: 5 } })).toEqual([
         1, 6,
       ]);
+    });
+  });
+
+  describe('newestRowsInCalls and rowsInCallsById', () => {
+    interface Column {
+      inCall?: string;
+      role?: string;
+      payloadId?: string;
+      deleted?: boolean;
+    }
+
+    function rowsAt(
+      runId: string,
+      seqs: readonly number[],
+      kind: ItemKind,
+      column: Column = {},
+    ) {
+      const at = new Date(Date.UTC(2026, 9, 27));
+      return seqs.map((seq) => ({
+        id: `${runId}-${seq}`,
+        runId,
+        seq,
+        kind,
+        role: column.role ?? null,
+        inCall: column.inCall ?? null,
+        payloadId: column.payloadId ?? null,
+        payload: JSON.stringify(
+          column.payloadId === undefined ? {} : { id: column.payloadId },
+        ),
+        deletedAt: column.deleted === true ? at : null,
+        createdAt: at,
+        updatedAt: at,
+      }));
+    }
+
+    async function place(rows: ReturnType<typeof rowsAt>): Promise<void> {
+      await orm.em.fork().insertMany(Item, rows);
+    }
+
+    async function stampedRun(): Promise<void> {
+      await new RunDao(orm.em.fork()).create({
+        id: 'run-a',
+        status: 'running',
+        teamId: null,
+      });
+    }
+
+    const seqsOf = (rows: readonly { seq: number }[]): number[] =>
+      rows.map((row) => row.seq);
+
+    it('returns the newest limit rows of each named call in seq order, and no row of an unnamed call or another run', async () => {
+      await stampedRun();
+      await place([
+        ...rowsAt('run-a', [1, 2, 3, 4], 'tool_call', { inCall: 'call-1' }),
+        ...rowsAt('run-a', [5, 6, 7, 8], 'tool_call', { inCall: 'call-2' }),
+        ...rowsAt('run-a', [9, 10], 'tool_call', { inCall: 'call-3' }),
+        ...rowsAt('run-b', [11], 'tool_call', { inCall: 'call-1' }),
+      ]);
+
+      const rows = await dao.newestRowsInCalls('run-a', ['call-1', 'call-2'], {
+        kinds: ['tool_call'],
+        limit: 2,
+      });
+
+      expect(seqsOf(rows)).toEqual([3, 4, 7, 8]);
+    });
+
+    it('bounds only the call its fromSeq names: a named call absent from the map keeps all its rows', async () => {
+      await stampedRun();
+      await place([
+        ...rowsAt('run-a', [1, 3, 5, 7], 'tool_call', { inCall: 'call-1' }),
+        ...rowsAt('run-a', [2, 4, 6], 'tool_call', { inCall: 'call-2' }),
+      ]);
+
+      const rows = await dao.newestRowsInCalls('run-a', ['call-1', 'call-2'], {
+        kinds: ['tool_call'],
+        limit: 10,
+        fromSeq: new Map([['call-1', 5]]),
+      });
+
+      expect(seqsOf(rows)).toEqual([2, 4, 5, 6, 7]);
+    });
+
+    it('never answers a user message or a soft-deleted row, and answers an assistant message', async () => {
+      await stampedRun();
+      await place([
+        ...rowsAt('run-a', [1], 'message', {
+          inCall: 'call-1',
+          role: 'assistant',
+        }),
+        ...rowsAt('run-a', [2], 'message', { inCall: 'call-1', role: 'user' }),
+        ...rowsAt('run-a', [3], 'message', {
+          inCall: 'call-1',
+          role: 'assistant',
+          deleted: true,
+        }),
+        ...rowsAt('run-a', [4], 'message', { inCall: 'call-1' }),
+        ...rowsAt('run-a', [5], 'message', {
+          inCall: 'call-1',
+          role: 'user',
+          deleted: true,
+        }),
+      ]);
+
+      const rows = await dao.newestRowsInCalls('run-a', ['call-1'], {
+        kinds: ['message'],
+        limit: 10,
+      });
+
+      expect(seqsOf(rows)).toEqual([1, 4]);
+    });
+
+    it('reads more calls and kinds than one statement holds in two statements, with a turn of the event loop between them', async () => {
+      await stampedRun();
+      const calls = Array.from({ length: 401 }, (_, i) => `call-${i}`);
+      await place(
+        calls.flatMap((inCall, i) =>
+          rowsAt('run-a', [2 * i + 1, 2 * i + 2], 'tool_call', { inCall }),
+        ),
+      );
+      await dao.payloadRefsStamped('run-a');
+      let turned = false;
+      setImmediate(() => {
+        turned = true;
+      });
+
+      let rows: WireRow[] = [];
+      const statements = await statementsOf(async () => {
+        rows = await dao.newestRowsInCalls('run-a', calls, {
+          kinds: ['tool_call'],
+          limit: 1,
+        });
+      });
+
+      expect(statements).toBe(2);
+      expect(turned).toBe(true);
+      expect(seqsOf(rows)).toEqual(
+        Array.from({ length: 401 }, (_, i) => 2 * i + 2),
+      );
+    });
+
+    it('keeps the newest limit rows of each call across every kind it names', async () => {
+      await stampedRun();
+      await place([
+        ...rowsAt('run-a', [1, 4, 5], 'tool_call', { inCall: 'call-1' }),
+        ...rowsAt('run-a', [2, 3, 6], 'status', { inCall: 'call-1' }),
+        ...rowsAt('run-a', [7, 10], 'tool_call', { inCall: 'call-2' }),
+        ...rowsAt('run-a', [8, 9], 'status', { inCall: 'call-2' }),
+      ]);
+
+      const rows = await dao.newestRowsInCalls('run-a', ['call-1', 'call-2'], {
+        kinds: ['tool_call', 'status'],
+        limit: 2,
+      });
+
+      expect(seqsOf(rows)).toEqual([5, 6, 9, 10]);
+    });
+
+    it('sends one statement however many calls it names', async () => {
+      await stampedRun();
+      const calls = Array.from({ length: 30 }, (_, i) => `call-${i}`);
+      await place(
+        calls.flatMap((inCall, i) =>
+          rowsAt('run-a', [i + 1], 'tool_call', { inCall }),
+        ),
+      );
+      await dao.payloadRefsStamped('run-a');
+
+      const one = await statementsOf(() =>
+        dao.newestRowsInCalls('run-a', ['call-0'], {
+          kinds: ['tool_call'],
+          limit: 1,
+        }),
+      );
+      const many = await statementsOf(() =>
+        dao.newestRowsInCalls('run-a', calls, {
+          kinds: ['tool_call'],
+          limit: 1,
+        }),
+      );
+
+      expect(one).toBe(1);
+      expect(many).toBe(one);
+    });
+
+    it('answers each call only the replies to the ids it asked for, and nothing for an empty id list', async () => {
+      await stampedRun();
+      await place([
+        ...rowsAt('run-a', [1], 'tool_result', {
+          inCall: 'call-a',
+          payloadId: 'toolu_1',
+        }),
+        ...rowsAt('run-a', [2], 'tool_result', {
+          inCall: 'call-b',
+          payloadId: 'toolu_1',
+        }),
+        ...rowsAt('run-a', [3], 'tool_result', {
+          inCall: 'call-b',
+          payloadId: 'toolu_2',
+        }),
+      ]);
+      const replies = (idsByCall: [string, string[]][]) =>
+        dao
+          .rowsInCallsById('run-a', ['tool_result'], new Map(idsByCall))
+          .then(seqsOf);
+
+      expect(await replies([['call-a', ['toolu_1']]])).toEqual([1]);
+      expect(
+        await replies([
+          ['call-a', ['toolu_1']],
+          ['call-b', ['toolu_2']],
+        ]),
+      ).toEqual([1, 3]);
+      expect(
+        await replies([
+          ['call-a', []],
+          ['call-b', ['toolu_2']],
+        ]),
+      ).toEqual([3]);
+      expect(await replies([['call-a', []]])).toEqual([]);
+    });
+
+    it('sends no statement for an empty map of calls', async () => {
+      await stampedRun();
+
+      expect(
+        await statementsOf(() =>
+          dao.rowsInCallsById('run-a', ['tool_result'], new Map()),
+        ),
+      ).toBe(0);
     });
   });
 
