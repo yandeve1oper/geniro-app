@@ -30,6 +30,7 @@ import {
 } from '../../agents/utils/ws-payload';
 import { BROWSER_REPLY_MAX_BYTES } from '../../browser/browser.types';
 import { BrowserBridgeService } from '../../browser/services/browser-bridge.service';
+import { CommandCenterEventBus } from '../../command-center/services/command-center-events.bus';
 import { DebugLogService } from '../../diagnostics/services/debug-log.service';
 import { KnowledgeEventBus } from '../../knowledge/services/knowledge-events.bus';
 import { LessonsEventBus } from '../../lessons/services/lessons-events.bus';
@@ -158,6 +159,8 @@ export class NotificationsGateway
   private lessonsSubscription?: Subscription;
   private knowledgeSubscription?: Subscription;
   private threadMessagesSubscription?: Subscription;
+  private commandCenterSubscription?: Subscription;
+  private commandCenterContactSubscription?: Subscription;
   private projectSubscription?: Subscription;
   private resourceAlertSubscription?: Subscription;
   /**
@@ -187,6 +190,7 @@ export class NotificationsGateway
     private readonly resourceAlerts: ResourceAlertEventBus,
     private readonly browserBridge: BrowserBridgeService,
     @Optional() private readonly lessons?: LessonsEventBus,
+    @Optional() private readonly commandCenter?: CommandCenterEventBus,
   ) {}
 
   afterInit(server: Server): void {
@@ -295,6 +299,40 @@ export class NotificationsGateway
         },
         error: (err: unknown) =>
           this.logger.error(`thread message bus errored: ${String(err)}`),
+      });
+    // Goes to EVERY client, paired devices included: the command center reads
+    // the same board on the phone. Run ids and message ends only, never text.
+    this.commandCenterSubscription = this.commandCenter
+      ?.allChanges()
+      .subscribe({
+        next: (change) => {
+          try {
+            server.emit('command_center_changed', change);
+          } catch (err) {
+            this.logger.error(
+              `failed to broadcast command_center_changed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        },
+        error: (err: unknown) =>
+          this.logger.error(`command center bus errored: ${String(err)}`),
+      });
+    this.commandCenterContactSubscription = this.commandCenter
+      ?.allContacts()
+      .subscribe({
+        next: (contact) => {
+          try {
+            server.emit('command_center_contact', contact);
+          } catch (err) {
+            this.logger.error(
+              `failed to broadcast command_center_contact: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        },
+        error: (err: unknown) =>
+          this.logger.error(
+            `command center contact bus errored: ${String(err)}`,
+          ),
       });
     // Goes to EVERY client, paired devices included: the phone shows the same
     // alert strip. No payload; clients read the list over HTTP.
@@ -503,6 +541,8 @@ export class NotificationsGateway
     this.lessonsSubscription?.unsubscribe();
     this.knowledgeSubscription?.unsubscribe();
     this.threadMessagesSubscription?.unsubscribe();
+    this.commandCenterSubscription?.unsubscribe();
+    this.commandCenterContactSubscription?.unsubscribe();
     this.projectSubscription?.unsubscribe();
     this.resourceAlertSubscription?.unsubscribe();
     this.deletedSubscription?.unsubscribe();

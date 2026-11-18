@@ -1132,7 +1132,7 @@ export interface TeamLocation {
  * them — the daemon owns it, because the whole point is that the agent is put
  * where the team library lives.
  */
-const chatChipsSchema = createChatSchema.pick({
+export const chatChipsSchema = createChatSchema.pick({
   agentKind: true,
   model: true,
   approval: true,

@@ -63,6 +63,7 @@ describe('NavRail', () => {
     // that type-checks, ships, and cannot be opened.
     const LABELS: Record<AppView, string> = {
       chats: 'Chats',
+      'command-center': 'Command center',
       teams: 'Teams',
       tasks: 'Tasks',
       projects: 'Projects',
@@ -113,6 +114,7 @@ describe('NavRail', () => {
     // to nothing, which is the same unreachable view seen one step later.
     for (const [view, label] of Object.entries({
       chats: 'Chats',
+      'command-center': 'Command center',
       teams: 'Teams',
       tasks: 'Tasks',
       projects: 'Projects',

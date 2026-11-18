@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { AgentsModule } from '../agents/agents.module';
 import { BrowserModule } from '../browser/browser.module';
+import { CommandCenterModule } from '../command-center/command-center.module';
 import { DiagnosticsModule } from '../diagnostics/diagnostics.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { LessonsModule } from '../lessons/lessons.module';
@@ -42,6 +43,7 @@ import { WsPresenceService } from './services/ws-presence.service';
     ProjectsModule,
     BrowserModule,
     LessonsModule,
+    CommandCenterModule,
   ],
   providers: [NotificationsGateway, WsPresenceService],
   // Exported for the idle shutdown: "is anyone connected?" is a fact only this

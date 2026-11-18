@@ -13,6 +13,7 @@ const meta = {
         fromTitle: 'Pelican',
         fromMember: null,
         text: 'The review is ready whenever you are.',
+        inReplyTo: null,
       },
       {
         id: 'm2',
@@ -20,6 +21,7 @@ const meta = {
         fromTitle: 'Otter',
         fromMember: 'Backend Engineer',
         text: 'The migration is in. Two open questions:\n1. Keep the old column until the next release?\n2. Backfill in one batch or by day?',
+        inReplyTo: null,
       },
     ],
   },
@@ -38,6 +40,24 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Messages: Story = {};
+
+export const WithReplyContext: Story = {
+  args: {
+    messages: [
+      {
+        id: 'm3',
+        fromRunId: 'r-otter',
+        fromTitle: 'Otter',
+        fromMember: 'Backend Engineer',
+        text: 'Backfill in one batch. The table is small enough, and it finishes before the release window.',
+        inReplyTo: {
+          text: 'Can you tell me how you want to backfill the old column?',
+          at: '2026-11-06T10:00:00.000Z',
+        },
+      },
+    ],
+  },
+};
 
 export const AtPhoneWidth: Story = {
   decorators: [

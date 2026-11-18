@@ -2,6 +2,9 @@ import { io, type Socket } from 'socket.io-client';
 
 import type { DaemonHandle } from '../shared/contracts';
 
+/** Why the daemon is held open: an armed project's autopilot, or an approved thread start waiting. */
+export type KeepAliveReason = 'armed-project' | 'thread-start';
+
 /**
  * One socket, held open so the daemon does not idle out while the autopilot
  * still has work to do.
@@ -31,7 +34,7 @@ import type { DaemonHandle } from '../shared/contracts';
 export class DaemonKeepAlive {
   private socket: Socket | null = null;
   private handle: DaemonHandle | null = null;
-  private wanted = false;
+  private readonly reasons = new Set<KeepAliveReason>();
 
   constructor(
     private readonly log: (message: string) => void = () => undefined,
@@ -64,21 +67,37 @@ export class DaemonKeepAlive {
 
   /**
    * Whether any project is armed right now.
-   *
-   * A single boolean rather than a set of project ids: the daemon's idle rule
-   * counts connections, not reasons, so one socket answers for every armed
-   * project and a second would keep nothing extra alive.
    */
   setArmed(armed: boolean): void {
-    if (this.wanted === armed) {
+    this.hold('armed-project', armed);
+  }
+
+  /**
+   * Hold the daemon open for one reason, or let that reason go.
+   *
+   * The socket is open while ANY reason holds, and closed when the last one
+   * lets go. One socket answers for all of them: the daemon's idle rule counts
+   * connections, not reasons, so a second socket would keep nothing extra alive.
+   */
+  hold(reason: KeepAliveReason, held: boolean): void {
+    const before = this.wanted;
+    if (held) {
+      this.reasons.add(reason);
+    } else {
+      this.reasons.delete(reason);
+    }
+    if (this.wanted === before) {
       return;
     }
-    this.wanted = armed;
-    if (armed) {
+    if (this.wanted) {
       this.open();
     } else {
       this.close();
     }
+  }
+
+  private get wanted(): boolean {
+    return this.reasons.size > 0;
   }
 
   /** Whether a socket is currently held. Read by specs and the boot log. */
@@ -88,7 +107,7 @@ export class DaemonKeepAlive {
 
   /** Drop the socket on the way out; the app quitting is not an armed state. */
   dispose(): void {
-    this.wanted = false;
+    this.reasons.clear();
     this.close();
   }
 

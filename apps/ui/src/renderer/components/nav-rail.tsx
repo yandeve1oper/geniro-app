@@ -7,6 +7,7 @@ import {
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  RadioTower,
   Settings,
   UsersRound as TeamIcon,
 } from 'lucide-react';
@@ -20,7 +21,14 @@ import { cn } from './ui/utils';
 
 /** The top-level views the nav rail switches between. */
 export type AppView =
-  'chats' | 'teams' | 'tasks' | 'projects' | 'knowledge' | 'stats' | 'settings';
+  | 'chats'
+  | 'command-center'
+  | 'teams'
+  | 'tasks'
+  | 'projects'
+  | 'knowledge'
+  | 'stats'
+  | 'settings';
 
 export interface NavItem {
   view: AppView;
@@ -31,6 +39,7 @@ export interface NavItem {
 /** Primary destinations (pinned to the top). */
 const PRIMARY_ITEMS: readonly NavItem[] = [
   { view: 'chats', label: 'Chats', icon: MessageSquare },
+  { view: 'command-center', label: 'Command center', icon: RadioTower },
   { view: 'teams', label: 'Teams', icon: TeamIcon },
   { view: 'tasks', label: 'Tasks', icon: KanbanSquare },
   { view: 'projects', label: 'Projects', icon: FolderGit2 },

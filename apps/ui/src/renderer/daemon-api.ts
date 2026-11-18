@@ -4,6 +4,7 @@ import {
   CapabilitiesApi,
   ChatsApi,
   CliAuthApi,
+  CommandCenterApi,
   Configuration,
   DiagnosticsApi,
   GroupsApi,
@@ -265,6 +266,8 @@ export interface DaemonApis {
   lessons: LessonsApi;
   /** What the data folder holds and its clean-ups (`/v1/storage`) — desktop only. */
   storage: StorageApi;
+  /** The command center's board, manager chat and starts (`/v1/command-center`). */
+  commandCenter: CommandCenterApi;
 }
 
 /**
@@ -325,5 +328,6 @@ export function createDaemonApis(handle: DaemonHandle): DaemonApis {
     knowledge: new KnowledgeApi(config),
     lessons: new LessonsApi(config),
     storage: new StorageApi(config),
+    commandCenter: new CommandCenterApi(config),
   };
 }

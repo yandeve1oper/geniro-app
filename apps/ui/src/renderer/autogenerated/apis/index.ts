@@ -4,6 +4,7 @@ export * from './AgentsApi';
 export * from './CapabilitiesApi';
 export * from './ChatsApi';
 export * from './CliAuthApi';
+export * from './CommandCenterApi';
 export * from './DiagnosticsApi';
 export * from './GroupsApi';
 export * from './HandoffApi';

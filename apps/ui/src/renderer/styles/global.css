@@ -756,3 +756,109 @@
     stroke-dasharray: none;
   }
 }
+
+/*
+ * The command center's graph — `command-center/contact-edge.tsx`,
+ * `thread-card.tsx`, `graph-view.tsx`.
+ *
+ * A wire carries a stream of dots that flows the way the talk goes: out from
+ * the manager while the wire is lit after a message, back towards it while
+ * the manager awaits that thread's reply. An idle wire only drifts. A node at
+ * work breathes a soft glow in its own token, and a node waiting on the user
+ * glows in the warning token, so the eye finds what moves without reading.
+ * Colours come from tokens through `color-mix`, so every theme keeps them.
+ */
+@keyframes cc-wire-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+@keyframes cc-wire-drift {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+.cc-wire-flow {
+  stroke-dasharray: 2 10;
+  animation: cc-wire-flow 900ms linear infinite;
+}
+
+.cc-wire-flow-back {
+  stroke-dasharray: 2 10;
+  animation: cc-wire-flow 1400ms linear infinite reverse;
+}
+
+.cc-wire-drift {
+  animation: cc-wire-drift 6s linear infinite;
+}
+
+@keyframes cc-breathe-success {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--success) 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--success) 28%, transparent);
+  }
+}
+
+@keyframes cc-breathe-warning {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--warning) 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--warning) 30%, transparent);
+  }
+}
+
+@keyframes cc-breathe-primary {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--primary) 25%, transparent);
+  }
+}
+
+.cc-breathe-success {
+  animation: cc-breathe-success 2.4s ease-in-out infinite;
+}
+
+.cc-breathe-warning {
+  animation: cc-breathe-warning 2.4s ease-in-out infinite;
+}
+
+.cc-breathe-primary {
+  animation: cc-breathe-primary 2.8s ease-in-out infinite;
+}
+
+@keyframes cc-node-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.cc-node-in {
+  animation: cc-node-in 320ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-wire-flow,
+  .cc-wire-flow-back,
+  .cc-wire-drift,
+  .cc-breathe-success,
+  .cc-breathe-warning,
+  .cc-breathe-primary,
+  .cc-node-in {
+    animation: none;
+  }
+}

@@ -14,6 +14,7 @@ export type Route =
   | { view: 'tasks'; projectId: string | null }
   | { view: 'projects'; projectId: string | null }
   | { view: 'knowledge'; documentId: string | null }
+  | { view: 'command-center' }
   | { view: 'settings' }
   | { view: 'stats' };
 
@@ -90,6 +91,8 @@ export function parseRoute(hash: string): Route | null {
       return { view: 'projects', projectId: null };
     case 'knowledge':
       return { view: 'knowledge', documentId: null };
+    case 'command-center':
+      return { view: 'command-center' };
     case 'settings':
       return { view: 'settings' };
     case 'stats':

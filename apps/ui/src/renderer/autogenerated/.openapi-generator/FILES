@@ -3,6 +3,7 @@ apis/AgentsApi.ts
 apis/CapabilitiesApi.ts
 apis/ChatsApi.ts
 apis/CliAuthApi.ts
+apis/CommandCenterApi.ts
 apis/DiagnosticsApi.ts
 apis/GroupsApi.ts
 apis/HandoffApi.ts

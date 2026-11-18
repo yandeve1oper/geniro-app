@@ -46,6 +46,8 @@ const bubbleVariants = cva('flex min-w-0 flex-col gap-1 rounded-xl text-sm', {
       user: 'self-end max-w-full bg-primary/10 border border-primary/20 px-4 py-3 leading-relaxed',
       assistant:
         'self-start max-w-full bg-muted/40 border border-border px-4 py-3 leading-relaxed',
+      incoming:
+        'self-start max-w-full bg-muted/40 border-l-2 border-l-primary px-3 py-2 leading-relaxed',
       reasoning:
         'self-start max-w-full bg-muted/50 text-muted-foreground px-3.5 py-2.5',
       tool: 'self-start w-full bg-muted text-muted-foreground px-3.5 py-2.5',

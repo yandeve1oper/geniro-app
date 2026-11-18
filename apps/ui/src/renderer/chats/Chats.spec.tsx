@@ -21604,6 +21604,45 @@ describe('Chats — one hosted conversation', () => {
     ).not.toBeNull();
   });
 
+  it('draws the threads its run works through elsewhere, and opens one by its run', async () => {
+    const { client } = makeClient();
+    const onOpenThread = vi.fn();
+    const container = await mount(client, undefined, {
+      hosted: hostedThread({
+        workingThreads: [
+          {
+            runId: 'thread-1',
+            title: 'Export the CSV',
+            agentLabel: 'Senior Engineer',
+            agentKind: 'claude',
+            startedAt: null,
+            status: 'working',
+          },
+        ],
+        onOpenThread,
+      }),
+    });
+
+    expect(
+      container.querySelector('[data-slot="working-threads-count"]')
+        ?.textContent,
+    ).toBe('1 working');
+    expect(
+      container.querySelector('[data-slot="working-agents-card"]'),
+    ).toBeNull();
+  });
+
+  it('draws no threads card for a hosted conversation that names none', async () => {
+    const { client } = makeClient();
+    const container = await mount(client, undefined, {
+      hosted: hostedThread({ workingThreads: [] }),
+    });
+
+    expect(
+      container.querySelector('[data-slot="working-threads-card"]'),
+    ).toBeNull();
+  });
+
   it('tells the surface a chip changed the conversation’s settings, and not a refused one', async () => {
     const { client } = makeClient();
     const onRunSettingsChanged = vi.fn();

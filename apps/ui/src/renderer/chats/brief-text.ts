@@ -62,10 +62,14 @@ export function plainMarkdownText(markdown: string): string {
  * The row printed the message raw and let CSS collapse it, so a reply opening
  * with a bolded heading and a bullet list read `**Google Docs read:** -
  * **Read:** Sag…`, and one showing a picture read `![the app i…`. Markers go,
- * list bullets go, and the lines are joined with a space.
+ * list bullets go, code fences go, and the lines are joined with a space.
  */
 export function plainPreview(markdown: string): string {
-  return plainMarkdownText(markdown)
+  const unfenced = markdown
+    .split('\n')
+    .filter((line) => !/^\s*(?:`{3,}|~{3,})/.test(line))
+    .join('\n');
+  return plainMarkdownText(unfenced)
     .split('\n')
     .map((line) => line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').trim())
     .filter((line) => line.length > 0 && !/^(?:[-*_]\s*){3,}$/.test(line))

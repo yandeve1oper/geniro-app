@@ -46,6 +46,7 @@ describe('BottomTabBar', () => {
     );
     expect(labels).toEqual([
       'Chats',
+      'Command center',
       'Teams',
       'Tasks',
       'Projects',

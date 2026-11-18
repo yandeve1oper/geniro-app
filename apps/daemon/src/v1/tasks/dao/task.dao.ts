@@ -315,6 +315,151 @@ export class TaskDao extends BaseDao<Task> {
     );
   }
 
+  /** Record, approve or clear the command center's request to start a card. */
+  async setStartRequest(
+    taskId: string,
+    request: {
+      requestedAt: Date;
+      byRunId: string;
+      approvedAt: Date | null;
+      note?: string | null;
+    } | null,
+    txEm?: EntityManager,
+  ): Promise<void> {
+    await this.getRepo(txEm).nativeUpdate(
+      { id: taskId, deletedAt: null } as FilterQuery<Task>,
+      {
+        startRequestedAt: request?.requestedAt ?? null,
+        startRequestedByRunId: request?.byRunId ?? null,
+        startApprovedAt: request?.approvedAt ?? null,
+        startRequestNote: request?.note ?? null,
+      } as EntityData<Task>,
+    );
+  }
+
+  /** Approve a pending start request; false when there is none to approve. */
+  async approveStartRequest(
+    taskId: string,
+    at: Date,
+    txEm?: EntityManager,
+  ): Promise<boolean> {
+    const changed = await this.getRepo(txEm).nativeUpdate(
+      {
+        id: taskId,
+        deletedAt: null,
+        startRequestedAt: { $ne: null },
+        startApprovedAt: null,
+      } as FilterQuery<Task>,
+      { startApprovedAt: at } as EntityData<Task>,
+    );
+    return changed > 0;
+  }
+
+  /**
+   * A start went through: the request is over, but its requester stays
+   * named until the command center has told it (`listStartedForManager`).
+   */
+  async settleStartRequest(
+    taskId: string,
+    txEm?: EntityManager,
+  ): Promise<void> {
+    await this.getRepo(txEm).nativeUpdate(
+      {
+        id: taskId,
+        deletedAt: null,
+        startRequestedAt: { $ne: null },
+      } as FilterQuery<Task>,
+      { startRequestedAt: null, startApprovedAt: null } as EntityData<Task>,
+    );
+  }
+
+  /** Cards a manager asked to start that have started and not been reported. */
+  async listStartedForManager(txEm?: EntityManager): Promise<Task[]> {
+    return this.getRepo(txEm).find(
+      {
+        startRequestedByRunId: { $ne: null },
+        startRequestedAt: null,
+        runId: { $ne: null },
+        deletedAt: null,
+      } as FilterQuery<Task>,
+      { disableIdentityMap: true },
+    );
+  }
+
+  /** Forget which manager asked for a card's start, once it has been told. */
+  async clearStartRequester(
+    taskId: string,
+    txEm?: EntityManager,
+  ): Promise<void> {
+    await this.getRepo(txEm).nativeUpdate(
+      { id: taskId } as FilterQuery<Task>,
+      { startRequestedByRunId: null } as EntityData<Task>,
+    );
+  }
+
+  /**
+   * Take the report of a started card for `managerRunId`: true for the one
+   * caller that cleared the requester, so a start is told once however many
+   * task events race to tell it.
+   */
+  async claimStartReport(
+    taskId: string,
+    managerRunId: string,
+    txEm?: EntityManager,
+  ): Promise<boolean> {
+    const claimed = await this.getRepo(txEm).nativeUpdate(
+      { id: taskId, startRequestedByRunId: managerRunId } as FilterQuery<Task>,
+      { startRequestedByRunId: null } as EntityData<Task>,
+    );
+    return claimed > 0;
+  }
+
+  /** Give a claimed report back when telling the manager failed, so it is tried again. */
+  async releaseStartReport(
+    taskId: string,
+    managerRunId: string,
+    txEm?: EntityManager,
+  ): Promise<void> {
+    await this.getRepo(txEm).nativeUpdate(
+      { id: taskId, startRequestedByRunId: null } as FilterQuery<Task>,
+      { startRequestedByRunId: managerRunId } as EntityData<Task>,
+    );
+  }
+
+  /** Cards whose start request was approved and not yet started, oldest first. */
+  async listApprovedStarts(txEm?: EntityManager): Promise<Task[]> {
+    return this.getRepo(txEm).find(
+      { startApprovedAt: { $ne: null }, deletedAt: null } as FilterQuery<Task>,
+      { orderBy: { startApprovedAt: 'asc' }, disableIdentityMap: true },
+    );
+  }
+
+  /** Cards with a start request still waiting on the user's Start. */
+  async listPendingStartRequests(txEm?: EntityManager): Promise<Task[]> {
+    return this.getRepo(txEm).find(
+      {
+        startRequestedAt: { $ne: null },
+        startApprovedAt: null,
+        deletedAt: null,
+      } as FilterQuery<Task>,
+      { orderBy: { startRequestedAt: 'asc' }, disableIdentityMap: true },
+    );
+  }
+
+  /** The cards worked by these runs, live ones only. */
+  async listByRunIds(
+    runIds: readonly string[],
+    txEm?: EntityManager,
+  ): Promise<Task[]> {
+    if (runIds.length === 0) {
+      return [];
+    }
+    return this.getRepo(txEm).find(
+      { runId: { $in: [...runIds] }, deletedAt: null } as FilterQuery<Task>,
+      { disableIdentityMap: true },
+    );
+  }
+
   /**
    * Remove every task belonging to a project.
    *

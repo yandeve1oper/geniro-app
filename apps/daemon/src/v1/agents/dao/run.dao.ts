@@ -70,8 +70,9 @@ export class RunDao extends BaseDao<Run> {
    * it belongs to the thread it reads, opens in that thread's popup, and is
    * found through {@link listAnalysesOf}. A team's analysis is hidden on
    * the same terms and found through {@link listTeamAnalyses}, and so is a
-   * project's own chat, found through {@link listEditingProject}. Nothing
-   * else is hidden by kind.
+   * project's own chat, found through {@link listEditingProject}, and the
+   * command center's manager, found through {@link listCommandCenterChats}.
+   * Nothing else is hidden by kind.
    */
   async listChats(
     scope: ChatListScope,
@@ -85,6 +86,7 @@ export class RunDao extends BaseDao<Run> {
         editsProjectId: null,
         analysisSourceRunId: null,
         analysisTeamSlug: null,
+        commandCenter: null,
         ...scopeFilter(scope),
       },
       page,
@@ -128,6 +130,7 @@ export class RunDao extends BaseDao<Run> {
       .where('r.edits_project_id', 'is', null)
       .where('r.analysis_source_run_id', 'is', null)
       .where('r.analysis_team_slug', 'is', null)
+      .where('r.command_center', 'is', null)
       .where('r.id', '!=', filter.excludeRunId);
     if (!filter.includeArchived) {
       ranked = ranked.where('r.archived_at', 'is', null);
@@ -213,10 +216,16 @@ export class RunDao extends BaseDao<Run> {
     page: RunListPage,
     txEm?: EntityManager,
   ): Promise<Run[]> {
-    const { before, runId, limit, active } = page;
+    const { before, runId, runIds, limit, active } = page;
     const narrowed: FilterQuery<Run>[] = [where, { pendingDeleteAt: null }];
     if (runId !== undefined) {
       narrowed.push({ id: runId });
+    }
+    if (runIds !== undefined) {
+      if (runIds.length === 0) {
+        return [];
+      }
+      narrowed.push({ id: { $in: [...runIds] } });
     }
     if (hasActivityWindow(active)) {
       const ids = await this.runIdsActiveIn(active, txEm);
@@ -282,6 +291,23 @@ export class RunDao extends BaseDao<Run> {
       { editsProjectId: projectId, editsTeamSlug: null },
       { orderBy: { createdAt: 'desc' }, disableIdentityMap: true },
     );
+  }
+
+  /** The command center's manager chats, newest first — archived ones included. */
+  async listCommandCenterChats(txEm?: EntityManager): Promise<Run[]> {
+    return this.getRepo(txEm).find(
+      { commandCenter: true },
+      { orderBy: { createdAt: 'desc' }, disableIdentityMap: true },
+    );
+  }
+
+  /** Every run whose status is `running`, ids only. */
+  async runningIds(txEm?: EntityManager): Promise<string[]> {
+    const rows = await this.getRepo(txEm).find(
+      { status: 'running' },
+      { fields: ['id'], disableIdentityMap: true },
+    );
+    return rows.map((row) => row.id);
   }
 
   /** The projects that have an own chat, archived ones included. */

@@ -66,6 +66,13 @@ describe('plainPreview — the sidebar row', () => {
       'Saved to src/**/*.ts and __init__.py',
     );
   });
+
+  it('drops code fences and keeps what they hold', () => {
+    expect(
+      plainPreview('```json\n{"threads": 3}\n```\nThe threads on this Mac'),
+    ).toBe('{"threads": 3} The threads on this Mac');
+    expect(plainPreview('~~~\nls -la\n~~~')).toBe('ls -la');
+  });
 });
 
 describe('briefParts', () => {

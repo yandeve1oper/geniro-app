@@ -4,6 +4,7 @@ import { BadRequestException } from '@packages/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AnalysisBroker } from '../../../agents/services/analysis.broker';
+import { CommandCenterBroker } from '../../../agents/services/command-center.broker';
 import { ProjectChatBroker } from '../../../agents/services/project-chat.broker';
 import { TeamBuilderBroker } from '../../../agents/services/team-builder.broker';
 import type { ThreadDeliveryService } from '../../../teams/services/thread-delivery.service';
@@ -39,12 +40,14 @@ function tool(
     analysis?: AnalysisBroker;
     teamBuilders?: TeamBuilderBroker;
     projectChats?: ProjectChatBroker;
+    commandCenters?: CommandCenterBroker;
   } = {},
 ) {
   return new MessageThreadTool(threads as ThreadDeliveryService, {
     analysis: brokers.analysis ?? new AnalysisBroker(),
     teamBuilders: brokers.teamBuilders ?? new TeamBuilderBroker(),
     projectChats: brokers.projectChats ?? new ProjectChatBroker(),
+    commandCenters: brokers.commandCenters ?? new CommandCenterBroker(),
   });
 }
 

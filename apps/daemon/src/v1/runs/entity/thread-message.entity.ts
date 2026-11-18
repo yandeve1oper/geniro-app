@@ -24,6 +24,7 @@ import type {
 @Entity({ tableName: 'thread_messages' })
 @Index({ properties: ['toRunId', 'status'] })
 @Index({ properties: ['fromRunId', 'toRunId', 'createdAt'] })
+@Index({ properties: ['toRunId', 'createdAt'] })
 export class ThreadMessage extends TimestampsEntity {
   @PrimaryKey({ type: 'string' })
   id: string = randomUUID();
@@ -74,4 +75,16 @@ export class ThreadMessage extends TimestampsEntity {
 
   @Property({ type: DateTimeType, nullable: true })
   deliveredAt: Date | null = null;
+
+  /**
+   * Set on a command-center manager's message that expects a reply: until
+   * then, the first reply from the receiver wakes the manager past its wake
+   * and join budgets, once (`ThreadDeliveryService`).
+   */
+  @Property({ type: DateTimeType, nullable: true })
+  replyCreditUntil: Date | null = null;
+
+  /** When a reply spent {@link replyCreditUntil}; a credit is used at most once. */
+  @Property({ type: DateTimeType, nullable: true })
+  replyCreditSpentAt: Date | null = null;
 }

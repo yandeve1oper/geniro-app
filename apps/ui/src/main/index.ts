@@ -62,7 +62,9 @@ import { onSettingsWritten, readSettings } from './settings';
 import { notifySettingsChanged } from './settings-changed-notify';
 import { migrateSettingsFile } from './settings-migrations';
 import { ShareConfigPush } from './share-config-push';
+import type { RunStartDeps } from './task-run-start';
 import { TerminalSessions } from './terminal-sessions';
+import { ThreadStartConductor } from './thread-start-conductor';
 import { reportUncaughtErrors } from './uncaught-error-report';
 import { createUpdateService } from './update-service';
 import {
@@ -285,9 +287,7 @@ const keepAwake = new KeepAwake({
   },
 });
 
-const autopilot = new AutopilotConductor({
-  handle: () => supervisor.getHandle(),
-  armedProjects: readArmedProjects,
+const runStartDeps: RunStartDeps = {
   prepareWorktree: (input) =>
     prepareWorktree(input, {
       log: (level, message) => {
@@ -301,9 +301,34 @@ const autopilot = new AutopilotConductor({
   agentOptions: () => readSettings().agentOptions,
   customInstructions: () => readSettings().customInstructions,
   replyLanguage: () => readSettings().replyLanguage,
+};
+
+const autopilot = new AutopilotConductor({
+  ...runStartDeps,
+  handle: () => supervisor.getHandle(),
+  armedProjects: readArmedProjects,
   log: (message) => {
     void reportMainLog(supervisor.getHandle(), 'info', message, {
       source: 'autopilot',
+    });
+  },
+});
+
+/**
+ * The drain that starts the threads the command center's manager filed and the
+ * user approved. It holds the same keep-alive the armed projects do, for as long
+ * as a start waits.
+ */
+const threadStarts = new ThreadStartConductor({
+  ...runStartDeps,
+  handle: () => supervisor.getHandle(),
+  holdDaemon: (waiting) => {
+    keepAlive.useDaemon(supervisor.getHandle());
+    keepAlive.hold('thread-start', waiting);
+  },
+  log: (message) => {
+    void reportMainLog(supervisor.getHandle(), 'info', message, {
+      source: 'thread-starts',
     });
   },
 });
@@ -935,6 +960,7 @@ function main(): void {
     // starts a card whose work is finished, so the two cannot meet over one
     // worktree and neither has to wait for the other.
     autopilot.start();
+    threadStarts.start();
     mergeWatcher.start();
     // Before the window exists, so no page it loads ever runs without it. A
     // failure is logged and does not hold the window: the resolver rules were
@@ -1037,6 +1063,7 @@ function main(): void {
         // Quitting is not an armed state — the daemon goes back to its ordinary
         // idle window rather than being held open by a process that is ending.
         () => autopilot.stop(),
+        () => threadStarts.stop(),
         () => mergeWatcher.stop(),
         () => keepAlive.dispose(),
         () => keepAwake.dispose(),

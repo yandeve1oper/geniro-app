@@ -65,6 +65,11 @@ const EXAMPLES: readonly { label: string; hash: string; route: Route }[] = [
     route: { view: 'stats' },
   },
   {
+    label: 'the command center',
+    hash: '#/command-center',
+    route: { view: 'command-center' },
+  },
+  {
     label: 'a run id with characters that need encoding',
     hash: '#/chats/a%2Fb%20c%3F%23d',
     route: { view: 'chats', runId: 'a/b c?#d' },

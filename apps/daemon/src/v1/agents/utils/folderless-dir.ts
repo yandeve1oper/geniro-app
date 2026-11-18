@@ -1,7 +1,4 @@
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-
-import { environment } from '../../../environments';
+import { ensureOwnDataDir, ownDataDirPath } from './own-data-dir';
 
 /** The directory's name under the userData dir. */
 export const FOLDERLESS_DIR_NAME = 'mcp-folderless';
@@ -28,16 +25,13 @@ export const FOLDERLESS_DIR_NAME = 'mcp-folderless';
  * scratch folder and change nothing about the folder the team actually
  * runs in.
  */
-export function folderlessDirPath(
-  userDataDir: string = environment.userDataDir,
-): string {
-  return join(userDataDir, FOLDERLESS_DIR_NAME);
+export function folderlessDirPath(userDataDir?: string): string {
+  return ownDataDirPath(FOLDERLESS_DIR_NAME, userDataDir);
 }
 
 /** {@link folderlessDirPath}, created on first use. */
 export function ensureFolderlessDir(
   path: string = folderlessDirPath(),
 ): string {
-  mkdirSync(path, { recursive: true });
-  return path;
+  return ensureOwnDataDir(path);
 }

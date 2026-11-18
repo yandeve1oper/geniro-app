@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ThreadMessageRowEntry } from '../chat.types';
 import {
+  threadMessageExcerpt,
   threadMessageNotDeliveredNote,
   threadMessagesPrompt,
   threadMessagesRow,
@@ -155,7 +156,7 @@ describe('threadMessageNotDeliveredNote', () => {
 });
 
 describe('threadMessagesRow', () => {
-  it('carries only the five keys of each message, whatever else it was handed', () => {
+  it('carries only the message keys of each message, whatever else it was handed', () => {
     const stored = {
       ...entry({ text: 'hi' }),
       status: 'waiting',
@@ -171,7 +172,40 @@ describe('threadMessagesRow', () => {
         fromTitle: 'Build',
         fromMember: null,
         text: 'hi',
+        inReplyTo: null,
       },
     ]);
+  });
+
+  it('carries the reply context a message was given, and null when it was given none', () => {
+    const reply = { text: 'which build?', at: '2026-11-06T10:00:00.000Z' };
+
+    expect(
+      threadMessagesRow([
+        entry({ id: 'a', inReplyTo: reply }),
+        entry({ id: 'b' }),
+      ]).threadMessages?.map((message) => message.inReplyTo),
+    ).toEqual([reply, null]);
+  });
+});
+
+describe('threadMessageExcerpt', () => {
+  it('keeps a short text whole, on one line', () => {
+    expect(threadMessageExcerpt('the build\n  is green')).toBe(
+      'the build is green',
+    );
+  });
+
+  it('cuts a text past 200 characters to 200, the last one an ellipsis', () => {
+    const excerpt = threadMessageExcerpt('a'.repeat(250));
+    expect(excerpt).toHaveLength(200);
+    expect(excerpt).toBe(`${'a'.repeat(199)}…`);
+  });
+
+  it('counts a character outside the basic plane once, never splitting it', () => {
+    const excerpt = threadMessageExcerpt('😀'.repeat(250));
+    expect([...excerpt]).toHaveLength(200);
+    expect(excerpt.endsWith('…')).toBe(true);
+    expect(excerpt).not.toMatch(/[\uD800-\uDBFF]$/);
   });
 });

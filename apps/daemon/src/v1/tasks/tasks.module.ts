@@ -29,7 +29,8 @@ import { TasksService } from './services/tasks.service';
  *
  * `TaskEventBus` is exported for `NotificationsModule`, on `AgentEventBus`'s
  * own precedent: the module that writes the rows owns the bus, and the WS
- * gateway is the one fan-out subscriber.
+ * gateway is the one fan-out subscriber. `TasksService` is exported for the
+ * command center, whose manager files cards (`start_thread`).
  *
  * It also imports `AgentsModule`, for `ChatService`: pressing Run on a card
  * starts an ORDINARY chat, so this module borrows that engine rather than
@@ -73,6 +74,6 @@ import { TasksService } from './services/tasks.service';
     TaskMergeService,
     TaskQueueService,
   ],
-  exports: [TaskDao, TaskEventBus],
+  exports: [TaskDao, TaskEventBus, TasksService],
 })
 export class TasksModule {}

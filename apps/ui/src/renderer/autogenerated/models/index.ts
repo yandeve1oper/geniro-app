@@ -3122,6 +3122,667 @@ export type CloseRunGoalDtoGoalClosingStatus = typeof CloseRunGoalDtoGoalClosing
 /**
  * 
  * @export
+ * @interface CommandCenterBoardDto
+ */
+export interface CommandCenterBoardDto {
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterBoardDto
+     */
+    generatedAt: string;
+    /**
+     * 
+     * @type {ThreadOverviewDtoAnalysisAnalysis}
+     * @memberof CommandCenterBoardDto
+     */
+    manager: ThreadOverviewDtoAnalysisAnalysis | null;
+    /**
+     * Threads the manager asked to start that wait on the user's Start
+     * @type {number}
+     * @memberof CommandCenterBoardDto
+     */
+    pendingStarts: number;
+    /**
+     * 
+     * @type {Array<CommandCenterCard>}
+     * @memberof CommandCenterBoardDto
+     */
+    cards: Array<CommandCenterCard>;
+}
+/**
+ * 
+ * @export
+ * @interface CommandCenterCard
+ */
+export interface CommandCenterCard {
+    /**
+     * 
+     * @type {CommandCenterCardRun}
+     * @memberof CommandCenterCard
+     */
+    run: CommandCenterCardRun;
+    /**
+     * 
+     * @type {CommandCenterTaskRef}
+     * @memberof CommandCenterCard
+     */
+    task: CommandCenterTaskRef | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCard
+     */
+    handle: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCard
+     */
+    note: string | null;
+    /**
+     * 
+     * @type {CommandCenterColumn}
+     * @memberof CommandCenterCard
+     */
+    column: CommandCenterColumn;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCard
+     */
+    activity: string | null;
+    /**
+     * 
+     * @type {CommandCenterCardContact}
+     * @memberof CommandCenterCard
+     */
+    contact: CommandCenterCardContact;
+}
+
+
+/**
+ * 
+ * @export
+ * @interface CommandCenterCardContact
+ */
+export interface CommandCenterCardContact {
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardContact
+     */
+    lastAt: string | null;
+    /**
+     * The manager waits on its reply to a message
+     * @type {boolean}
+     * @memberof CommandCenterCardContact
+     */
+    awaitingReply: boolean;
+}
+/**
+ * 
+ * @export
+ * @interface CommandCenterCardRun
+ */
+export interface CommandCenterCardRun {
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    id: string;
+    /**
+     * 
+     * @type {RunStatus}
+     * @memberof CommandCenterCardRun
+     */
+    status: RunStatus;
+    /**
+     * 
+     * @type {RunAwaiting}
+     * @memberof CommandCenterCardRun
+     */
+    awaiting: RunAwaiting | null;
+    /**
+     * Units of background work this run is being held for; 0 when the agent itself is working
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    holdingFor: number;
+    /**
+     * Agents of this run waiting on their own calls; 0 when none is waiting
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    awaitingCalls: number;
+    /**
+     * Trigger members of this team run inside a turn (calls excluded); 0 when a message would be taken now
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    rootsWorking: number;
+    /**
+     * Detached commands this run still has running; 0 when none are out
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    shellsOpen: number;
+    /**
+     * Background sub-agents this run still has out; 0 when none are out
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    subagentsOut: number;
+    /**
+     * Monitors this run has running; 0 when none are
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    monitorsOpen: number;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    title: string | null;
+    /**
+     * 
+     * @type {AgentKind}
+     * @memberof CommandCenterCardRun
+     */
+    agentKind: AgentKind | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    teamId: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    cwd: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    startSha: string | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof CommandCenterCardRun
+     */
+    startDirty: boolean | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    model: string | null;
+    /**
+     * 
+     * @type {ChatApprovalMode}
+     * @memberof CommandCenterCardRun
+     */
+    approval: ChatApprovalMode | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    effort: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    contextWindow: string | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    autoCompactPercent: number | null;
+    /**
+     * Every OTHER model setting this run's next turn asks for, keyed by the CLI's own parameter id; {} when none are set. Sent back verbatim — geniro holds no vocabulary for these
+     * @type {{ [key: string]: string; }}
+     * @memberof CommandCenterCardRun
+     */
+    modelParameters: { [key: string]: string; };
+    /**
+     * 
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    contextTokens: number | null;
+    /**
+     * Whether contextTokens is geniro's stand-in for an occupancy the CLI did not state; false when the CLI stated it
+     * @type {boolean}
+     * @memberof CommandCenterCardRun
+     */
+    contextEstimated: boolean;
+    /**
+     * 
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    contextWindowTokens: number | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    configDir: string | null;
+    /**
+     * 
+     * @type {ConfigDirPin}
+     * @memberof CommandCenterCardRun
+     */
+    configDirPin: ConfigDirPin | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    groupId: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    taskId: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    taskIdentifier: string | null;
+    /**
+     * 
+     * @type {RunProjectRef}
+     * @memberof CommandCenterCardRun
+     */
+    project: RunProjectRef | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    analysisSourceRunId: string | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    analysisSourceSeq: number | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    analysisTeamSlug: string | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    pinnedPosition: number | null;
+    /**
+     * 
+     * @type {RunGroupColor}
+     * @memberof CommandCenterCardRun
+     */
+    color: RunGroupColor | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    createdAt: string;
+    /**
+     * The run's last-activity time
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    updatedAt: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    lastMessage: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    lastActivityAt: string | null;
+    /**
+     * Pull requests this run opened, as captured from the agent output, and those its CLI recorded it touching; oldest first
+     * @type {Array<DisplayedPullRequest>}
+     * @memberof CommandCenterCardRun
+     */
+    pullRequests: Array<DisplayedPullRequest>;
+    /**
+     * Calls a usage limit stopped that geniro continues when the window reopens
+     * @type {Array<RunResetWake>}
+     * @memberof CommandCenterCardRun
+     */
+    resetWakes: Array<RunResetWake>;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    archivedAt: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    attentionAt: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    seenAt: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    notes: string | null;
+    /**
+     * Each agent's own task list as it stands now, folded from the whole transcript
+     * @type {Array<RunTaskGroup>}
+     * @memberof CommandCenterCardRun
+     */
+    taskList: Array<RunTaskGroup>;
+    /**
+     * 
+     * @type {StageProgress}
+     * @memberof CommandCenterCardRun
+     */
+    stages: StageProgress | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    currentLead: string | null;
+    /**
+     * The run's goals as the goals tool and the user left them, open and closed
+     * @type {Array<RunGoal>}
+     * @memberof CommandCenterCardRun
+     */
+    goals: Array<RunGoal>;
+    /**
+     * 
+     * @type {ThreadOutcome}
+     * @memberof CommandCenterCardRun
+     */
+    outcome: ThreadOutcome | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    workedMs: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    toolCalls: number | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterCardRun
+     */
+    promptCacheExpiresAt: string | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof CommandCenterCardRun
+     */
+    promptCacheTtlMs: number | null;
+    /**
+     * 
+     * @type {PromptCacheTtlReason}
+     * @memberof CommandCenterCardRun
+     */
+    promptCacheTtlReason: PromptCacheTtlReason | null;
+}
+
+
+/**
+ * 
+ * @export
+ * @interface CommandCenterChatsDiscardedDto
+ */
+export interface CommandCenterChatsDiscardedDto {
+    /**
+     * 
+     * @type {number}
+     * @memberof CommandCenterChatsDiscardedDto
+     */
+    deleted: number;
+}
+
+/**
+ * 
+ * @export
+ */
+export const CommandCenterColumn = {
+    Working: 'working',
+    Waiting: 'waiting',
+    Idle: 'idle',
+    InReview: 'in_review',
+    Done: 'done'
+} as const;
+export type CommandCenterColumn = typeof CommandCenterColumn[keyof typeof CommandCenterColumn];
+
+/**
+ * 
+ * @export
+ * @interface CommandCenterStart
+ */
+export interface CommandCenterStart {
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterStart
+     */
+    taskId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterStart
+     */
+    projectId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterStart
+     */
+    title: string;
+    /**
+     * 
+     * @type {TaskStatus}
+     * @memberof CommandCenterStart
+     */
+    status: TaskStatus;
+    /**
+     * The card's folder, else its project's — where the worktree is cut
+     * @type {string}
+     * @memberof CommandCenterStart
+     */
+    folder: string;
+}
+
+
+/**
+ * 
+ * @export
+ * @interface CommandCenterStartFailedDto
+ */
+export interface CommandCenterStartFailedDto {
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterStartFailedDto
+     */
+    reason: string;
+}
+/**
+ * 
+ * @export
+ * @interface CommandCenterStartsDto
+ */
+export interface CommandCenterStartsDto {
+    /**
+     * 
+     * @type {Array<CommandCenterStart>}
+     * @memberof CommandCenterStartsDto
+     */
+    starts: Array<CommandCenterStart>;
+}
+/**
+ * 
+ * @export
+ * @interface CommandCenterTaskRef
+ */
+export interface CommandCenterTaskRef {
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterTaskRef
+     */
+    id: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterTaskRef
+     */
+    identifier: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterTaskRef
+     */
+    title: string;
+    /**
+     * 
+     * @type {TaskStatus}
+     * @memberof CommandCenterTaskRef
+     */
+    status: TaskStatus;
+}
+
+
+/**
+ * 
+ * @export
+ * @interface CommandCenterTimelineDto
+ */
+export interface CommandCenterTimelineDto {
+    /**
+     * 
+     * @type {Array<CommandCenterTimelineEvent>}
+     * @memberof CommandCenterTimelineDto
+     */
+    events: Array<CommandCenterTimelineEvent>;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterTimelineDto
+     */
+    nextBefore: string | null;
+}
+/**
+ * 
+ * @export
+ * @interface CommandCenterTimelineEvent
+ */
+export interface CommandCenterTimelineEvent {
+    /**
+     * `<kind>:<source row id>`, stable across pages
+     * @type {string}
+     * @memberof CommandCenterTimelineEvent
+     */
+    id: string;
+    /**
+     * When it happened, ISO 8601
+     * @type {string}
+     * @memberof CommandCenterTimelineEvent
+     */
+    at: string;
+    /**
+     * 
+     * @type {CommandCenterTimelineKind}
+     * @memberof CommandCenterTimelineEvent
+     */
+    kind: CommandCenterTimelineKind;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterTimelineEvent
+     */
+    threadRunId: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterTimelineEvent
+     */
+    threadTitle: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterTimelineEvent
+     */
+    text: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof CommandCenterTimelineEvent
+     */
+    detail: string | null;
+    /**
+     * The manager waits on the thread to answer this message
+     * @type {boolean}
+     * @memberof CommandCenterTimelineEvent
+     */
+    awaitingReply: boolean;
+}
+
+
+
+/**
+ * 
+ * @export
+ */
+export const CommandCenterTimelineKind = {
+    UserMessage: 'user_message',
+    ManagerMessage: 'manager_message',
+    ThreadMessage: 'thread_message',
+    ThreadStarted: 'thread_started',
+    StartRequested: 'start_requested',
+    PullRequest: 'pull_request',
+    Question: 'question',
+    Approval: 'approval',
+    Stage: 'stage',
+    Outcome: 'outcome',
+    Failed: 'failed'
+} as const;
+export type CommandCenterTimelineKind = typeof CommandCenterTimelineKind[keyof typeof CommandCenterTimelineKind];
+
+/**
+ * 
+ * @export
  * @interface ConfigDirPin
  */
 export interface ConfigDirPin {
@@ -14845,6 +15506,81 @@ export type StageStatus = typeof StageStatus[keyof typeof StageStatus];
 /**
  * 
  * @export
+ * @interface StartCommandCenterChatDto
+ */
+export interface StartCommandCenterChatDto {
+    /**
+     * 
+     * @type {AgentKind}
+     * @memberof StartCommandCenterChatDto
+     */
+    agentKind: AgentKind;
+    /**
+     * 
+     * @type {string}
+     * @memberof StartCommandCenterChatDto
+     */
+    model?: string;
+    /**
+     * 
+     * @type {ChatApprovalMode}
+     * @memberof StartCommandCenterChatDto
+     */
+    approval?: ChatApprovalMode;
+    /**
+     * 
+     * @type {string}
+     * @memberof StartCommandCenterChatDto
+     */
+    effort?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof StartCommandCenterChatDto
+     */
+    contextWindow?: string;
+    /**
+     * 
+     * @type {number}
+     * @memberof StartCommandCenterChatDto
+     */
+    autoCompactPercent?: number;
+    /**
+     * 
+     * @type {{ [key: string]: string; }}
+     * @memberof StartCommandCenterChatDto
+     */
+    modelParameters?: { [key: string]: string; };
+    /**
+     * 
+     * @type {string}
+     * @memberof StartCommandCenterChatDto
+     */
+    configDir?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof StartCommandCenterChatDto
+     */
+    customInstructions?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof StartCommandCenterChatDto
+     */
+    replyLanguage?: string;
+    /**
+     * 
+     * @type {{ [key: string]: { [key: string]: boolean; }; }}
+     * @memberof StartCommandCenterChatDto
+     */
+    agentOptions?: { [key: string]: { [key: string]: boolean; }; };
+}
+
+
+/**
+ * 
+ * @export
  * @interface StartProjectChatDto
  */
 export interface StartProjectChatDto {
@@ -15040,7 +15776,8 @@ export interface StartTaskRunDto {
  */
 export const StartTaskRunDtoStartedByEnum = {
     User: 'user',
-    Autopilot: 'autopilot'
+    Autopilot: 'autopilot',
+    Manager: 'manager'
 } as const;
 export type StartTaskRunDtoStartedByEnum = typeof StartTaskRunDtoStartedByEnum[keyof typeof StartTaskRunDtoStartedByEnum];
 

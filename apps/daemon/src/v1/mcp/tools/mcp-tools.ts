@@ -5,6 +5,8 @@ import type { AttachmentStoreService } from '../../agents/services/attachment-st
 import type { BrowserBroker } from '../../agents/services/browser.broker';
 import type { ChartBroker } from '../../agents/services/chart.broker';
 import type { ChatArtifactsService } from '../../agents/services/chat-artifacts.service';
+import type { CommandCenterBroker } from '../../agents/services/command-center.broker';
+import type { CommandCenterOpsBroker } from '../../agents/services/command-center-ops.broker';
 import type { ComparisonBroker } from '../../agents/services/comparison.broker';
 import type { FindingsReportBroker } from '../../agents/services/findings-report.broker';
 import type { GalleryBroker } from '../../agents/services/gallery.broker';
@@ -70,6 +72,7 @@ import { MessageAgentTool } from './message-agent/message-agent.tool';
 import { MessageThreadTool } from './message-thread/message-thread.tool';
 import { MonitorTool } from './monitor/monitor.tool';
 import { MoveStageTool } from './move-stage/move-stage.tool';
+import { NoteThreadTool } from './note-thread/note-thread.tool';
 import { NotifyUserTool } from './notify-user/notify-user.tool';
 import { ProposeLessonsTool } from './propose-lessons/propose-lessons.tool';
 import { ProposePatchTool } from './propose-patch/propose-patch.tool';
@@ -91,9 +94,11 @@ import { ShowChartTool } from './show-chart/show-chart.tool';
 import { ShowComparisonTool } from './show-comparison/show-comparison.tool';
 import { ShowGalleryTool } from './show-gallery/show-gallery.tool';
 import { ShowMetricsTool } from './show-metrics/show-metrics.tool';
+import { StartThreadTool } from './start-thread/start-thread.tool';
 import { StopMonitorTool } from './stop-monitor/stop-monitor.tool';
 import { TeamNoteTool } from './team-note/team-note.tool';
 import { TeamNotesTool } from './team-notes/team-notes.tool';
+import { TellThreadsTool } from './tell-threads/tell-threads.tool';
 
 /** The DI token the ordered tool list is provided under. */
 export const MCP_TOOLS = Symbol('MCP_TOOLS');
@@ -143,6 +148,8 @@ export interface McpToolDeps {
   teamProposals: TeamProposalService;
   shares: ShareService;
   threadDelivery: ThreadDeliveryService;
+  commandCenters: CommandCenterBroker;
+  commandCenterOps: CommandCenterOpsBroker;
 }
 
 /**
@@ -195,6 +202,9 @@ function allMcpTools(deps: McpToolDeps): McpTool[] {
     new ReadChatContextTool(deps.history),
     new ListThreadsTool(deps.threadDelivery, deps),
     new MessageThreadTool(deps.threadDelivery, deps),
+    new TellThreadsTool(deps.commandCenters, deps.commandCenterOps),
+    new NoteThreadTool(deps.commandCenters, deps.commandCenterOps),
+    new StartThreadTool(deps.commandCenters, deps.commandCenterOps),
     new MemorySearchTool(deps.memory),
     new MemoryReadTool(deps.memory),
     new MemorySaveTool(deps.memory),

@@ -418,13 +418,15 @@ export const TASKS_AWAITING_MERGE_MAX = 100;
  * Who pressed it.
  *
  * The autopilot's starts are bounded by the project's cap and stopped by its
- * breaker; a person's are not. The cap protects the machine from a TIMER that
+ * breaker; a person's are not, and neither are the command center
+ * manager's, which the user's Start (or a manager chat in `auto`) already
+ * approved. The cap protects the machine from a TIMER that
  * would otherwise fan out as fast as the queue allows, and the breaker exists
  * to stop unattended work — a user pressing Run is attending, and refusing
  * them is how they would be prevented from checking whether the thing that
  * broke is fixed before re-arming.
  */
-export const TaskRunStarterSchema = z.enum(['user', 'autopilot']);
+export const TaskRunStarterSchema = z.enum(['user', 'autopilot', 'manager']);
 export type TaskRunStarter = z.infer<typeof TaskRunStarterSchema>;
 
 export interface StartTaskRun {

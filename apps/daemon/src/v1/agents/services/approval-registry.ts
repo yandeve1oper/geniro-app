@@ -275,4 +275,9 @@ export class ApprovalRegistry {
   listByRun(runId: string): PendingApproval[] {
     return [...this.pending.values()].filter((p) => p.runId === runId);
   }
+
+  /** Every run with at least one card pending, whatever kind. */
+  runIdsWithPending(): string[] {
+    return [...new Set([...this.pending.values()].map((p) => p.runId))];
+  }
 }

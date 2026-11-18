@@ -10,7 +10,9 @@ import { redactSecrets } from '../../diagnostics/utils/redact';
 import type { ThreadMessage } from '../../runs/entity/thread-message.entity';
 import type {
   HostWakeOwner,
+  ThreadContact,
   ThreadMessageReason,
+  ThreadMessageReply,
   ThreadMessageRowEntry,
   WaitingMessageWire,
 } from '../chat.types';
@@ -23,6 +25,7 @@ import {
   THREAD_MESSAGE_REPEAT_WINDOW_MS,
   THREAD_MESSAGES_PER_MINUTE,
   THREAD_MESSAGES_TURN_MAX_CHARS,
+  threadMessageExcerpt,
   threadMessageNotDeliveredNote,
   threadMessageNotDeliveredSentence,
   UNTITLED_THREAD,
@@ -43,6 +46,8 @@ export interface ThreadMessageDraft {
   toRunId: string;
   text: string;
   wake: boolean;
+  /** Until when the first reply from the receiver may wake the sender past its budgets. */
+  replyCreditUntil?: Date | null;
 }
 
 /**
@@ -152,10 +157,18 @@ export class ThreadInboxService {
         toRunId: draft.toRunId,
         text,
         wake: draft.wake,
+        replyCreditUntil: draft.replyCreditUntil ?? null,
       },
       em,
     );
     this.bus.publishThreadMessagesChanged(draft.toRunId);
+    this.bus.publishThreadMessageSent({
+      messageId: row.id,
+      fromRunId,
+      toRunId: draft.toRunId,
+      at: row.createdAt,
+      expectsReply: row.replyCreditUntil !== null,
+    });
     return row;
   }
 
@@ -174,9 +187,30 @@ export class ThreadInboxService {
         break;
       }
       this.takenAt.set(message.id, now);
-      taken.push(rowEntryOf(message));
+      taken.push({
+        ...rowEntryOf(message),
+        inReplyTo: await this.replyBefore(message, txEm),
+      });
     }
     return taken;
+  }
+
+  private async replyBefore(
+    message: ThreadMessage,
+    txEm?: EntityManager,
+  ): Promise<ThreadMessageReply | null> {
+    const reply = await this.messages.lastSentBefore(
+      message.toRunId,
+      message.fromRunId,
+      message.createdAt,
+      txEm,
+    );
+    return reply === null
+      ? null
+      : {
+          text: threadMessageExcerpt(reply.text),
+          at: reply.createdAt.toISOString(),
+        };
   }
 
   async markDelivered(
@@ -231,6 +265,35 @@ export class ThreadInboxService {
 
   wakesInLastHour(runId: string): Promise<number> {
     return this.messages.sumWakesSince(runId, new Date(Date.now() - HOUR_MS));
+  }
+
+  /** Spend the reply credit `managerRunId` holds on `threadRunId`; true when one was live. */
+  async spendReplyCredit(
+    managerRunId: string,
+    threadRunId: string,
+  ): Promise<boolean> {
+    const spent = await this.messages.spendReplyCredit(
+      managerRunId,
+      threadRunId,
+      new Date(),
+    );
+    if (spent) {
+      this.bus.publishReplyCreditSpent({
+        fromRunId: managerRunId,
+        toRunId: threadRunId,
+      });
+    }
+    return spent;
+  }
+
+  /** Every message to or from `runId` since `since`, oldest first — ends and credit only. */
+  contactsOf(runId: string, since: Date): Promise<ThreadContact[]> {
+    return this.messages.contactsOf(runId, since);
+  }
+
+  /** The threads `fromRunId` still waits on a reply from, by live reply credit. */
+  awaitingRepliesFrom(fromRunId: string): Promise<Set<string>> {
+    return this.messages.awaitingRepliesFrom(fromRunId, new Date());
   }
 
   joinsInLastHour(runId: string): Promise<number> {

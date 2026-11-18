@@ -134,12 +134,18 @@ export class ThreadDeliveryService implements OnModuleInit {
   }
 
   /**
-   * Whether this run may reach other threads, as the kind of thread it is. Read
-   * from the row, since `tools/call` skips the listing's gate.
+   * Whether this run may reach other threads through `list_threads` and
+   * `message_thread`, as the kind of thread it is. Read from the row, since
+   * `tools/call` skips the listing's gate. The command center's manager is
+   * refused: it reaches its threads through `tell_threads` alone.
    */
   async senderTarget(runId: string): Promise<'chat' | 'team' | null> {
     const run = await this.runDao.getById(runId, this.em.fork());
-    if (run === null || !isMessageableThread(run)) {
+    if (
+      run === null ||
+      !isMessageableThread(run) ||
+      run.commandCenter === true
+    ) {
       return null;
     }
     return run.teamId === null ? 'chat' : 'team';
@@ -226,7 +232,8 @@ export class ThreadDeliveryService implements OnModuleInit {
     );
   }
 
-  private statusOf(run: Run): ThreadListRow['status'] {
+  /** What a thread is doing, as `list_threads` and the command center name it. */
+  statusOf(run: Run): ThreadListRow['status'] {
     if (this.awaitsAnswer(run) || this.parkedOn(run) !== null) {
       return 'needs_user';
     }
@@ -245,6 +252,7 @@ export class ThreadDeliveryService implements OnModuleInit {
     toRunId: string;
     text: string;
     wake: boolean;
+    replyCreditUntil?: Date | null;
   }): Promise<ThreadMessageAnswer> {
     const fromMember =
       draft.from.target === 'team'
@@ -364,13 +372,64 @@ export class ThreadDeliveryService implements OnModuleInit {
     if (run === null || run.archivedAt !== null || first === undefined) {
       return { outcome: 'waiting', reason: null };
     }
+    const creditors = await this.repliesOnCredit(runId, messages);
+    const routed = await this.routeTo(run, first, messages, {
+      mayJoin,
+      resending,
+      pressed,
+      credited: creditors.length > 0,
+    });
+    if (routed.outcome === 'joined' || routed.outcome === 'woken') {
+      for (const threadRunId of creditors) {
+        await this.inbox.spendReplyCredit(runId, threadRunId);
+      }
+    }
+    return routed;
+  }
+
+  /**
+   * The senders among `messages` that `runId` still holds a live reply credit
+   * on. A credit is spent only once its reply reached the receiver, so a reply
+   * held back (cold and large, a running turn) keeps it for the next attempt.
+   */
+  private async repliesOnCredit(
+    runId: string,
+    messages: readonly Routable[],
+  ): Promise<string[]> {
+    const awaited = await this.inbox.awaitingRepliesFrom(runId);
+    if (awaited.size === 0) {
+      return [];
+    }
+    return [
+      ...new Set(
+        messages
+          .map((message) => message.fromRunId)
+          .filter((fromRunId) => awaited.has(fromRunId)),
+      ),
+    ];
+  }
+
+  private async routeTo(
+    run: Run,
+    first: Routable,
+    messages: readonly Routable[],
+    {
+      mayJoin,
+      resending,
+      pressed,
+      credited,
+    }: Required<RouteTerms> & { credited: boolean },
+  ): Promise<Routed> {
+    const runId = run.id;
     if (mayJoin) {
       const overBudget =
+        !pressed &&
+        !credited &&
         (await this.inbox.joinsInLastHour(runId)) >= THREAD_JOINS_PER_HOUR;
       const joined =
         run.teamId === null
-          ? await this.joinChat(run, messages, overBudget && !pressed)
-          : await this.joinTeam(run, messages, overBudget && !pressed);
+          ? await this.joinChat(run, messages, overBudget)
+          : await this.joinTeam(run, messages, overBudget);
       if (joined === 'joined') {
         return { outcome: 'joined', reason: null };
       }
@@ -381,7 +440,13 @@ export class ThreadDeliveryService implements OnModuleInit {
         return this.leave(runId, messages, 'wake_limit');
       }
     }
-    const reason = await this.whyNotWake(run, messages, resending, pressed);
+    const reason = await this.whyNotWake(
+      run,
+      messages,
+      resending,
+      pressed,
+      credited,
+    );
     if (reason !== null) {
       return this.leave(runId, messages, reason);
     }
@@ -517,6 +582,7 @@ export class ThreadDeliveryService implements OnModuleInit {
     messages: readonly Routable[],
     resending: boolean,
     pressed: boolean,
+    credited: boolean,
   ): Promise<ThreadMessageReason | null> {
     if (run.status === 'cancelled') {
       return 'stopped';
@@ -545,6 +611,9 @@ export class ThreadDeliveryService implements OnModuleInit {
     }
     if (await this.isCold(run)) {
       return 'cold_and_large';
+    }
+    if (credited) {
+      return null;
     }
     return (await this.inbox.wakesInLastHour(run.id)) >= THREAD_WAKES_PER_HOUR
       ? 'wake_limit'

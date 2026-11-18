@@ -16,6 +16,7 @@ export const THREAD_INBOX_MAX_WAITING = 50;
 export const THREAD_WAKES_PER_HOUR = 6;
 export const THREAD_JOINS_PER_HOUR = 30;
 export const UNTITLED_THREAD = 'Untitled thread';
+export const THREAD_MESSAGE_EXCERPT_MAX_CHARS = 200;
 
 /**
  * The prompt of a turn geniro opens for a waiting message. The message itself
@@ -80,9 +81,18 @@ export function threadMessagesRow(
       fromTitle: message.fromTitle,
       fromMember: message.fromMember,
       text: message.text,
+      inReplyTo: message.inReplyTo ?? null,
     })),
     woke: false,
   };
+}
+
+export function threadMessageExcerpt(text: string): string {
+  const line = oneLine(text);
+  const chars = [...line];
+  return chars.length <= THREAD_MESSAGE_EXCERPT_MAX_CHARS
+    ? line
+    : `${chars.slice(0, THREAD_MESSAGE_EXCERPT_MAX_CHARS - 1).join('')}…`;
 }
 
 /** The opening row of a turn a message woke. */

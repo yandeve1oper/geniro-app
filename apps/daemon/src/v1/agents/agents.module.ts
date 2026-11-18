@@ -81,6 +81,8 @@ import { ChatTitleService } from './services/chat-title.service';
 import { ChatUploadStoreService } from './services/chat-upload-store.service';
 import { ChatWaterfallService } from './services/chat-waterfall.service';
 import { CliSessionsService } from './services/cli-sessions.service';
+import { CommandCenterBroker } from './services/command-center.broker';
+import { CommandCenterOpsBroker } from './services/command-center-ops.broker';
 import { CommandEndWakeService } from './services/command-end-wake.service';
 import { ComparisonBroker } from './services/comparison.broker';
 import { ConfigDirPinService } from './services/config-dir-pin.service';
@@ -273,6 +275,8 @@ import { defaultSpawn } from './utils/spawn-cli';
     KnowledgeItemsService,
     ProjectInstructionsBroker,
     ProjectChatBroker,
+    CommandCenterBroker,
+    CommandCenterOpsBroker,
     ChartBroker,
     PatchBroker,
     ComparisonBroker,
@@ -709,6 +713,8 @@ import { defaultSpawn } from './utils/spawn-cli';
     TeamProposalBroker,
     TeamBuilderBroker,
     ProjectChatBroker,
+    CommandCenterBroker,
+    CommandCenterOpsBroker,
     // And the store behind it: a TEAM member publishes a page too, and the
     // executor is the turn that persists that row.
     ArtifactStoreService,

@@ -79,6 +79,25 @@ describe('DaemonKeepAlive', () => {
     expect(closes).toEqual(['http://127.0.0.1:47615']);
   });
 
+  // An armed project and a waiting thread start are two reasons, one socket:
+  // the socket stays while either holds, and closes only when the last lets go.
+  it('keeps the daemon held while any reason holds, and releases after the last', () => {
+    const keepAlive = new DaemonKeepAlive();
+    keepAlive.useDaemon(handle());
+
+    keepAlive.hold('thread-start', true);
+    keepAlive.setArmed(true);
+    expect(io).toHaveBeenCalledTimes(1);
+
+    keepAlive.hold('thread-start', false);
+    expect(keepAlive.held).toBe(true);
+    expect(closes).toEqual([]);
+
+    keepAlive.setArmed(false);
+    expect(keepAlive.held).toBe(false);
+    expect(closes).toEqual(['http://127.0.0.1:47615']);
+  });
+
   it('holds ONE socket however many times arming is restated', () => {
     const keepAlive = new DaemonKeepAlive();
     keepAlive.useDaemon(handle());

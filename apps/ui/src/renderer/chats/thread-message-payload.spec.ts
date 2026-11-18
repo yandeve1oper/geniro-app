@@ -47,6 +47,7 @@ describe('readThreadMessageRow', () => {
           fromTitle: 'Pelican',
           fromMember: null,
           text: 'hi',
+          inReplyTo: null,
         },
         {
           id: 'm2',
@@ -54,6 +55,50 @@ describe('readThreadMessageRow', () => {
           fromTitle: 'Otter',
           fromMember: 'Backend Engineer',
           text: 'line one\nline two',
+          inReplyTo: null,
+        },
+      ],
+    });
+  });
+
+  it('reads the reply a message answers, and null for a message that answers none', () => {
+    const row = readThreadMessageRow({
+      ...RECEIVED,
+      threadMessages: [
+        {
+          ...RECEIVED.threadMessages[1],
+          inReplyTo: { text: 'which build?', at: '2026-11-06T10:00:00.000Z' },
+        },
+        { ...RECEIVED.threadMessages[0], inReplyTo: null },
+        { ...RECEIVED.threadMessages[0], id: 'm3', inReplyTo: 'a reply' },
+      ],
+    });
+    expect(row).toEqual({
+      kind: 'received',
+      messages: [
+        {
+          id: 'm2',
+          fromRunId: 'r-otter',
+          fromTitle: 'Otter',
+          fromMember: 'Backend Engineer',
+          text: 'line one\nline two',
+          inReplyTo: { text: 'which build?', at: '2026-11-06T10:00:00.000Z' },
+        },
+        {
+          id: 'm1',
+          fromRunId: 'r-pelican',
+          fromTitle: 'Pelican',
+          fromMember: null,
+          text: 'hi',
+          inReplyTo: null,
+        },
+        {
+          id: 'm3',
+          fromRunId: 'r-pelican',
+          fromTitle: 'Pelican',
+          fromMember: null,
+          text: 'hi',
+          inReplyTo: null,
         },
       ],
     });
@@ -152,7 +197,7 @@ describe('readThreadMessageRow', () => {
     });
     expect(row).toEqual({
       kind: 'received',
-      messages: [RECEIVED.threadMessages[0]],
+      messages: [{ ...RECEIVED.threadMessages[0], inReplyTo: null }],
     });
   });
 });

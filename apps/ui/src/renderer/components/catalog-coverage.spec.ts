@@ -51,6 +51,7 @@ const FEATURE_NAMESPACES = {
   projects: 'Projects/',
   knowledge: 'Knowledge/',
   settings: 'Settings/',
+  'command-center': 'Command center/',
 };
 
 /**

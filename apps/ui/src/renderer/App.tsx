@@ -82,6 +82,11 @@ const Projects = lazy(() =>
 const Knowledge = lazy(() =>
   import('./knowledge/Knowledge').then((m) => ({ default: m.Knowledge })),
 );
+const CommandCenter = lazy(() =>
+  import('./command-center/CommandCenter').then((m) => ({
+    default: m.CommandCenter,
+  })),
+);
 
 type Phase = 'loading' | 'onboarding' | 'ready';
 
@@ -94,6 +99,7 @@ type Phase = 'loading' | 'onboarding' | 'ready';
  */
 const VIEW_TITLE: Record<AppView, string> = {
   chats: 'Chats',
+  'command-center': 'Command center',
   teams: 'Teams',
   tasks: 'Tasks',
   projects: 'Projects',
@@ -134,6 +140,8 @@ function currentRoute(
       return { view: 'projects', projectId: shownProjectId };
     case 'knowledge':
       return { view: 'knowledge', documentId: shownDocumentId };
+    case 'command-center':
+      return { view: 'command-center' };
     case 'settings':
       return { view: 'settings' };
     case 'stats':
@@ -965,6 +973,20 @@ export function App(): React.JSX.Element {
                             place: projectPlace(projectId),
                           });
                           setView('knowledge');
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  {view === 'command-center' &&
+                  !showStartup &&
+                  handle !== null ? (
+                    <div className="min-h-0 flex-1">
+                      <CommandCenter
+                        handle={handle}
+                        client={clientRef.current}
+                        onOpenThread={(runId) => {
+                          setThreadRequest(runId);
+                          setView('chats');
                         }}
                       />
                     </div>

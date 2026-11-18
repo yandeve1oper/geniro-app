@@ -5227,12 +5227,18 @@ export const THREAD_MESSAGE_REASONS = [
 /** `joined` a running turn, `woken` a turn of its own, or left `waiting`. */
 export type ThreadMessageOutcome = 'joined' | 'woken' | 'waiting';
 
+export interface ThreadMessageReply {
+  text: string;
+  at: string;
+}
+
 export interface ThreadMessageRowEntry {
   id: string;
   fromRunId: string;
   fromTitle: string;
   fromMember: string | null;
   text: string;
+  inReplyTo?: ThreadMessageReply | null;
 }
 
 export interface ThreadMessageSentRow {
@@ -5378,6 +5384,31 @@ export interface ThreadListAnswer {
  */
 export interface ThreadMessagesChange {
   runId: string;
+}
+
+/** One message's ends and reply credit, as the command center reads its contacts. */
+export interface ThreadContact {
+  id: string;
+  fromRunId: string;
+  toRunId: string;
+  createdAt: Date;
+  replyCreditUntil: Date | null;
+  replyCreditSpentAt: Date | null;
+}
+
+/** One message between threads, as it was written — both ends, never the text. */
+export interface ThreadMessageSent {
+  messageId: string;
+  fromRunId: string;
+  toRunId: string;
+  at: Date;
+  expectsReply: boolean;
+}
+
+/** A reply reached the thread that asked for it: the asker no longer awaits it. */
+export interface ReplyCreditSpent {
+  fromRunId: string;
+  toRunId: string;
 }
 
 /** One message waiting for a thread, as its chip lists it. */
@@ -8093,6 +8124,8 @@ export interface RunListPage {
   limit?: number;
   before?: { createdAt: Date; id: string };
   runId?: string;
+  /** Narrows the listing to these runs; an empty list answers none. */
+  runIds?: readonly string[];
   active?: ActivityWindow;
 }
 
@@ -8527,6 +8560,7 @@ export interface ChatTextDatabase {
     team_id: Run['teamId'];
     project_id: Run['projectId'];
     edits_project_id: Run['editsProjectId'];
+    command_center: Run['commandCenter'];
     created_at: StoredDate;
     archived_at: StoredDate | null;
     edits_team_slug: Run['editsTeamSlug'];
@@ -8577,6 +8611,142 @@ export const HOST_SEARCH_CHATS_TOOL = 'search_chats';
 /** Wire names of the tools that reach another thread. */
 export const HOST_LIST_THREADS_TOOL = 'list_threads';
 export const HOST_MESSAGE_THREAD_TOOL = 'message_thread';
+
+/** Wire names of the command-center manager's own tools. */
+export const HOST_TELL_THREADS_TOOL = 'tell_threads';
+export const HOST_NOTE_THREAD_TOOL = 'note_thread';
+export const HOST_START_THREAD_TOOL = 'start_thread';
+
+/** How many managed threads one `tell_threads` call may reach. */
+export const TELL_THREADS_MAX_TARGETS = 12;
+/** The longest note `note_thread` keeps for one thread. */
+export const THREAD_NOTE_MAX_CHARS = 500;
+
+/** `tell_threads`' arguments. */
+export const TellThreadsSchema = z.object({
+  to: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(TELL_THREADS_MAX_TARGETS)
+    .describe(
+      `1 to ${TELL_THREADS_MAX_TARGETS} managed threads: each a roster handle (t3), a thread id, or a thread's exact title.`,
+    ),
+  message: z
+    .string()
+    .describe('The text every named thread reads, up to 16,000 characters.'),
+  expect_reply: z
+    .boolean()
+    .default(true)
+    .describe(
+      "True when you want each thread's answer: its first reply wakes you even past your wake budget, within 2 hours.",
+    ),
+});
+export type TellThreadsInput = z.infer<typeof TellThreadsSchema>;
+
+export type TellThreadsUnresolvedCode =
+  'AMBIGUOUS_TARGET' | 'THREAD_NOT_FOUND' | 'NOT_MANAGED';
+
+/** What `tell_threads` did: every target sent, or nothing when any is unresolved. */
+export interface TellThreadsAnswer {
+  sent: {
+    to: string;
+    runId: string;
+    title: string;
+    outcome: ThreadMessageOutcome | 'refused';
+    code: string | null;
+  }[];
+  unresolved: {
+    to: string;
+    code: TellThreadsUnresolvedCode;
+    candidates: { handle: string; title: string }[];
+  }[];
+}
+
+/** `note_thread`'s arguments. */
+export const NoteThreadSchema = z.object({
+  thread: z
+    .string()
+    .min(1)
+    .describe('A managed thread: its roster handle (t3), id, or exact title.'),
+  note: z
+    .string()
+    .max(THREAD_NOTE_MAX_CHARS)
+    .nullish()
+    .describe(
+      `Your own note on that thread, up to ${THREAD_NOTE_MAX_CHARS} characters; null, empty or left out clears it.`,
+    ),
+});
+export type NoteThreadInput = z.infer<typeof NoteThreadSchema>;
+
+export type NoteThreadAnswer =
+  | { status: 'noted'; handle: string; title: string }
+  | {
+      status: 'unresolved';
+      code: TellThreadsUnresolvedCode;
+      candidates: { handle: string; title: string }[];
+    };
+
+/** `start_thread`'s arguments. */
+export const StartThreadSchema = z.object({
+  project: z
+    .string()
+    .min(1)
+    .describe('The project to start the thread in: its id or exact name.'),
+  title: z.string().min(1).max(200).describe("The new thread's title."),
+  brief: z
+    .string()
+    .min(1)
+    .describe('What the new thread is to do — its card description.'),
+  agent: z
+    .string()
+    .optional()
+    .describe(
+      "A CLI to run it on (claude, codex, cursor); the project's default otherwise.",
+    ),
+  team: z
+    .string()
+    .optional()
+    .describe("A library team's slug to run it with, instead of one agent."),
+  note: z
+    .string()
+    .max(THREAD_NOTE_MAX_CHARS)
+    .optional()
+    .describe('Your note on the new thread, kept on your roster.'),
+});
+export type StartThreadInput = z.infer<typeof StartThreadSchema>;
+
+export type StartThreadAnswer =
+  | {
+      status: 'card_shown' | 'starting';
+      taskId: string;
+      identifier: string | null;
+    }
+  | { status: 'refused'; code: string; reason: string };
+
+/**
+ * The command center's operations behind the manager's tools, installed by the
+ * command-center module (`CommandCenterOpsBroker`). Every method answers; a
+ * refusal is an outcome, never a throw.
+ */
+export interface CommandCenterOps {
+  tell(
+    managerRunId: string,
+    input: TellThreadsInput,
+  ): Promise<TellThreadsAnswer>;
+  note(managerRunId: string, input: NoteThreadInput): Promise<NoteThreadAnswer>;
+  start(
+    managerRunId: string,
+    input: StartThreadInput,
+  ): Promise<StartThreadAnswer>;
+}
+
+/** What the command-center module tells the chat service about its manager. */
+export interface CommandCenterSource {
+  /** The manager's standing brief: the roster, rewritten only when it changes. */
+  brief(managerRunId: string): Promise<string>;
+  /** The per-turn status table appended to the manager's prompt, or null. */
+  statusSuffix(managerRunId: string): Promise<string | null>;
+}
 
 /** The first line of every history tool result, ahead of its JSON. */
 export const HISTORY_RESULT_PREFACE =

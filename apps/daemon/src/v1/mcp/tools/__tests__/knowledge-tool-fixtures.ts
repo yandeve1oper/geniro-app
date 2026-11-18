@@ -1,4 +1,5 @@
 import { AnalysisBroker } from '../../../agents/services/analysis.broker';
+import { CommandCenterBroker } from '../../../agents/services/command-center.broker';
 import { ProjectChatBroker } from '../../../agents/services/project-chat.broker';
 import { TeamBuilderBroker } from '../../../agents/services/team-builder.broker';
 import type {
@@ -36,6 +37,7 @@ export function ordinaryChat(): ThreadToolGates {
     analysis: new AnalysisBroker(),
     teamBuilders: new TeamBuilderBroker(),
     projectChats: new ProjectChatBroker(),
+    commandCenters: new CommandCenterBroker(),
   };
 }
 

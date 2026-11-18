@@ -81,6 +81,8 @@ import type { AttachmentStoreService } from '../../agents/services/attachment-st
 import type { BrowserBroker } from '../../agents/services/browser.broker';
 import { ChartBroker } from '../../agents/services/chart.broker';
 import type { ChatArtifactsService } from '../../agents/services/chat-artifacts.service';
+import { CommandCenterBroker } from '../../agents/services/command-center.broker';
+import { CommandCenterOpsBroker } from '../../agents/services/command-center-ops.broker';
 import { ComparisonBroker } from '../../agents/services/comparison.broker';
 import { FindingsReportBroker } from '../../agents/services/findings-report.broker';
 import { GalleryBroker } from '../../agents/services/gallery.broker';
@@ -267,10 +269,14 @@ function service(
   knowledge = fakeKnowledge(false).service,
   // Never listed by the cases that pass none: no browser sink.
   browser = fakeBrowser({ status: 'done', text: '' }, false).broker,
+  // Off unless a case registers a sink: no manager tool is listed.
+  commandCenters = new CommandCenterBroker(),
 ): McpServerService {
   return new McpServerService(
     createMcpTools({
       threadDelivery: {} as ThreadDeliveryService,
+      commandCenters,
+      commandCenterOps: new CommandCenterOpsBroker(),
       calls: callBroker,
       questions,
       findings,
@@ -4706,6 +4712,8 @@ describe('McpServerService — what the descriptions tell a model', () => {
     });
     const tools = createMcpTools({
       threadDelivery: {} as ThreadDeliveryService,
+      commandCenters: new CommandCenterBroker(),
+      commandCenterOps: new CommandCenterOpsBroker(),
       browser: fakeBrowser({ status: 'done', text: '' }, false).broker,
       attachments: {} as AttachmentStoreService,
       calls: new CallBroker(),
@@ -4811,6 +4819,8 @@ describe('McpServerService — what the descriptions tell a model', () => {
     );
     return createMcpTools({
       threadDelivery: {} as ThreadDeliveryService,
+      commandCenters: new CommandCenterBroker(),
+      commandCenterOps: new CommandCenterOpsBroker(),
       browser: fakeBrowser({ status: 'done', text: '' }, false).broker,
       attachments: {} as AttachmentStoreService,
       calls: new CallBroker(),
@@ -5125,6 +5135,8 @@ describe('McpServerService — what the descriptions tell a model', () => {
     } as unknown as TeamStoreService;
     const tool = createMcpTools({
       threadDelivery: {} as ThreadDeliveryService,
+      commandCenters: new CommandCenterBroker(),
+      commandCenterOps: new CommandCenterOpsBroker(),
       browser: fakeBrowser({ status: 'done', text: '' }, false).broker,
       attachments: {} as AttachmentStoreService,
       calls: new CallBroker(),
@@ -5267,6 +5279,8 @@ describe('McpServerService — what the descriptions tell a model', () => {
       };
       const tool = createMcpTools({
         threadDelivery: {} as ThreadDeliveryService,
+        commandCenters: new CommandCenterBroker(),
+        commandCenterOps: new CommandCenterOpsBroker(),
         browser: fakeBrowser({ status: 'done', text: '' }, false).broker,
         attachments: {} as AttachmentStoreService,
         calls: new CallBroker(),
@@ -5414,6 +5428,8 @@ describe('McpServerService — what the descriptions tell a model', () => {
     const team = teamOf([member('lead')], { name: 'x' });
     const tools = createMcpTools({
       threadDelivery: {} as ThreadDeliveryService,
+      commandCenters: new CommandCenterBroker(),
+      commandCenterOps: new CommandCenterOpsBroker(),
       browser: fakeBrowser({ status: 'done', text: '' }, false).broker,
       attachments: {} as AttachmentStoreService,
       calls: new CallBroker(),
@@ -5482,6 +5498,8 @@ describe('McpServerService — what the descriptions tell a model', () => {
     ): ReturnType<typeof createMcpTools> =>
       createMcpTools({
         threadDelivery: {} as ThreadDeliveryService,
+        commandCenters: new CommandCenterBroker(),
+        commandCenterOps: new CommandCenterOpsBroker(),
         browser: fakeBrowser({ status: 'done', text: '' }, false).broker,
         attachments: {} as AttachmentStoreService,
         calls: new CallBroker(),

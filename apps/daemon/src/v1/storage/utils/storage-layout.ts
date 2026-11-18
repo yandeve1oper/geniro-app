@@ -13,6 +13,7 @@ import { SKILL_HARVEST_FILE_NAME } from '../../agents/services/skill-harvest.sto
 import { WALL_WORK_MARKER_FILE } from '../../agents/services/wall-work.service';
 import { CHILD_JOURNAL_FILE_NAME } from '../../agents/utils/child-journal';
 import { FOLDERLESS_DIR_NAME } from '../../agents/utils/folderless-dir';
+import { MANAGER_DIR_NAME } from '../../command-center/utils/manager-folder';
 import { DEBUG_LOG_DIR_NAME } from '../../diagnostics/utils/debug-sink';
 import { MEMORY_USAGE_MARKER_FILE } from '../../memory/services/memory-usage.service';
 import {
@@ -74,6 +75,7 @@ const NAMED: Readonly<Record<string, StorageGroupId>> = {
   [WALL_WORK_MARKER_FILE]: 'appState',
   [MEMORY_USAGE_MARKER_FILE]: 'appState',
   [COMPACTION_MARKER_FILE]: 'appState',
+  [MANAGER_DIR_NAME]: 'appState',
   [MIGRATION_ERROR_FILE]: 'appState',
   [MIGRATION_BACKUPS_DIR]: 'appState',
   [LEGACY_LIBRARY_DIR]: 'appState',

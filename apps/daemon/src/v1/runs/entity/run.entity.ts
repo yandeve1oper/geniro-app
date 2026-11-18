@@ -481,6 +481,14 @@ export class Run extends TimestampsEntity {
   editsProjectId: string | null = null;
 
   /**
+   * True on the command center's manager chat (`CommandCenterChatService`),
+   * hidden from the sidebar like a project chat. Unlike the other app-own
+   * chats it stays a messageable thread, so the threads it manages can reply.
+   */
+  @Property({ type: 'boolean', nullable: true })
+  commandCenter: boolean | null = null;
+
+  /**
    * What geniro tells that chat's agent about the file it owns — where it is,
    * and what a team document may contain; null for every run outside the
    * builder's panel.

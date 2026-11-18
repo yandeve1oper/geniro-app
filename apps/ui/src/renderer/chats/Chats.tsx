@@ -474,6 +474,7 @@ import { type WaitReading, waitReadings, waitsOnUser } from './waiting';
 import { WaitingMessagesStrip } from './waiting-messages-strip';
 import { type WorkingAgentRow, workingAgentRows } from './working-agents';
 import { WorkingAgentsCard } from './working-agents-card';
+import { WorkingThreadsCard } from './working-threads-card';
 
 /**
  * A follow-up typed while the agent was still working. It carries its images
@@ -969,6 +970,7 @@ export function Chats({
   const hostedRef = useRef(hosted);
   hostedRef.current = hosted;
   const isHosted = hosted !== null;
+  const hostedWorkingThreads = hosted?.workingThreads ?? [];
   const narrowViewport = useNarrowViewport() && !isHosted;
   /**
    * Whether a phone shows the new-chat COMPOSER page rather than the chat
@@ -10967,7 +10969,11 @@ export function Chats({
                       openTeamNote={
                         activeRun?.teamId != null ? openTeamNote : null
                       }
-                      openThread={isHosted ? null : handleActivateRun}
+                      openThread={
+                        isHosted
+                          ? (hosted?.onOpenThread ?? null)
+                          : handleActivateRun
+                      }
                       openMemory={onOpenMemory ?? null}
                       openKnowledge={onOpenKnowledge ? openKnowledge : null}
                       collapseToolSteps={collapseToolSteps}
@@ -11163,19 +11169,28 @@ export function Chats({
                         <div ref={transcriptEndRef} />
                       </div>
                       {activeRun === null ? null : (
-                        <WorkingAgentsCard
-                          key={activeRun.id}
-                          rows={startedAgents}
-                          runId={activeRun.id}
-                          api={chatApi}
-                          client={client}
-                          onShowInChat={openCall}
-                          nodes={nodeMeta}
-                          chatAgentName={activeRun.agentKind}
-                          delegateState={runState}
-                          collapseToolSteps={collapseToolSteps}
-                          work={startedAgentsWork}
-                        />
+                        <>
+                          {hostedWorkingThreads.length === 0 ? null : (
+                            <WorkingThreadsCard
+                              threads={hostedWorkingThreads}
+                              onOpenThread={hosted?.onOpenThread}
+                              beside={startedAgents.length > 0}
+                            />
+                          )}
+                          <WorkingAgentsCard
+                            key={activeRun.id}
+                            rows={startedAgents}
+                            runId={activeRun.id}
+                            api={chatApi}
+                            client={client}
+                            onShowInChat={openCall}
+                            nodes={nodeMeta}
+                            chatAgentName={activeRun.agentKind}
+                            delegateState={runState}
+                            collapseToolSteps={collapseToolSteps}
+                            work={startedAgentsWork}
+                          />
+                        </>
                       )}
                     </TranscriptContexts>
 

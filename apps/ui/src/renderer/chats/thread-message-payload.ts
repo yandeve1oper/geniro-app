@@ -12,12 +12,18 @@ export type ThreadMessageOutcome = 'joined' | 'woken' | 'waiting';
  * TWIN PARSER: `ThreadMessageRowEntry` in `apps/daemon/src/v1/agents/chat.types.ts`,
  * written by `threadMessagesRow` in `apps/daemon/src/v1/agents/utils/thread-message-text.ts`.
  */
+export interface ThreadMessageReply {
+  text: string;
+  at: string;
+}
+
 export interface ReceivedThreadMessage {
   id: string;
   fromRunId: string;
   fromTitle: string;
   fromMember: string | null;
   text: string;
+  inReplyTo: ThreadMessageReply | null;
 }
 
 /** A message this thread sent, and what became of it. */
@@ -77,10 +83,8 @@ function readReceived(value: unknown): ReceivedThreadMessage[] | null {
     if (entry === null || typeof entry !== 'object') {
       continue;
     }
-    const { id, fromRunId, fromTitle, fromMember, text } = entry as Record<
-      string,
-      unknown
-    >;
+    const { id, fromRunId, fromTitle, fromMember, text, inReplyTo } =
+      entry as Record<string, unknown>;
     if (
       typeof id === 'string' &&
       typeof fromRunId === 'string' &&
@@ -88,10 +92,27 @@ function readReceived(value: unknown): ReceivedThreadMessage[] | null {
       (fromMember === null || typeof fromMember === 'string') &&
       typeof text === 'string'
     ) {
-      messages.push({ id, fromRunId, fromTitle, fromMember, text });
+      messages.push({
+        id,
+        fromRunId,
+        fromTitle,
+        fromMember,
+        text,
+        inReplyTo: readReply(inReplyTo),
+      });
     }
   }
   return messages.length === 0 ? null : messages;
+}
+
+function readReply(value: unknown): ThreadMessageReply | null {
+  if (value === null || typeof value !== 'object') {
+    return null;
+  }
+  const { text, at } = value as Record<string, unknown>;
+  return typeof text === 'string' && typeof at === 'string'
+    ? { text, at }
+    : null;
 }
 
 function readWake(

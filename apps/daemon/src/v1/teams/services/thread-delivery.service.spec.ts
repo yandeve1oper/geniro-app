@@ -20,7 +20,10 @@ import type { ItemCallIndexService } from '../../agents/services/item-call-index
 import type { ItemSeqAllocator } from '../../agents/services/item-seq.allocator';
 import type { ProcessRegistry } from '../../agents/services/process-registry';
 import type { ThreadInboxService } from '../../agents/services/thread-inbox.service';
-import { THREAD_WAKE_PROMPT } from '../../agents/utils/thread-message-text';
+import {
+  THREAD_WAKE_PROMPT,
+  THREAD_WAKES_PER_HOUR,
+} from '../../agents/utils/thread-message-text';
 import type { ProjectDao } from '../../projects/dao/project.dao';
 import type { Run } from '../../runs/entity/run.entity';
 import type {
@@ -110,25 +113,47 @@ function harness(
     [SENDER, runOf({ id: SENDER, title: 'Sender' })],
   ]);
   const messages: Row[] = [];
+  const credits: {
+    fromRunId: string;
+    toRunId: string;
+    until: Date;
+    spent: boolean;
+  }[] = [];
   let nextId = 0;
   const inbox = {
-    accept: vi.fn(async (draft: { text: string; wake: boolean }) => {
-      const row: Row = {
-        id: `m${(nextId += 1)}`,
-        fromRunId: SENDER,
-        fromTitle: 'Sender',
-        fromMember: null,
-        text: draft.text,
-        wake: draft.wake,
-        wokeAt: null,
-        wakes: 0,
-        reason: null,
-        status: 'waiting',
-        deliveryId: null,
-      };
-      messages.push(row);
-      return row;
-    }),
+    accept: vi.fn(
+      async (draft: {
+        text: string;
+        wake: boolean;
+        from: HostWakeOwner;
+        toRunId: string;
+        replyCreditUntil?: Date | null;
+      }) => {
+        if (draft.replyCreditUntil) {
+          credits.push({
+            fromRunId: draft.from.runId,
+            toRunId: draft.toRunId,
+            until: draft.replyCreditUntil,
+            spent: false,
+          });
+        }
+        const row: Row = {
+          id: `m${(nextId += 1)}`,
+          fromRunId: draft.from.runId,
+          fromTitle: 'Sender',
+          fromMember: null,
+          text: draft.text,
+          wake: draft.wake,
+          wokeAt: null,
+          wakes: 0,
+          reason: null,
+          status: 'waiting',
+          deliveryId: null,
+        };
+        messages.push(row);
+        return row;
+      },
+    ),
     listOwed: vi.fn(async () =>
       messages.filter(
         (row) =>
@@ -192,6 +217,33 @@ function harness(
       row.wake = true;
       return row;
     }),
+    spendReplyCredit: vi.fn(async (fromRunId: string, toRunId: string) => {
+      const credit = credits.find(
+        (row) =>
+          row.fromRunId === fromRunId &&
+          row.toRunId === toRunId &&
+          !row.spent &&
+          row.until.getTime() > Date.now(),
+      );
+      if (credit === undefined) {
+        return false;
+      }
+      credit.spent = true;
+      return true;
+    }),
+    awaitingRepliesFrom: vi.fn(
+      async (fromRunId: string) =>
+        new Set(
+          credits
+            .filter(
+              (row) =>
+                row.fromRunId === fromRunId &&
+                !row.spent &&
+                row.until.getTime() > Date.now(),
+            )
+            .map((row) => row.toRunId),
+        ),
+    ),
     wakesInLastHour: vi.fn(async () => opts.wakes ?? 0),
     joinsInLastHour: vi.fn(async () => opts.joins ?? 0),
   };
@@ -277,6 +329,7 @@ function harness(
   return {
     service,
     runs,
+    credits,
     listThreads,
     messages,
     inbox,
@@ -1245,5 +1298,128 @@ describe('ThreadDeliveryService: who may reach whom', () => {
     expect(
       Object.fromEntries(listed.map((row) => [row.thread, row.status])),
     ).toEqual({ [TARGET]: 'stopped', team: 'needs_user', chat: 'needs_user' });
+  });
+});
+
+describe('ThreadDeliveryService: the reply credit', () => {
+  const MINUTE_MS = 60_000;
+  const HOUR_MS = 60 * MINUTE_MS;
+  const replyFrom: HostWakeOwner = {
+    target: 'chat',
+    runId: TARGET,
+    memberId: 'agent',
+    conversationId: null,
+    caller: 'agent',
+  };
+  const managerWakes = (h: ReturnType<typeof harness>) =>
+    h.published.filter((wake) => wake.key === `thread-message:${SENDER}`);
+  const askTarget = (
+    h: ReturnType<typeof harness>,
+    replyCreditUntil: Date | null,
+  ) =>
+    h.service.send({
+      from,
+      toRunId: TARGET,
+      text: 'rebase on main',
+      wake: true,
+      replyCreditUntil,
+    });
+  const replyToManager = (h: ReturnType<typeof harness>, text = 'done') =>
+    h.service.send({ from: replyFrom, toRunId: SENDER, text, wake: true });
+
+  it('wakes a manager over its wake budget once, for the first reply to its expect_reply message', async () => {
+    const h = harness({}, { wakes: THREAD_WAKES_PER_HOUR });
+    await askTarget(h, new Date(Date.now() + 2 * HOUR_MS));
+
+    const first = await replyToManager(h, 'rebase is green');
+    const second = await replyToManager(h, 'and pushed');
+
+    expect(first).toEqual({ outcome: 'woken', title: 'Sender' });
+    expect(managerWakes(h)).toHaveLength(1);
+    expect(second).toEqual({
+      outcome: 'waiting',
+      reason: 'wake_limit',
+      title: 'Sender',
+    });
+    expect(managerWakes(h)).toHaveLength(1);
+  });
+
+  it('does not wake a manager past its budget for a reply to a message that asked for none', async () => {
+    const h = harness({}, { wakes: THREAD_WAKES_PER_HOUR });
+    await askTarget(h, null);
+
+    const reply = await replyToManager(h);
+
+    expect(reply).toEqual({
+      outcome: 'waiting',
+      reason: 'wake_limit',
+      title: 'Sender',
+    });
+    expect(managerWakes(h)).toHaveLength(0);
+  });
+
+  it('does not wake a manager past its budget once its reply credit has run out', async () => {
+    const h = harness({}, { wakes: THREAD_WAKES_PER_HOUR });
+    await askTarget(h, new Date(Date.now() - MINUTE_MS));
+
+    const reply = await replyToManager(h);
+
+    expect(reply).toEqual({
+      outcome: 'waiting',
+      reason: 'wake_limit',
+      title: 'Sender',
+    });
+    expect(managerWakes(h)).toHaveLength(0);
+  });
+
+  it('does not wake a cold, large manager even on a reply that spends its credit', async () => {
+    const h = harness({}, { wakes: THREAD_WAKES_PER_HOUR });
+    Object.assign(h.runs.get(SENDER)!, {
+      promptCacheExpiresAt: new Date(Date.now() - HOUR_MS),
+      promptCacheTtlMs: 5 * MINUTE_MS,
+      contextTokens: 150_000,
+      contextWindowTokens: 200_000,
+    });
+    await askTarget(h, new Date(Date.now() + 2 * HOUR_MS));
+
+    const reply = await replyToManager(h);
+
+    expect(reply).toEqual({
+      outcome: 'waiting',
+      reason: 'cold_and_large',
+      title: 'Sender',
+    });
+    expect(managerWakes(h)).toHaveLength(0);
+    expect(h.credits).toEqual([expect.objectContaining({ spent: false })]);
+  });
+
+  it('keeps the credit of a reply a cold, large manager held back, and spends it on the next one that reaches it', async () => {
+    const h = harness({}, { wakes: THREAD_WAKES_PER_HOUR });
+    const manager = h.runs.get(SENDER)!;
+    Object.assign(manager, {
+      promptCacheExpiresAt: new Date(Date.now() - HOUR_MS),
+      promptCacheTtlMs: 5 * MINUTE_MS,
+      contextTokens: 150_000,
+      contextWindowTokens: 200_000,
+    });
+    await askTarget(h, new Date(Date.now() + 2 * HOUR_MS));
+    await replyToManager(h, 'held back');
+    Object.assign(manager, { contextTokens: 1_000 });
+
+    const next = await replyToManager(h, 'rebase is green');
+
+    expect(next).toEqual({ outcome: 'woken', title: 'Sender' });
+    expect(managerWakes(h)).toHaveLength(1);
+    expect(h.credits).toEqual([expect.objectContaining({ spent: true })]);
+  });
+
+  it('wakes a manager still under its budget on a reply, with or without credit', async () => {
+    const h = harness({}, { wakes: THREAD_WAKES_PER_HOUR - 1 });
+    await askTarget(h, null);
+
+    const reply = await replyToManager(h);
+
+    expect(reply).toEqual({ outcome: 'woken', title: 'Sender' });
+    expect(managerWakes(h)).toHaveLength(1);
   });
 });

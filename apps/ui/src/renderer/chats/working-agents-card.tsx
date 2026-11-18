@@ -42,13 +42,7 @@ import {
   type WorkingAgentRow,
   workingAgentsSummary,
 } from './working-agents';
-
-/**
- * A control of the panel under the pointer: the menu's row tint, since `muted`
- * is one shade off this popover surface in the dark theme.
- */
-const CONTROL_HOVER =
-  'transition-colors duration-150 ease-out hover:bg-accent motion-reduce:transition-none';
+import { AgentsTile, CONTROL_HOVER } from './working-card-parts';
 
 function failureSeenKey(row: WorkingAgentRow): string {
   return `working-agents:failure-seen:${row.callId}`;
@@ -59,57 +53,6 @@ function pressedOwnControl(event: React.MouseEvent): boolean {
   const control =
     event.target instanceof Element ? event.target.closest('button, a') : null;
   return control !== null && control !== event.currentTarget;
-}
-
-type TileActivity = 'working' | 'waiting' | 'idle';
-
-/** The folded card at rest: one readable face, how many more, and whether anyone works. */
-function AgentsTile({
-  lead,
-  others,
-  activity,
-}: {
-  lead: WorkingAgentRow;
-  others: number;
-  activity: TileActivity;
-}): React.JSX.Element {
-  return (
-    <span
-      data-slot="working-agents-tile"
-      data-activity={activity}
-      className={cn(
-        'relative grid size-8',
-        others > 0 ? 'place-items-start p-px' : 'place-items-center',
-      )}>
-      <span className="relative flex size-7 items-center justify-center">
-        {activity === 'idle' ? null : (
-          <span
-            aria-hidden="true"
-            data-slot="working-agents-tile-ring"
-            className={cn(
-              'absolute inset-0 rounded-full border-2',
-              activity === 'working'
-                ? 'animate-spin border-primary/25 border-t-primary motion-reduce:animate-none'
-                : 'border-muted-foreground/40',
-            )}
-          />
-        )}
-        <MemberAvatar
-          size={24}
-          name={lead.callee}
-          colorKey={lead.calleeKey}
-          avatar={lead.calleeAvatar}
-        />
-      </span>
-      {others > 0 ? (
-        <span
-          data-slot="working-agents-tile-more"
-          className="absolute right-px bottom-px rounded-full bg-popover px-0.5 text-[9px] leading-[10px] font-medium text-foreground tabular-nums">
-          +{others}
-        </span>
-      ) : null}
-    </span>
-  );
 }
 
 function openingFrom(
@@ -474,7 +417,11 @@ export function WorkingAgentsCard({
               <>
                 {tile === null ? null : (
                   <AgentsTile
-                    lead={tile.lead}
+                    face={{
+                      name: tile.lead.callee,
+                      colorKey: tile.lead.calleeKey,
+                      avatar: tile.lead.calleeAvatar,
+                    }}
                     others={tile.others}
                     activity={
                       anyoneWorking
