@@ -8811,3 +8811,9 @@ export type WireRow = Pick<
   | 'createdAt'
   | 'inCall'
 >;
+
+/**
+ * Why `RunIdleReapService.reap` stopped what a run's agents left running: the
+ * run sat unused for the kept-session window, or its card's work is finished.
+ */
+export type LeftProcessesCause = 'idle' | 'finished-card';

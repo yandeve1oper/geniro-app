@@ -11,6 +11,7 @@ import { RunDao } from '../../agents/dao/run.dao';
 import { AgentAdapterRegistry } from '../../agents/services/agent-adapter.registry';
 import { AgentEventBus } from '../../agents/services/agent-events.bus';
 import { AgentSessionRegistry } from '../../agents/services/agent-session.registry';
+import { RunIdleReapService } from '../../agents/services/run-idle-reap.service';
 import { RunTeardownService } from '../../agents/services/run-teardown.service';
 import {
   asRecord,
@@ -133,6 +134,7 @@ export class TaskSettleService implements OnModuleInit {
     private readonly sessions: AgentSessionRegistry,
     private readonly taskEvents: TaskEventBus,
     private readonly teardown: RunTeardownService,
+    private readonly idleReap: RunIdleReapService,
   ) {}
 
   onModuleInit(): void {
@@ -202,13 +204,17 @@ export class TaskSettleService implements OnModuleInit {
    * A card's work is FINISHED and its worktree is about to be collected: end
    * its run's processes now rather than at the end of the kept-session window.
    * The CLIs close gracefully first; a command the agent detached is outside
-   * their process group, so what is left is reaped once they are gone, never
-   * during, so the reap does not signal a CLI still finishing.
+   * their process group, so what is left is reaped once they are gone and
+   * their kill grace has passed, never during, so the reap does not signal a
+   * CLI still finishing. The reap is the idle one's
+   * ({@link RunIdleReapService.reap}): the transcript and the agent's next
+   * turn are told what was stopped.
    *
    * Asked again against the card and run as they are NOW, since the event was
    * written: a Run press or a Follow up landing in between has started a turn
-   * on the very process this would close. An archived or deleted run is left
-   * to its teardown, which reaps it once.
+   * on the very process this would close, and a turn in flight at the close
+   * skips it and the reap. An archived or deleted run is left to its teardown,
+   * which reaps it once, also when it lands during the grace.
    */
   private async endFinishedWork(taskId: string): Promise<void> {
     const em = this.em.fork();
@@ -227,8 +233,15 @@ export class TaskSettleService implements OnModuleInit {
     ) {
       return;
     }
-    await this.sessions.closeFinishedRun(task.runId);
-    this.teardown.reapDetached(task.runId);
+    const runId = task.runId;
+    if (!(await this.sessions.closeFinishedRun(runId))) {
+      return;
+    }
+    await this.idleReap.afterExitGrace(runId);
+    if (this.teardown.hasEnded(runId)) {
+      return;
+    }
+    await this.idleReap.reap(runId, 'finished-card');
   }
 
   /**

@@ -110,19 +110,54 @@ export function idleStoppedNote(
   executables: readonly string[],
   processes: number,
 ): SessionNote {
-  const count = processes === 1 ? '1 process' : `${processes} processes`;
   const window = `the kept-session window, ${minutes} min`;
+  return leftRunningNote(
+    `This conversation sat unused for ${window}`,
+    `While this conversation sat unused (${window})`,
+    commands,
+    executables,
+    processes,
+  );
+}
+
+/**
+ * The run's card was finished, so the `processes` its agents had left running
+ * outside any CLI were stopped before its worktree is collected — told as
+ * {@link idleStoppedNote} is.
+ */
+export function finishedStoppedNote(
+  commands: readonly string[],
+  executables: readonly string[],
+  processes: number,
+): SessionNote {
+  return leftRunningNote(
+    "This card's work is finished",
+    "When this card's work was finished",
+    commands,
+    executables,
+    processes,
+  );
+}
+
+function leftRunningNote(
+  why: string,
+  when: string,
+  commands: readonly string[],
+  executables: readonly string[],
+  processes: number,
+): SessionNote {
+  const count = processes === 1 ? '1 process' : `${processes} processes`;
   const named = executables.slice(0, MAX_NAMED_COMMANDS).map(clip);
   const more = executables.length - named.length;
   const starters =
     more > 0 ? `${named.join(', ')} and ${more} more` : named.join(', ');
   return {
     transcript:
-      `This conversation sat unused for ${window}, so geniro stopped ${count} its agents ` +
+      `${why}, so geniro stopped ${count} its agents ` +
       `had left running:\n${commandList(commands, commands.length)}\nThe next message ` +
       `lets the agent start again any it still needs.`,
     prompt:
-      `While this conversation sat unused (${window}), geniro stopped ${count} its agents ` +
+      `${when}, geniro stopped ${count} its agents ` +
       `had left running outside their own processes, started by: ${starters}. ` +
       `If you started any of them and still need it, start it again.`,
   };

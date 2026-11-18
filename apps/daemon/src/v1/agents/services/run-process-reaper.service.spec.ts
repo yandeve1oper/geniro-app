@@ -500,7 +500,7 @@ describe('RunProcessReaper', () => {
 });
 
 describe('createRunProcessReaper', () => {
-  it('leaves a finished card’s leftovers to the idle reap when a command action starts during its close', async () => {
+  it('stops nothing of a finished card’s run while a command action pressed during its close runs, and its leftovers once it ends', async () => {
     // Pressed while the card's CLIs were still exiting: the run is in use when
     // the finished card's reap scans, and that command's processes carry the
     // same run tag as what the agents left.
@@ -530,8 +530,7 @@ describe('createRunProcessReaper', () => {
     );
     const pressed = commands.start(RUN);
 
-    subject.reapInBackground(RUN);
-    await subject.settled();
+    expect(await subject.reapIdle(RUN)).toEqual([]);
     expect(signals).toEqual([]);
 
     pressed.release();

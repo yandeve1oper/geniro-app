@@ -758,6 +758,9 @@ import { defaultSpawn } from './utils/spawn-cli';
     // Exported for the team executor's own run delete: one teardown serves
     // both run kinds, so neither can drift out of clearing a store.
     RunTeardownService,
+    // For the task board, which stops what a finished card's agents left
+    // running and tells the run, as the idle reap does.
+    RunIdleReapService,
     // Exported for the team executor: a team run's rows are numbered by
     // the same allocator a chat's are, since its kept agent processes write
     // between passes.

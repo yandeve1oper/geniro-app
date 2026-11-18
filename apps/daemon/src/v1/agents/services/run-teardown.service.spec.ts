@@ -258,28 +258,14 @@ describe('RunTeardownService (in-memory sqlite)', () => {
     ]);
   });
 
-  it('reaps a finished card’s run ONCE when an archive lands during its close', () => {
-    // An archive in between has queued the run's reap already, and the reaper
-    // takes a batch off its queue before scanning, so a second request would
-    // be a second full reap.
-    teardown.endProcesses('run-a');
-    teardown.reapDetached('run-a');
-
-    expect(processEnds).toEqual(['closeRun run-a', 'reap run-a']);
-  });
-
-  it('says a run is ended once it is archived or deleted, and reaps nothing more', () => {
+  it('says a run is ended once it is archived or deleted', () => {
     expect(teardown.hasEnded('run-a')).toBe(false);
     teardown.endProcesses('run-a');
-    processEnds.length = 0;
 
     expect(teardown.hasEnded('run-a')).toBe(true);
-    teardown.reapDetached('run-a');
-
-    expect(processEnds).toEqual([]);
   });
 
-  it('hands a run back to its card’s Done when a delete fails before the run is gone', async () => {
+  it('hands a run back when a delete fails before the run is gone', async () => {
     await seedRun('run-a');
     const failing = vi
       .spyOn(wallTurnDao, 'hardDeleteIncludingSoftDeleted')
@@ -291,11 +277,8 @@ describe('RunTeardownService (in-memory sqlite)', () => {
     ).rejects.toThrow('disk full');
     expect(commands.isEnding('run-a')).toBe(false);
     expect(monitors.isEnding('run-a')).toBe(false);
-    processEnds.length = 0;
 
     expect(teardown.hasEnded('run-a')).toBe(false);
-    teardown.reapDetached('run-a');
-    expect(processEnds).toEqual(['reap run-a']);
   });
 
   it('keeps an ARCHIVED run ended when its delete fails before the row is gone', async () => {
@@ -320,11 +303,8 @@ describe('RunTeardownService (in-memory sqlite)', () => {
     ).not.toBeNull();
     expect(commands.isEnding('run-a')).toBe(true);
     expect(monitors.isEnding('run-a')).toBe(true);
-    processEnds.length = 0;
 
     expect(teardown.hasEnded('run-a')).toBe(true);
-    teardown.reapDetached('run-a');
-    expect(processEnds).toEqual([]);
   });
 
   it('keeps a run ended when a failed delete cannot read whether it is still live', async () => {
@@ -339,11 +319,8 @@ describe('RunTeardownService (in-memory sqlite)', () => {
     ).rejects.toThrow('database is locked');
     // Both reads failed: the purge's own and the hand-back's.
     expect(failing).toHaveBeenCalledTimes(2);
-    processEnds.length = 0;
 
     expect(teardown.hasEnded('run-a')).toBe(true);
-    teardown.reapDetached('run-a');
-    expect(processEnds).toEqual([]);
   });
 
   it('keeps a deleted run ended when a step after its row is gone fails', async () => {
@@ -364,22 +341,15 @@ describe('RunTeardownService (in-memory sqlite)', () => {
       teardown.purge(orm.em.fork(), 'run-a', undefined),
     ).rejects.toThrow('transcript store locked');
     expect(await runDao.getById('run-a', orm.em.fork())).toBeNull();
-    processEnds.length = 0;
 
     expect(teardown.hasEnded('run-a')).toBe(true);
-    teardown.reapDetached('run-a');
-    expect(processEnds).toEqual([]);
   });
 
-  it('reaps a finished card’s run again once it is back from the archive', () => {
+  it('says a run back from the archive is no longer ended', () => {
     teardown.endProcesses('run-a');
     teardown.resumeProcesses('run-a');
-    processEnds.length = 0;
 
     expect(teardown.hasEnded('run-a')).toBe(false);
-    teardown.reapDetached('run-a');
-
-    expect(processEnds).toEqual(['reap run-a']);
   });
 
   it('ends the command actions the run has running — that run’s only', () => {

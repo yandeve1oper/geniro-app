@@ -775,16 +775,27 @@ export class AgentSessionRegistry implements OnApplicationShutdown {
   }
 
   /**
-   * End every process a FINISHED card's run holds, gracefully, and resolve once
-   * each is gone, so the caller's reap never signals a CLI still finishing.
-   * Never rejects. A process whose close threw is not waited on: it is dropped
-   * from {@link closing} and left to that reap. An idle close under way is
-   * taken over, so the run's idle reap does not follow it.
+   * End every process a FINISHED card's run holds, gracefully, and resolve
+   * true once each is gone, so the caller's reap never signals a CLI still
+   * finishing. Never rejects. A process whose close threw is not waited on: it
+   * is dropped from {@link closing} and left to that reap. An idle close under
+   * way is taken over, so the run's idle reap does not follow it: the caller's
+   * reap tells the run instead.
+   *
+   * Resolves false, closing nothing, while any of the run's processes has a
+   * turn in flight: a message or a press that landed after the card was found
+   * finished has started work the user wants, and the caller reaps nothing.
+   *
+   * The close is never read as cutting the agent off: the card's work is
+   * finished, so off-turn rows shortly before are not work in progress.
    *
    * Unlike a teardown it keeps what an earlier close owed the key: the card can
    * run again, and its agent is then owed that news.
    */
-  closeFinishedRun(runId: string): Promise<void> {
+  closeFinishedRun(runId: string): Promise<boolean> {
+    if (this.turnsInFlight(runId) > 0) {
+      return Promise.resolve(false);
+    }
     const prefix = runSessionKeyPrefix(runId);
     const gone: Promise<void>[] = [];
     const awaitGone = (entry: SessionEntry): void => {
@@ -802,6 +813,7 @@ export class AgentSessionRegistry implements OnApplicationShutdown {
     }
     for (const [key, entry] of [...this.entries]) {
       if (key === runId || key.startsWith(prefix)) {
+        entry.offTurnActiveAt = 0;
         this.closeEntry(
           key,
           entry,
@@ -813,7 +825,7 @@ export class AgentSessionRegistry implements OnApplicationShutdown {
         awaitGone(entry);
       }
     }
-    return Promise.all(gone).then(() => undefined);
+    return Promise.all(gone).then(() => true);
   }
 
   /**

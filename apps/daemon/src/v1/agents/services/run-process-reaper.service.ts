@@ -190,9 +190,7 @@ export class RunProcessReaper {
         ...(waiter === null ? [] : [waiter]),
       ],
     });
-    this.draining ??= this.drain().finally(() => {
-      this.draining = null;
-    });
+    this.draining ??= this.drain();
     return true;
   }
 
@@ -203,30 +201,41 @@ export class RunProcessReaper {
     }
   }
 
+  /**
+   * Cleared in the same step that finds the queue empty: a waiter resumed by
+   * the last batch may queue again before a `.finally` would run, and that
+   * request would find a drain that has already stopped looking.
+   */
   private async drain(): Promise<void> {
-    while (this.queued.size > 0) {
-      const batch = [...this.queued];
-      this.queued.clear();
-      const runIds = batch.map(([id]) => id);
-      const conditional = new Set(
-        batch.filter(([, queued]) => queued.onlyIfStillGone).map(([id]) => id),
-      );
-      let stopped: Target[] = [];
-      try {
-        stopped = await this.reapTargets(runIds, conditional);
-      } catch (err: unknown) {
-        this.logger.warn(
-          `could not stop the processes of run(s) ${runIds.join(', ')}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+    try {
+      while (this.queued.size > 0) {
+        const batch = [...this.queued];
+        this.queued.clear();
+        const runIds = batch.map(([id]) => id);
+        const conditional = new Set(
+          batch
+            .filter(([, queued]) => queued.onlyIfStillGone)
+            .map(([id]) => id),
         );
+        let stopped: Target[] = [];
+        try {
+          stopped = await this.reapTargets(runIds, conditional);
+        } catch (err: unknown) {
+          this.logger.warn(
+            `could not stop the processes of run(s) ${runIds.join(', ')}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        for (const [runId, { waiters }] of batch) {
+          const rows = stopped
+            .filter((target) => target.runId === runId)
+            .map((target) => target.row);
+          waiters.forEach((waiter, index) => waiter(index === 0 ? rows : []));
+        }
       }
-      for (const [runId, { waiters }] of batch) {
-        const rows = stopped
-          .filter((target) => target.runId === runId)
-          .map((target) => target.row);
-        waiters.forEach((waiter, index) => waiter(index === 0 ? rows : []));
-      }
+    } finally {
+      this.draining = null;
     }
   }
 

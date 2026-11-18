@@ -1138,7 +1138,7 @@ describe('AgentSessionRegistry — a finished card’s close', () => {
 
   it('does not wait on a process whose close threw, and leaves it to the reap', async () => {
     // A close that threw may never settle `closed`: waiting on it would hold
-    // `TaskSettleService.endFinishedWork` before `reapDetached` forever. The
+    // `TaskSettleService.endFinishedWork` before its reap forever. The
     // process is no longer reported as the run's, so the reap can end it.
     const registry = new AgentSessionRegistry(CEILING);
     const { adapter, sessions } = fakeAdapter();
@@ -1172,6 +1172,53 @@ describe('AgentSessionRegistry — a finished card’s close', () => {
 
     expect(cli.closes).toBe(1);
     expect(registry.processRoots('run-1')).toEqual([]);
+  });
+
+  it('closes nothing and resolves false while a turn of the run is in flight', async () => {
+    // A follow-up or a button press that landed after the card was found
+    // finished: its turn must not be cut, and the caller must not reap.
+    vi.useFakeTimers();
+    const registry = new AgentSessionRegistry(CEILING);
+    const { adapter, sessions } = fakeAdapter();
+    registry.startTurn('run-1', adapter, INPUT, noop);
+    registry.startTurn(nodeSessionKey('run-1', 'qa'), adapter, INPUT, noop);
+    const [settled, working] = sessions as [FakeSession, FakeSession];
+    await settled.endTurn();
+    settled.lingers = true;
+
+    expect(await registry.closeFinishedRun('run-1')).toBe(false);
+
+    expect(settled.closes).toBe(0);
+    expect(working.closes).toBe(0);
+
+    await working.endTurn();
+    working.lingers = true;
+    const finished = registry.closeFinishedRun('run-1');
+    settled.exit();
+    working.exit();
+    expect(await finished).toBe(true);
+  });
+
+  it('never reads the close as cutting the agent off, even right after off-turn rows', async () => {
+    // A finished card's close is housekeeping: off-turn output shortly before
+    // it must not leave "the agent was still working when geniro closed its
+    // process" in the transcript.
+    vi.useFakeTimers();
+    const registry = new AgentSessionRegistry(CEILING);
+    const { adapter, sessions } = fakeAdapter();
+    const closed: [string, boolean][] = [];
+    registry.onClosed((runId, interrupted) =>
+      closed.push([runId, interrupted]),
+    );
+    registry.startTurn('run-1', adapter, INPUT, noop, undefined, noop);
+    const cli = at(sessions, 0);
+    await cli.endTurn();
+    cli.emitBetweenTurn('Bash-1');
+
+    const finished = registry.closeFinishedRun('run-1');
+    await finished;
+
+    expect(closed).toEqual([['run-1', false]]);
   });
 
   it('is escalated by an archive that lands during it', async () => {

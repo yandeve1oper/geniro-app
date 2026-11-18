@@ -20,13 +20,8 @@ import { CallContext } from '../../runs/entity/call-context.entity';
 import { Item } from '../../runs/entity/item.entity';
 import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
-import type {
-  AgentSession,
-  AgentTurnHandle,
-  AgentTurnInput,
-} from '../adapters/adapter.types';
-import type { AgentAdapter } from '../adapters/agent-adapter';
 import { ItemDao } from '../dao/item.dao';
+import { keptSessionAdapter } from '../__tests__/kept-session';
 import { RunDao } from '../dao/run.dao';
 import { GROUP_KILL_GRACE_MS } from '../utils/kill-tree';
 import {
@@ -35,7 +30,6 @@ import {
   type ScannedProcess,
 } from '../utils/run-process-scan';
 import { nodeSessionKey } from '../utils/session-keys';
-import type { StoppedCommands } from '../utils/spawn-cli';
 import { ActionCommandRegistry } from './action-command.registry';
 import { AgentEventBus } from './agent-events.bus';
 import { AgentSessionRegistry } from './agent-session.registry';
@@ -66,68 +60,6 @@ function tagged(
     args,
     env: ppid === 1 ? `${RUN_ID_ENV}=${runId} ${RUN_OWNER_ENV}=${OWNER}` : '',
   };
-}
-
-/** A kept CLI that lives until it is closed, and then exits at once. */
-class KeptSession implements AgentSession {
-  alive = true;
-  pid: number | null = 4242;
-  parked = false;
-  retired = false;
-  shellsRunning = 0;
-  detachedRunning = 0;
-  runningCommands: string[] = [];
-  endedRunning: StoppedCommands | null = null;
-  inputs: AgentTurnInput[] = [];
-  private settle: (() => void) | null = null;
-  private resolveClosed!: () => void;
-  closed = new Promise<void>((resolve) => {
-    this.resolveClosed = resolve;
-  });
-
-  get idle(): boolean {
-    return this.alive && this.settle === null;
-  }
-
-  ask(): Promise<null> {
-    return Promise.resolve(null);
-  }
-
-  startTurn(input: AgentTurnInput): AgentTurnHandle | null {
-    if (!this.idle) {
-      return null;
-    }
-    this.inputs.push(input);
-    return {
-      done: new Promise<void>((resolve) => {
-        this.settle = resolve;
-      }),
-      cancel: () => undefined,
-      respondApproval: () => false,
-      sendUserMessage: () => false,
-      attributableDelegate: () => null,
-      setApprovalMode: () => false,
-    };
-  }
-
-  endTurn(): void {
-    this.settle?.();
-    this.settle = null;
-  }
-
-  recordedGroupsOf(): null {
-    return null;
-  }
-
-  subagentRecoveryBlocked(): boolean {
-    return false;
-  }
-
-  close(): void {
-    this.alive = false;
-    this.pid = null;
-    this.resolveClosed();
-  }
 }
 
 /**
@@ -213,15 +145,7 @@ describe('RunIdleReapService (in-memory sqlite)', () => {
       reaper,
     );
     service.onModuleInit();
-    const kept: KeptSession[] = [];
-    const adapter = {
-      startSession: () => {
-        const session = new KeptSession();
-        kept.push(session);
-        return session;
-      },
-      getConfig: () => ({ kind: 'claude' }),
-    } as unknown as AgentAdapter;
+    const { adapter, kept } = keptSessionAdapter();
     return {
       sessions,
       commands,

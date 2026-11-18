@@ -95,7 +95,7 @@ export class RunTeardownService {
    * Runs {@link endProcesses} ended that have not come back
    * ({@link resumeProcesses}). Set before the archive or delete completes,
    * which closes the race with a finished card's close in flight: their reap
-   * is queued already, and a second request would be a second full reap. In
+   * is queued already, so the card's own reap is skipped (`hasEnded`). In
    * memory only: a deleted run's id is kept for the daemon's life, since a
    * card's end may still be in flight after the purge.
    */
@@ -126,19 +126,6 @@ export class RunTeardownService {
   /** Whether an archive or delete has ended this run ({@link ended}). */
   hasEnded(runId: string): boolean {
     return this.ended.has(runId);
-  }
-
-  /**
-   * The second half of {@link endProcesses} alone — what the run's agents left
-   * running detached — for a caller that closed the CLIs itself and waited for
-   * them (a finished card's graceful close). Nothing for a run an archive or
-   * delete ended meanwhile: that reap is the run's one.
-   */
-  reapDetached(runId: string): void {
-    if (this.ended.has(runId)) {
-      return;
-    }
-    this.reaper.reapInBackground(runId);
   }
 
   /**

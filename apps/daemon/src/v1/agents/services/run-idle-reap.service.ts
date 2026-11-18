@@ -13,7 +13,11 @@ import { mapEventToItem } from '../utils/event-to-item';
 import { GROUP_KILL_GRACE_MS } from '../utils/kill-tree';
 import { persistItemAndEmit } from '../utils/persist-item';
 import type { ScannedProcess } from '../utils/run-process-scan';
-import { idleStoppedNote } from '../utils/session-replacement-notes';
+import type { LeftProcessesCause } from '../chat.types';
+import {
+  finishedStoppedNote,
+  idleStoppedNote,
+} from '../utils/session-replacement-notes';
 import { AgentEventBus } from './agent-events.bus';
 import { AgentSessionRegistry } from './agent-session.registry';
 import { ItemCallIndexService } from './item-call-index.service';
@@ -28,7 +32,9 @@ import { RunProcessReaper } from './run-process-reaper.service';
  *
  * Two ways in, one rule for every run: the registry's idle close, once the CLI
  * has exited ({@link AgentSessionRegistry.onIdleClosed}), and the sweep, for a
- * run nothing will idle-close — after a daemon restart, or an eviction.
+ * run nothing will idle-close — after a daemon restart, or an eviction. A
+ * finished card's run is reaped and told the same way, sooner
+ * (`TaskSettleService.endFinishedWork`).
  */
 @Injectable()
 export class RunIdleReapService implements OnModuleInit, OnApplicationShutdown {
@@ -49,11 +55,20 @@ export class RunIdleReapService implements OnModuleInit, OnApplicationShutdown {
 
   onModuleInit(): void {
     this.sessions.onIdleClosed((runId) => {
-      // The CLI's exit signals its own group, MCP servers included: what
-      // outlives that kill's grace is what the agents left, not the CLI.
+      void this.afterExitGrace(runId).then(() => this.reap(runId));
+    });
+  }
+
+  /**
+   * Resolves once the kill grace after a CLI of the run exited has passed: its
+   * exit signals its own group, MCP servers included, so what outlives the
+   * grace is what the agents left, not the CLI. Never resolves after shutdown.
+   */
+  afterExitGrace(runId: string): Promise<void> {
+    return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.graced.delete(timer);
-        void this.reap(runId);
+        resolve();
       }, GROUP_KILL_GRACE_MS);
       this.graced.set(timer, runId);
     });
@@ -73,16 +88,20 @@ export class RunIdleReapService implements OnModuleInit, OnApplicationShutdown {
   }
 
   /**
-   * The processes stopped for the run, once it has been told. Never rejects.
-   * Two asking at once share one reap, which hands its processes to one of
-   * them ({@link RunProcessReaper.reapIdle}), so the run is told once.
+   * The processes stopped for the run, once it has been told why (`cause`).
+   * Never rejects. Two asking at once share one reap, which hands its
+   * processes to one of them ({@link RunProcessReaper.reapIdle}), so the run
+   * is told once.
    */
-  async reap(runId: string): Promise<ScannedProcess[]> {
+  async reap(
+    runId: string,
+    cause: LeftProcessesCause = 'idle',
+  ): Promise<ScannedProcess[]> {
     const stopped = await this.reaper.reapIdle(runId);
     if (stopped.length > 0) {
-      await this.tell(runId, stopped).catch((err: unknown) => {
+      await this.tell(runId, stopped, cause).catch((err: unknown) => {
         this.logger.warn(
-          `run ${runId}: could not note the processes stopped while it sat unused: ${
+          `run ${runId}: could not note the processes stopped (${cause}): ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -91,7 +110,11 @@ export class RunIdleReapService implements OnModuleInit, OnApplicationShutdown {
     return stopped;
   }
 
-  private async tell(runId: string, stopped: ScannedProcess[]): Promise<void> {
+  private async tell(
+    runId: string,
+    stopped: ScannedProcess[],
+    cause: LeftProcessesCause,
+  ): Promise<void> {
     const em = this.em.fork();
     const run = await this.runDao.getById(runId, em);
     // A deleted run has no transcript left, and an archived one is reaped by
@@ -99,12 +122,17 @@ export class RunIdleReapService implements OnModuleInit, OnApplicationShutdown {
     if (run === null || run.archivedAt !== null) {
       return;
     }
-    const note = idleStoppedNote(
-      this.sessions.idleMinutes,
-      commandsOf(stopped),
-      executablesOf(stopped),
-      stopped.length,
-    );
+    const commands = commandsOf(stopped);
+    const executables = executablesOf(stopped);
+    const note =
+      cause === 'finished-card'
+        ? finishedStoppedNote(commands, executables, stopped.length)
+        : idleStoppedNote(
+            this.sessions.idleMinutes,
+            commands,
+            executables,
+            stopped.length,
+          );
     const row = mapEventToItem({
       type: 'notice',
       message: note.transcript,
