@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { ItemDao } from '../../agents/dao/item.dao';
 import { NodeStateDao } from '../../agents/dao/node-state.dao';
 import { RunDao } from '../../agents/dao/run.dao';
@@ -40,6 +41,7 @@ import { KnowledgeTextIndexService } from '../services/knowledge-text-index.serv
 export async function knowledgeDb(options: { configured?: boolean } = {}) {
   const orm = await MikroORM.init(
     defineConfig({
+      ...GENIRO_ORM_RUNTIME,
       dbName: ':memory:',
       entities: [
         KnowledgeDocument,

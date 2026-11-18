@@ -18,6 +18,7 @@ import {
 import type { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Project } from '../../projects/entity/project.entity';
 import {
   APP_MIGRATIONS_TABLE,
@@ -66,6 +67,7 @@ describe('MigrationRunnerService.run', () => {
   beforeEach(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Project],
         allowGlobalContext: true,

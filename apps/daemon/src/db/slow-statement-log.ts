@@ -69,8 +69,9 @@ export function timedDriver(
 
 /**
  * The statement's shape: every string and number literal read as `?`, cut to a
- * bounded length. MikroORM pastes its values into the statement text, and a
- * value can be a transcript's words, a path or a token.
+ * bounded length. Values are bound, but a statement can still spell a literal
+ * in its text (the ORM's own fragments, a schema statement), and a literal can
+ * be a path or a token.
  */
 export function valueFreeSql(sql: string): string {
   const shape = sql

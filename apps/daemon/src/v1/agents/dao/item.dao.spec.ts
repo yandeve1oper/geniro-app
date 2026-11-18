@@ -3,7 +3,6 @@ import {
   MikroORM,
   UnderscoreNamingStrategy,
 } from '@mikro-orm/sqlite';
-import { CompiledQuery, type DatabaseConnection, SqliteDriver } from 'kysely';
 import {
   afterAll,
   beforeAll,
@@ -14,6 +13,8 @@ import {
   vi,
 } from 'vitest';
 
+import { recordSentStatements } from '../../../db/__tests__/sent-statements';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Item } from '../../runs/entity/item.entity';
 import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
@@ -44,6 +45,7 @@ describe('ItemDao (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Run, Item, NodeState],
         ignoreUndefinedInQuery: true,
@@ -66,28 +68,12 @@ describe('ItemDao (in-memory sqlite)', () => {
     dao = new ItemDao(orm.em.fork());
   });
 
-  /** The Kysely connection `getKysely()` reads run on, captured as a read acquires it. */
-  async function kyselyConnection(): Promise<DatabaseConnection> {
-    const acquire = SqliteDriver.prototype.acquireConnection;
-    let connection: DatabaseConnection | null = null;
-    const acquired = vi
-      .spyOn(SqliteDriver.prototype, 'acquireConnection')
-      .mockImplementation(async function (this: SqliteDriver) {
-        connection = await acquire.call(this);
-        return connection;
-      });
-    await dao.kindsOfRun('run-a');
-    acquired.mockRestore();
-    return connection!;
-  }
-
-  /** How many statements `read` sends over the Kysely connection. */
+  /** How many statements `read` sends to SQLite. */
   async function statementsOf(read: () => Promise<unknown>): Promise<number> {
-    const execute = vi.spyOn(await kyselyConnection(), 'executeQuery');
+    const { sent, stop } = await recordSentStatements(orm);
     await read();
-    const count = execute.mock.calls.length;
-    execute.mockRestore();
-    return count;
+    stop();
+    return sent.length;
   }
 
   /** Persist one row through the DAO's own create — the production write path. */
@@ -1697,20 +1683,19 @@ describe('ItemDao (in-memory sqlite)', () => {
 
     it('reads every column from a covering index, never the row, whose later columns sit past its payload', async () => {
       await insert('run-a', 0, 'subagent_info', '{"id":"d1","callId":"c1"}');
-      const connection = await kyselyConnection();
-      const execute = vi.spyOn(connection, 'executeQuery');
+      await dao.kindsOfRun('run-a');
+      const { sent, stop } = await recordSentStatements(orm);
 
       await dao.inCallRowsOfKind('run-a', 'subagent_info');
       await dao.kindsOfRun('run-a');
+      stop();
 
-      const statements = execute.mock.calls.map(([query]) => query);
-      execute.mockRestore();
-      expect(statements).toHaveLength(4);
-      for (const { sql, parameters } of statements) {
-        const plan = await connection.executeQuery<{ detail: string }>(
-          CompiledQuery.raw(`explain query plan ${sql}`, [...parameters]),
-        );
-        expect(plan.rows.map((step) => step.detail).join(' | ')).toMatch(
+      expect(sent).toHaveLength(4);
+      for (const { sql, params } of sent) {
+        const plan = await orm.em
+          .getConnection()
+          .execute<{ detail: string }[]>(`explain query plan ${sql}`, params);
+        expect(plan.map((step) => step.detail).join(' | ')).toMatch(
           /^SEARCH items USING COVERING INDEX /,
         );
       }
@@ -1739,7 +1724,7 @@ describe('ItemDao (in-memory sqlite)', () => {
         .execute();
     });
 
-    /** The plan SQLite picks for the one statement `read` sends, its values pasted in as MikroORM runs it. */
+    /** The plan SQLite picks for the one statement `read` sends, its values bound as MikroORM runs it. */
     async function planOf(read: () => Promise<unknown>): Promise<string> {
       const connection = orm.em.getConnection();
       const execute = vi.spyOn(connection, 'execute');
@@ -1747,7 +1732,8 @@ describe('ItemDao (in-memory sqlite)', () => {
       const [sql, params] = execute.mock.calls[0]! as [string, unknown[]];
       execute.mockRestore();
       const plan = await connection.execute<{ detail: string }[]>(
-        `explain query plan ${orm.em.getPlatform().formatQuery(sql, params)}`,
+        `explain query plan ${sql}`,
+        params,
       );
       return plan.map((step) => step.detail).join(' | ');
     }
@@ -1816,20 +1802,19 @@ describe('ItemDao (in-memory sqlite)', () => {
       await insert('run-a', 1, 'reasoning');
       await insert('run-a', 2, 'tool_call');
       await insert('run-a', 3, 'message', '{"text":"b"}');
-      const connection = await kyselyConnection();
-      const execute = vi.spyOn(connection, 'executeQuery');
+      const { sent, stop } = await recordSentStatements(orm);
 
       const rows = await dao.spineRowsOfKinds('run-a', [
         'message',
         'reasoning',
       ]);
+      stop();
 
-      const { sql, parameters } = execute.mock.calls[0]![0];
-      execute.mockRestore();
-      const plan = await connection.executeQuery<{ detail: string }>(
-        CompiledQuery.raw(`explain query plan ${sql}`, [...parameters]),
-      );
-      expect(plan.rows.map((step) => step.detail).join(' | ')).toMatch(
+      const { sql, params } = sent[0]!;
+      const plan = await orm.em
+        .getConnection()
+        .execute<{ detail: string }[]>(`explain query plan ${sql}`, params);
+      expect(plan.map((step) => step.detail).join(' | ')).toMatch(
         /^SEARCH items USING INDEX items_run_id_kind_seq_index /,
       );
       expect(rows.map((row) => [row.seq, row.kind])).toEqual([
@@ -1875,7 +1860,9 @@ describe('ItemDao (in-memory sqlite)', () => {
         updatedAt: at,
       }));
       rows.push({ ...rows[4_999]!, id: 'r-04999-b' });
-      await orm.em.fork().insertMany(Item, rows);
+      for (let from = 0; from < rows.length; from += 1_000) {
+        await orm.em.fork().insertMany(Item, rows.slice(from, from + 1_000));
+      }
 
       const spine = await dao.timelineSpine('run-a');
 

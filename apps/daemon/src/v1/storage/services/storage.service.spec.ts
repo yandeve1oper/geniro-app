@@ -9,6 +9,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { tempDir } from '../../agents/__tests__/temp-dir';
 import { RunDao } from '../../agents/dao/run.dao';
 import type { AgentAdapterRegistry } from '../../agents/services/agent-adapter.registry';
@@ -54,6 +55,7 @@ describe('StorageService', () => {
   beforeEach(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Run, NodeState, Task],
         allowGlobalContext: true,

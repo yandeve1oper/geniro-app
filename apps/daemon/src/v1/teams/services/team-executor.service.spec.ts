@@ -24,6 +24,7 @@ import {
 
 import { CallTokenRegistry } from '../../../auth/call-token.registry';
 import { type FakeChild, fakeSpawn } from '../../agents/__tests__/fake-child';
+import { fakeEntityManager } from '../../agents/__tests__/fake-entity-manager';
 import { FakeWallTurnDao } from '../../agents/__tests__/fake-wall-turn-dao';
 import { kindRowsPassthrough } from '../../agents/__tests__/kind-rows-passthrough';
 import { NO_CALL_INDEX } from '../../agents/__tests__/no-call-index';
@@ -115,6 +116,7 @@ import { TeamProposalBroker } from '../../agents/services/team-proposal.broker';
 import type { ThreadInboxService } from '../../agents/services/thread-inbox.service';
 import { UserQuestionBroker } from '../../agents/services/user-question.broker';
 import { WallWorkService } from '../../agents/services/wall-work.service';
+import type { WriteFailureNotices } from '../../agents/services/write-failure.notices';
 import { readAgentOptions } from '../../agents/utils/agent-options';
 import {
   callMembershipLookupOf,
@@ -269,6 +271,16 @@ class FakeRunDao {
       Object.assign(run, data);
     }
   }
+  async listEndedTeamRuns(ids: readonly string[]): Promise<Run[]> {
+    return [...this.runs.values()].filter(
+      (run) =>
+        ids.includes(run.id) &&
+        run.teamId !== null &&
+        run.status !== 'pending' &&
+        run.status !== 'running',
+    );
+  }
+
   async listRunningTeamRuns(): Promise<Run[]> {
     return [...this.runs.values()].filter(
       (run) =>
@@ -571,6 +583,15 @@ interface FakeNodeRow {
 
 class FakeNodeStateDao {
   readonly rows = new Map<string, FakeNodeRow>();
+  async runIdsWithRunningMembers(): Promise<string[]> {
+    return [
+      ...new Set(
+        [...this.rows.values()]
+          .filter((row) => row.status === 'running')
+          .map((row) => row.runId),
+      ),
+    ];
+  }
   /** Every member whose context COUNT a compaction dropped, in order. */
   readonly forgotContext: { runId: string; memberId: string }[] = [];
   async forgetContext(runId: string, memberId: string): Promise<void> {
@@ -1204,6 +1225,8 @@ function setup(
     commandEndWakes?: CommandEndWakeService;
     /** geniro's own `ask_user_question`, when a test drives it. */
     userQuestions?: UserQuestionBroker;
+    /** Where the executor reports the rows it could not write, when a test watches. */
+    writeFailures?: WriteFailureNotices;
     /** What the run's project tells it; no project when absent. */
     projectScope?: Partial<
       Pick<ProjectScopeService, 'placeNewRun' | 'liveNamesOf'>
@@ -1317,7 +1340,7 @@ function setup(
       release,
     };
   });
-  const em = { fork: () => ({ clear: () => {} }) } as unknown as EntityManager;
+  const em = fakeEntityManager();
   const skillHarvest = {
     record: vi.fn(),
     get: () => null,
@@ -1711,6 +1734,7 @@ function setup(
     opts.goalWriters,
     opts.commandEndWakes,
     opts.userQuestions,
+    opts.writeFailures,
   );
   // What Nest does at boot, done by hand: the executor's session-close hook.
   service.onModuleInit();
@@ -4590,6 +4614,81 @@ describe('TeamExecutorService', () => {
         }),
       }),
     );
+  });
+
+  it('boot reconcile settles the members of an ENDED run whose endings were never saved, keeping the run’s status', async () => {
+    // The run completed, but the rows that ended a member's turn and its call
+    // were refused by the database: the member stayed `running` and the
+    // working-agents card kept showing it whenever the lead worked again.
+    const { service, runDao, nodeDao, itemDao } = setup();
+    const ended = await runDao.create({
+      teamId: 'hoae',
+      status: 'completed',
+      cwd: dir,
+    });
+    await nodeDao.createPending(ended.id, 'manager');
+    await nodeDao.setStatus(ended.id, 'manager', { status: 'completed' });
+    await nodeDao.createPending(ended.id, 'middle');
+    await nodeDao.setStatus(ended.id, 'middle', { status: 'running' });
+    const rows = [
+      [
+        'engineer',
+        'call_started',
+        {
+          callId: 'call-10',
+          callerNodeId: 'engineer',
+          calleeNodeId: 'middle',
+          mode: 'async',
+          message: 'piece P5',
+        },
+      ],
+      [
+        'middle',
+        'status',
+        { nodeId: 'middle', status: 'running', callId: 'call-10' },
+      ],
+    ] as const;
+    for (const [index, [memberId, kind, payload]] of rows.entries()) {
+      await itemDao.create({
+        runId: ended.id,
+        memberId,
+        seq: index,
+        kind,
+        payload: JSON.stringify(payload),
+      });
+    }
+
+    await service.reconcileOrphanedRuns('unknown');
+
+    const written = itemDao.items
+      .filter((i) => i.runId === ended.id && i.seq >= rows.length)
+      .map((i) => ({
+        memberId: i.memberId,
+        kind: i.kind,
+        payload: JSON.parse(i.payload) as Record<string, unknown>,
+      }));
+    expect(written).toEqual([
+      {
+        memberId: 'middle',
+        kind: 'status',
+        payload: { nodeId: 'middle', status: 'failed', callId: 'call-10' },
+      },
+      {
+        memberId: 'engineer',
+        kind: 'call_result',
+        payload: {
+          callId: 'call-10',
+          callerNodeId: 'engineer',
+          calleeNodeId: 'middle',
+          mode: 'async',
+          status: 'error',
+          error: 'CALLEE_FAILED: the call ended, but its result was not saved',
+        },
+      },
+    ]);
+    expect(nodeDao.row(ended.id, 'middle')?.status).toBe('failed');
+    expect(nodeDao.row(ended.id, 'manager')?.status).toBe('completed');
+    expect((await runDao.getById(ended.id))?.status).toBe('completed');
   });
 
   it('boot reconcile closes a team card the KILLED daemon never swept, keeping its member', async () => {
@@ -16543,6 +16642,37 @@ describe('TeamExecutorService — a member’s context reading', () => {
 
     completeTurn(claude.starts[0]!, 'done');
     await drain();
+  });
+
+  it('reports a member row the database refused to the thread’s write-failure notices', async () => {
+    const note = vi.fn();
+    const { service, claude, itemDao } = setup(undefined, {
+      writeFailures: { note } as unknown as WriteFailureNotices,
+    });
+    const refused = new Error(
+      'Expression tree is too large (maximum depth 1000)',
+    );
+    const create = itemDao.create.bind(itemDao);
+    itemDao.create = (data) =>
+      data.kind === 'tool_call' ? Promise.reject(refused) : create(data);
+    const run = await service.startRun({
+      slug: 'one',
+      team: teamOf([member('a')], { name: 'one' }),
+      cwd: dir,
+      prompt: 'task',
+    });
+    await drain();
+
+    claude.starts[0]!.emit({
+      type: 'tool_call',
+      id: 't1',
+      name: 'Bash',
+      input: {},
+    });
+    completeTurn(claude.starts[0]!, 'done');
+    await drain();
+
+    expect(note).toHaveBeenCalledWith(run.id, refused);
   });
 
   describe('the wall-clock ledger of a member turn its CLI did not time', () => {

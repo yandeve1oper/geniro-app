@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Item } from '../../runs/entity/item.entity';
 import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
@@ -26,6 +27,7 @@ describe('RunDao (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Run, Item, NodeState],
         ignoreUndefinedInQuery: true,
@@ -1009,6 +1011,31 @@ describe('RunDao (in-memory sqlite)', () => {
       expect(stale.map((run) => run.id).sort()).toEqual(
         [pending.id, running.id].sort(),
       );
+    });
+  });
+
+  describe('listEndedTeamRuns', () => {
+    it('answers only the named team runs that already ended', async () => {
+      const completed = await dao.create({
+        teamId: 'wf-1',
+        status: 'completed',
+      });
+      const failed = await dao.create({ teamId: 'wf-1', status: 'failed' });
+      const running = await dao.create({ teamId: 'wf-1', status: 'running' });
+      const chat = await dao.create({ status: 'completed' });
+      await dao.create({ teamId: 'wf-1', status: 'completed' });
+
+      const ended = await dao.listEndedTeamRuns([
+        completed.id,
+        failed.id,
+        running.id,
+        chat.id,
+      ]);
+
+      expect(ended.map((run) => run.id).sort()).toEqual(
+        [completed.id, failed.id].sort(),
+      );
+      expect(await dao.listEndedTeamRuns([])).toEqual([]);
     });
   });
 

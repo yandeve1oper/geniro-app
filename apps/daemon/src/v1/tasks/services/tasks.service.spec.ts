@@ -25,6 +25,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { RunDao } from '../../agents/dao/run.dao';
 import { ProjectDao } from '../../projects/dao/project.dao';
 import { Project } from '../../projects/entity/project.entity';
@@ -83,6 +84,7 @@ describe('TasksService (in-memory sqlite)', () => {
     worktree = realpathSync(mkdtempSync(join(tmpdir(), 'geniro-worktree-')));
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Project, Task, Run],
         ignoreUndefinedInQuery: true,
@@ -994,6 +996,7 @@ describe('TasksService — card numbering (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         // `Run` because a card's delete lets go of the chats that worked it.
         entities: [Project, Task, Run],

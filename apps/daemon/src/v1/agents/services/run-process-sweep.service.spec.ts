@@ -15,6 +15,7 @@ import {
 } from 'vitest';
 
 import { simulateSleep } from '../../../__tests__/simulate-sleep';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { CallContext } from '../../runs/entity/call-context.entity';
 import { Item } from '../../runs/entity/item.entity';
 import { NodeState } from '../../runs/entity/node-state.entity';
@@ -66,6 +67,7 @@ describe('RunProcessSweep (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Run, Item, NodeState, CallContext],
         ignoreUndefinedInQuery: true,

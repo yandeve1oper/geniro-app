@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { MemberAssessmentDao } from '../dao/member-assessment.dao';
 import { MemberAssessmentRecord } from '../entity/member-assessment.entity';
 import { MemberAssessmentsService } from './member-assessments.service';
@@ -16,6 +17,7 @@ describe('MemberAssessmentsService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [MemberAssessmentRecord],
         allowGlobalContext: true,

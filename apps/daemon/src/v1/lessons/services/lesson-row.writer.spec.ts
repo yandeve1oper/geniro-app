@@ -13,6 +13,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { ItemDao } from '../../agents/dao/item.dao';
 import { RunDao } from '../../agents/dao/run.dao';
 import type { AgentEventBus } from '../../agents/services/agent-events.bus';
@@ -54,6 +55,7 @@ describe('LessonRowWriter (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Run, Item, NodeState],
         ignoreUndefinedInQuery: true,

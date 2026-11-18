@@ -14,6 +14,7 @@ import { io, type Socket } from 'socket.io-client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { BOOT_TIMEOUT_MS, bootDaemon } from './__tests__/boot-daemon';
+import { GENIRO_ORM_RUNTIME } from './db/sqlite.driver';
 import { DAEMON_STOP_CAUSE_NAME, type DaemonInfo } from './utils/handshake';
 import {
   APP_MIGRATIONS_TABLE,
@@ -126,6 +127,7 @@ describe('the daemon boots and serves', () => {
     );
     const orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: join(userData, 'geniro.db'),
         entities: [],
         discovery: { warnWhenNoEntities: false },

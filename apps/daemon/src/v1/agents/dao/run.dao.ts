@@ -1667,6 +1667,24 @@ export class RunDao extends BaseDao<Run> {
    * team executor's boot reconcile closes them (pending counts too: a
    * team run is created `running`, so anything non-terminal is orphaned).
    */
+  /** The team runs among `ids` that already ended: neither pending nor running. */
+  async listEndedTeamRuns(
+    ids: readonly string[],
+    txEm?: EntityManager,
+  ): Promise<Run[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    return this.getRepo(txEm).find(
+      {
+        id: { $in: [...ids] },
+        teamId: { $ne: null },
+        status: { $nin: ['pending', 'running'] },
+      },
+      { disableIdentityMap: true },
+    );
+  }
+
   async listRunningTeamRuns(txEm?: EntityManager): Promise<Run[]> {
     return this.getRepo(txEm).find(
       {

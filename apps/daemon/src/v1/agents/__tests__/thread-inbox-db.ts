@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Run } from '../../runs/entity/run.entity';
 import { ThreadMessage } from '../../runs/entity/thread-message.entity';
 import { RunDao } from '../dao/run.dao';
@@ -29,6 +30,7 @@ export interface RecordedNote {
 export async function threadInboxDb() {
   const orm = await MikroORM.init(
     defineConfig({
+      ...GENIRO_ORM_RUNTIME,
       dbName: ':memory:',
       entities: [ThreadMessage, Run],
       allowGlobalContext: true,

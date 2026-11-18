@@ -10,6 +10,7 @@ import {
 } from '@mikro-orm/sqlite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { ProjectDao } from '../../projects/dao/project.dao';
 import { Project } from '../../projects/entity/project.entity';
 import { LabelInstructionDao } from '../dao/label-instruction.dao';
@@ -35,6 +36,7 @@ describe('LabelInstructionsService (in-memory sqlite)', () => {
     folder = mkdtempSync(join(tmpdir(), 'geniro-label-instructions-'));
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Project, LabelInstruction],
         ignoreUndefinedInQuery: true,

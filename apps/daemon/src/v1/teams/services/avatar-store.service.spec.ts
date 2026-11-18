@@ -27,6 +27,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { RunDao } from '../../agents/dao/run.dao';
 import { Run } from '../../runs/entity/run.entity';
 import { MAX_AVATAR_BYTES } from '../teams.types';
@@ -78,6 +79,7 @@ describe('AvatarStoreService', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Run],
         allowGlobalContext: true,

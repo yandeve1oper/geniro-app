@@ -7,6 +7,7 @@ import {
 } from '@mikro-orm/sqlite';
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { tempDir } from '../../agents/__tests__/temp-dir';
 import { ItemDao } from '../../agents/dao/item.dao';
 import { NodeStateDao } from '../../agents/dao/node-state.dao';
@@ -45,6 +46,7 @@ export const ROOTS = new Map([['/wt/task-1', '/repo/app']]);
 export async function memoryDb() {
   const orm = await MikroORM.init(
     defineConfig({
+      ...GENIRO_ORM_RUNTIME,
       dbName: ':memory:',
       entities: [
         Memory,

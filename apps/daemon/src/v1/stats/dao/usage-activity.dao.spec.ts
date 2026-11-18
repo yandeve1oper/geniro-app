@@ -13,6 +13,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { UsageActivity } from '../entity/usage-activity.entity';
 import type { RunOutcomeLedgerRow } from '../stats.types';
 import { threadFact } from '../utils/activity-facts';
@@ -44,6 +45,7 @@ describe('UsageActivityDao (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [UsageActivity],
         ignoreUndefinedInQuery: true,

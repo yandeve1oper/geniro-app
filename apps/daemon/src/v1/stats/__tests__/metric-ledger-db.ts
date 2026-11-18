@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { claudeToolCallMetric } from '../../agents/adapters/claude/utils/claude-mcp-tool-name.utils';
 import { codexToolCallMetric } from '../../agents/adapters/codex/utils/codex-items.utils';
 import { cursorToolCallMetric } from '../../agents/adapters/cursor-acp/utils/cursor-tool-metric.utils';
@@ -38,6 +39,7 @@ const METRICS: Record<
 export async function metricLedgerDb() {
   const orm = await MikroORM.init(
     defineConfig({
+      ...GENIRO_ORM_RUNTIME,
       dbName: ':memory:',
       entities: [Run, Item, NodeState, Goal, ToolCallEvent, UsageActivity],
       allowGlobalContext: true,

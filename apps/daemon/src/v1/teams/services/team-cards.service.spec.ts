@@ -1,6 +1,6 @@
-import type { EntityManager } from '@mikro-orm/sqlite';
 import { describe, expect, it, vi } from 'vitest';
 
+import { fakeEntityManager } from '../../agents/__tests__/fake-entity-manager';
 import {
   HOST_PROJECT_INSTRUCTIONS_TOOL,
   HOST_PROPOSE_TEAM_TOOL,
@@ -136,7 +136,7 @@ function harness(
       ),
   };
   const service = new TeamCardsService(
-    { fork: () => ({ clear: () => undefined }) } as unknown as EntityManager,
+    fakeEntityManager(),
     runDao as unknown as RunDao,
     itemDao as unknown as ItemDao,
     {

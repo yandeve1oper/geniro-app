@@ -1,6 +1,6 @@
-import type { EntityManager } from '@mikro-orm/sqlite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { fakeEntityManager } from '../__tests__/fake-entity-manager';
 import { NO_CALL_INDEX } from '../__tests__/no-call-index';
 import type { ItemDao } from '../dao/item.dao';
 import type { AgentEventBus } from './agent-events.bus';
@@ -207,7 +207,7 @@ function service(
   } as unknown as ChatService;
   return {
     service: new ChatShellsService(
-      { fork: () => ({ clear: () => undefined }) } as unknown as EntityManager,
+      fakeEntityManager(),
       itemDao,
       bus,
       seqs,

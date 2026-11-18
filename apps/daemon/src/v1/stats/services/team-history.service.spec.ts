@@ -13,6 +13,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import type { RunDao } from '../../agents/dao/run.dao';
 import type { AgentAdapterRegistry } from '../../agents/services/agent-adapter.registry';
 import type { ProjectDao } from '../../projects/dao/project.dao';
@@ -76,6 +77,7 @@ describe('TeamHistoryService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [
           UsageActivity,

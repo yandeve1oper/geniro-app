@@ -6,6 +6,7 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { CallTokenRegistry } from '../../../auth/call-token.registry';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { BrowserBridgeService } from '../../browser/services/browser-bridge.service';
 import { BrowserHostApprovals } from '../../browser/services/browser-host-approvals.service';
 import { MemoryMarkDao } from '../../memory/dao/memory-mark.dao';
@@ -93,6 +94,7 @@ describe('RunTeardownService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [
           Run,

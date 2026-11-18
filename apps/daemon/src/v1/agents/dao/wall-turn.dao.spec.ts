@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { WallTurn } from '../../runs/entity/wall-turn.entity';
 import { WallTurnDao } from './wall-turn.dao';
 
@@ -15,6 +16,7 @@ describe('WallTurnDao (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [WallTurn],
         allowGlobalContext: true,

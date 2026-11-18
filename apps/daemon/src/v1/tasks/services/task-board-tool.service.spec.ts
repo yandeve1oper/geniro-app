@@ -11,6 +11,7 @@ import {
 import { BadRequestException } from '@packages/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { HOST_BOARD_TOOLS } from '../../agents/chat.types';
 import { RunDao } from '../../agents/dao/run.dao';
 import { ProjectDao } from '../../projects/dao/project.dao';
@@ -58,6 +59,7 @@ describe('TaskBoardToolService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Project, Task, Run, Item, LabelInstruction],
         ignoreUndefinedInQuery: true,

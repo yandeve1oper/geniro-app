@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Goal } from '../../runs/entity/goal.entity';
 import { Run } from '../../runs/entity/run.entity';
 import type { RunStatusEvent } from '../chat.types';
@@ -17,6 +18,7 @@ import { GoalsService } from '../services/goals.service';
 export async function goalsDb() {
   const orm = await MikroORM.init(
     defineConfig({
+      ...GENIRO_ORM_RUNTIME,
       dbName: ':memory:',
       entities: [Goal, Run],
       allowGlobalContext: true,

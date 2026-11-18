@@ -1,8 +1,17 @@
-import type { EntityManager } from '@mikro-orm/sqlite';
-import { describe, expect, it } from 'vitest';
+import {
+  defineConfig,
+  type EntityManager,
+  MikroORM,
+  UnderscoreNamingStrategy,
+} from '@mikro-orm/sqlite';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
+import { Item } from '../../runs/entity/item.entity';
+import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
 import type { ItemWire, RunStatusEvent } from '../chat.types';
+import { ItemDao } from '../dao/item.dao';
 import { persistItemAndEmit, runToWire } from './persist-item';
 
 /**
@@ -190,7 +199,10 @@ describe('persistItemAndEmit', () => {
     return { deps, created, published, statuses, wires, settled };
   }
 
-  const em = { clear: () => undefined } as unknown as EntityManager;
+  const em = {
+    clear: () => undefined,
+    fork: () => em,
+  } as unknown as EntityManager;
 
   it("settles the row's reserved seq once it is written, and when the write fails", async () => {
     const { deps, settled } = fakeDeps();
@@ -278,6 +290,58 @@ describe('persistItemAndEmit', () => {
 
     expect(created[0]?.inCall).toBe('');
     expect(wires[0]?.inCall).toBeNull();
+  });
+
+  describe('on a real database', () => {
+    let orm: MikroORM;
+
+    beforeAll(async () => {
+      orm = await MikroORM.init(
+        defineConfig({
+          ...GENIRO_ORM_RUNTIME,
+          dbName: ':memory:',
+          entities: [Run, Item, NodeState],
+          ignoreUndefinedInQuery: true,
+          allowGlobalContext: true,
+          namingStrategy: UnderscoreNamingStrategy,
+          discovery: { checkDuplicateFieldNames: false },
+        }),
+      );
+      await orm.schema.create();
+    });
+
+    afterAll(async () => {
+      await orm.close(true);
+    });
+
+    it("writes its row alone, whatever another writer left pending on the caller's manager", async () => {
+      const { deps } = fakeDeps();
+      const itemDao = new ItemDao(orm.em.fork());
+      deps.itemDao = itemDao;
+      const em = orm.em.fork();
+      em.create(
+        Item,
+        {
+          runId: 'run-shared',
+          seq: 1,
+          kind: null as unknown as 'message',
+          payload: '{}',
+        },
+        { partial: true },
+      );
+
+      await persistItemAndEmit(deps, em, {
+        runId: 'run-shared',
+        memberId: 'middle',
+        seq: 2,
+        kind: 'message',
+        role: 'assistant',
+        payload: { text: 'ok' },
+      });
+
+      const stored = await itemDao.getByRun('run-shared');
+      expect(stored.map((item) => item.seq)).toEqual([2]);
+    });
   });
 
   describe('the sidebar preview line', () => {

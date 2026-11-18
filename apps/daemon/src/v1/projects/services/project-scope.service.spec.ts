@@ -9,6 +9,7 @@ import {
 } from '@mikro-orm/sqlite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Run } from '../../runs/entity/run.entity';
 import { RunGroup } from '../../runs/entity/run-group.entity';
 import { TaskDao } from '../../tasks/dao/task.dao';
@@ -38,6 +39,7 @@ describe('ProjectScopeService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Project, Task, LabelInstruction, Run, RunGroup],
         ignoreUndefinedInQuery: true,

@@ -17,6 +17,7 @@ import { mintToken } from './auth/mint-token';
 import type { RuntimeInfo } from './auth/runtime';
 import { safeEqual } from './auth/safe-equal';
 import mikroOrmConfig from './db/mikro-orm.config';
+import { SqlEntityManagerModule } from './db/sql-entity-manager.module';
 import { environment } from './environments';
 import { installCrashGuards } from './utils/crash-guards';
 import { type DaemonInfo, stampEntry } from './utils/handshake';
@@ -370,6 +371,7 @@ bootstrapper.addExtension(
 );
 
 bootstrapper.addExtension(buildMikroOrmExtension(mikroOrmConfig));
+bootstrapper.addExtension({ modules: [SqlEntityManagerModule] });
 bootstrapper.addExtension(buildMetricExtension());
 bootstrapper.setupLogger({
   prettyPrint: environment.prettyLog,

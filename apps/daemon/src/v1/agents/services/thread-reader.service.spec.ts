@@ -14,6 +14,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { clearSecrets, registerSecret } from '../../diagnostics/utils/redact';
 import { ProjectDao } from '../../projects/dao/project.dao';
 import { ProjectInstructionChangeDao } from '../../projects/dao/project-instruction-change.dao';
@@ -101,6 +102,7 @@ describe('ThreadReaderService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [
           Run,

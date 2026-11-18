@@ -10,6 +10,7 @@ import {
 } from '@mikro-orm/sqlite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { RunDao } from '../../agents/dao/run.dao';
 import { Run } from '../../runs/entity/run.entity';
 import { TaskDao } from '../../tasks/dao/task.dao';
@@ -44,6 +45,7 @@ describe('ProjectQueueService (in-memory sqlite)', () => {
     folder = mkdtempSync(join(tmpdir(), 'geniro-queue-'));
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Project, Task, Run],
         ignoreUndefinedInQuery: true,

@@ -6,6 +6,7 @@ import {
 import { BadRequestException, NotFoundException } from '@packages/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { GoalDao } from '../../agents/dao/goal.dao';
 import { RunDao } from '../../agents/dao/run.dao';
 import { AgentAdapterRegistry } from '../../agents/services/agent-adapter.registry';
@@ -104,6 +105,7 @@ describe('StatsService — what the threads did (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [
           UsageActivity,

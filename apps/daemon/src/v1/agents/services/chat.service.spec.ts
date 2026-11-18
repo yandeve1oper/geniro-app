@@ -38,6 +38,7 @@ import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
 import { AgentKind } from '../../runs/runs.types';
 import { fakeSpawn } from '../__tests__/fake-child';
+import { fakeEntityManager } from '../__tests__/fake-entity-manager';
 import { FakeWallTurnDao } from '../__tests__/fake-wall-turn-dao';
 import { NO_CALL_INDEX } from '../__tests__/no-call-index';
 import { NO_COMMANDS } from '../__tests__/no-commands';
@@ -172,6 +173,7 @@ import { TeamProposalBroker } from './team-proposal.broker';
 import { ThreadInboxService } from './thread-inbox.service';
 import { UserQuestionBroker } from './user-question.broker';
 import { WallWorkService } from './wall-work.service';
+import type { WriteFailureNotices } from './write-failure.notices';
 
 const MEMORY_OFF: Pick<MemoryService, 'runSnapshot' | 'countIndexShows'> = {
   runSnapshot: async () => ({
@@ -1213,6 +1215,8 @@ function setup(
     browser?: BrowserBroker;
     /** Where a wake the chat raises outside its turn is published. */
     hostWakes?: HostWakeBus;
+    /** Where the chat reports the rows it could not write, when a test watches. */
+    writeFailures?: WriteFailureNotices;
     /** What the shared memory hands a new run; memory off when absent. */
     memory?: Pick<MemoryService, 'runSnapshot' | 'countIndexShows'>;
     knowledge?: Pick<KnowledgeService, 'runSnapshot'>;
@@ -1270,9 +1274,7 @@ function setup(
   };
   const claude = fakeAdapter('claude', claudeProbe, opts.resolutions);
   const cursor = fakeAdapter('cursor-agent');
-  const em = {
-    fork: () => ({ clear: () => undefined }),
-  } as unknown as EntityManager;
+  const em = fakeEntityManager();
   const skillHarvest = {
     record: vi.fn(),
     get: () => null,
@@ -1527,6 +1529,7 @@ function setup(
       ? undefined
       : new CommandEndWakeService(opts.hostWakes),
     commandCenters,
+    opts.writeFailures,
   );
   // Nest calls this for us in production; a hand-built service gets it here so
   // every spec runs against the same wiring rather than a subset of it.
@@ -6975,6 +6978,27 @@ describe('ChatService', () => {
     expect(
       statuses.filter((event) => event.status === null),
     ).not.toContainEqual(expect.objectContaining({ workedMs: 5_000 }));
+  });
+
+  it('reports a row the database refused to the thread’s write-failure notices', async () => {
+    const note = vi.fn();
+    const { service, claude, itemDao } = setup({
+      writeFailures: { note } as unknown as WriteFailureNotices,
+    });
+    const refused = new Error(
+      'Expression tree is too large (maximum depth 1000)',
+    );
+    const create = itemDao.create.bind(itemDao);
+    itemDao.create = (data) =>
+      data.kind === 'tool_call' ? Promise.reject(refused) : create(data);
+    const run = await service.createChat({ agentKind: 'claude', cwd: dir });
+    await service.sendMessage(run.id, 'one');
+
+    claude.emit({ type: 'tool_call', id: 't1', name: 'Bash', input: {} });
+    claude.finish();
+    await drain();
+
+    expect(note).toHaveBeenCalledWith(run.id, refused);
   });
 
   describe('the wall-clock ledger of a chat turn its CLI did not time', () => {

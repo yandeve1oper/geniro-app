@@ -8,7 +8,7 @@ import { APP_MIGRATIONS_TABLES } from '../v1/migrations/migrations.types';
 import { CHAT_TEXT_TABLES } from './chat-text-index.ddl';
 import { KNOWLEDGE_TEXT_TABLES } from './knowledge-text-index.ddl';
 import { MEMORY_TEXT_TABLES } from './memory-text-index.ddl';
-import { NulSafeSqliteDriver } from './nul-safe-sqlite.driver';
+import { GENIRO_ORM_RUNTIME } from './sqlite.driver';
 
 const { dbPath } = environment;
 
@@ -19,10 +19,8 @@ const { dbPath } = environment;
  * `dbName` file path.
  */
 export default defineConfig({
+  ...GENIRO_ORM_RUNTIME,
   dbName: dbPath,
-  // The stock driver cannot write a value containing a NUL byte — see the
-  // platform's own doc block for the measurement.
-  driver: NulSafeSqliteDriver,
   entities: [join(__dirname, '..', '**', '*.entity.js')],
   entitiesTs: [join(__dirname, '..', '**', '*.entity.ts')],
   // Spread optional DTO fields into FilterQuery without unwanted IS NULL.

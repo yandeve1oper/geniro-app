@@ -12,6 +12,7 @@ import {
 import { CHAT_TEXT_TABLES } from '../db/chat-text-index.ddl';
 import { KNOWLEDGE_TEXT_TABLES } from '../db/knowledge-text-index.ddl';
 import { MEMORY_TEXT_TABLES } from '../db/memory-text-index.ddl';
+import { GENIRO_ORM_RUNTIME } from '../db/sqlite.driver';
 import type { Migration } from '../v1/migrations/migrations.types';
 import { APP_MIGRATIONS_TABLES } from '../v1/migrations/migrations.types';
 import { MigrationRunnerService } from '../v1/migrations/services/migration-runner.service';
@@ -57,6 +58,7 @@ export async function openDatabase(
 ): Promise<MikroORM> {
   return MikroORM.init(
     defineConfig({
+      ...GENIRO_ORM_RUNTIME,
       dbName,
       namingStrategy: UnderscoreNamingStrategy,
       allowGlobalContext: true,

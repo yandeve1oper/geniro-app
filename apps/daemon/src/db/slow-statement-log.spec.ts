@@ -11,12 +11,12 @@ import type { ChatTextDatabase } from '../v1/agents/chat.types';
 import { Item } from '../v1/runs/entity/item.entity';
 import { NodeState } from '../v1/runs/entity/node-state.entity';
 import { Run } from '../v1/runs/entity/run.entity';
-import { NulSafeSqliteDriver } from './nul-safe-sqlite.driver';
 import {
   SLOW_STATEMENT_MS,
   timedDriver,
   valueFreeSql,
 } from './slow-statement-log';
+import { GENIRO_ORM_RUNTIME } from './sqlite.driver';
 
 describe('valueFreeSql', () => {
   it('takes every string and number literal out of a statement MikroORM pasted values into', () => {
@@ -101,8 +101,8 @@ describe('TimedSqliteConnection under the daemon’s driver', () => {
   it('times a statement built on getKysely(), which never reaches the ORM’s own logger', async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
-        driver: NulSafeSqliteDriver,
         entities: [Run, Item, NodeState],
         allowGlobalContext: true,
         namingStrategy: UnderscoreNamingStrategy,

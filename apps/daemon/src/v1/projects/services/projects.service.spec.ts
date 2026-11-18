@@ -19,6 +19,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { RunDao } from '../../agents/dao/run.dao';
 import { RunGroupDao } from '../../agents/dao/run-group.dao';
 import { Run } from '../../runs/entity/run.entity';
@@ -84,6 +85,7 @@ describe('ProjectsService (in-memory sqlite)', () => {
     otherFolder = mkdtempSync(join(tmpdir(), 'geniro-project-'));
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [
           Project,

@@ -19,6 +19,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../../db/sqlite.driver';
 import {
   HOST_PROJECT_INSTRUCTIONS_TOOL,
   type HostProjectInstructions,
@@ -111,6 +112,7 @@ describe('save_project_instructions (in-memory sqlite)', () => {
     folder = mkdtempSync(join(tmpdir(), 'geniro-project-'));
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [
           Project,

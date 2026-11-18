@@ -7,6 +7,7 @@ import {
 } from '@mikro-orm/sqlite';
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Item } from '../../runs/entity/item.entity';
 import { Run } from '../../runs/entity/run.entity';
 import { ThreadMessage } from '../../runs/entity/thread-message.entity';
@@ -18,6 +19,7 @@ import { CommandCenterRosterEntry } from '../entity/command-center-roster.entity
 export async function commandCenterDb() {
   const orm = await MikroORM.init(
     defineConfig({
+      ...GENIRO_ORM_RUNTIME,
       dbName: ':memory:',
       entities: [
         Run,

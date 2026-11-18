@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { freshVocabularyStore } from '../../agents/adapters/__tests__/fresh-vocabulary-store';
 import { ClaudeAdapter } from '../../agents/adapters/claude/claude.adapter';
 import { CodexAdapter } from '../../agents/adapters/codex/codex.adapter';
@@ -45,6 +46,7 @@ describe('StatsService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         // `Run` rides along so a spec can put a priced run row BESIDE the
         // ledger and prove the service reads only the ledger's copy of it.
@@ -972,6 +974,7 @@ describe('StatsService — tools and MCP servers in a period', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [
           UsageActivity,

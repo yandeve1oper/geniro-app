@@ -312,6 +312,7 @@ import { TeamProposalBroker } from './team-proposal.broker';
 import { ThreadInboxService } from './thread-inbox.service';
 import { UserQuestionBroker } from './user-question.broker';
 import { WallWorkService } from './wall-work.service';
+import { WriteFailureNotices } from './write-failure.notices';
 
 const COMPACTING_ACTIVITY = 'compacting the conversation';
 
@@ -940,6 +941,8 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
     @Optional() private readonly commandEndWakes?: CommandEndWakeService,
     /** The command center's manager turns, installed per turn. Optional for the positional specs. */
     @Optional() private readonly commandCenters?: CommandCenterBroker,
+    /** Tells the thread when its events were not saved. Optional for the positional specs. */
+    @Optional() private readonly writeFailures?: WriteFailureNotices,
   ) {}
 
   /**
@@ -6688,6 +6691,7 @@ export class ChatService implements OnModuleInit, BeforeApplicationShutdown {
       const enqueue = (work: () => Promise<void>): void => {
         chain = chain.then(work).catch((err: unknown) => {
           eventHandlingFailed = true;
+          this.writeFailures?.note(runId, err);
           this.logger.error(
             `run ${runId} event handling failed: ${err instanceof Error ? err.message : String(err)}`,
           );

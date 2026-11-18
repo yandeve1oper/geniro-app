@@ -14,6 +14,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { NO_CALL_INDEX } from '../../agents/__tests__/no-call-index';
 import { NO_COMMANDS } from '../../agents/__tests__/no-commands';
 import { NO_STOPS } from '../../agents/__tests__/no-stops';
@@ -67,6 +68,7 @@ describe('TeamActionsService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Run, Item, NodeState],
         ignoreUndefinedInQuery: true,

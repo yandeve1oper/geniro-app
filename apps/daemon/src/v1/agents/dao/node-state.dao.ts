@@ -463,6 +463,15 @@ export class NodeStateDao extends BaseDao<NodeState> {
    * real profile: a `dev-team` run whose QA member worked an hour on cursor was
    * priced at nothing.
    */
+  /** The runs with a member still `running`, each once. */
+  async runIdsWithRunningMembers(txEm?: EntityManager): Promise<string[]> {
+    const rows = await this.getRepo(txEm).find(
+      { status: 'running' },
+      { fields: ['runId'], disableIdentityMap: true },
+    );
+    return [...new Set(rows.map((row) => row.runId))];
+  }
+
   async runIdsForAgent(
     agentKind: AgentKind,
     txEm?: EntityManager,

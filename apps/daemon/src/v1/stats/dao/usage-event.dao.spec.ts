@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { UsageEvent } from '../entity/usage-event.entity';
 import { POLLED_SPEND_SEQ, type UsageEventInput } from '../stats.types';
 import { UsageEventDao } from './usage-event.dao';
@@ -24,6 +25,7 @@ describe('UsageEventDao (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [UsageEvent],
         ignoreUndefinedInQuery: true,

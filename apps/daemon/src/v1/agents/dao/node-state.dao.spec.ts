@@ -16,6 +16,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Item } from '../../runs/entity/item.entity';
 import { NodeState } from '../../runs/entity/node-state.entity';
 import { Run } from '../../runs/entity/run.entity';
@@ -35,6 +36,7 @@ describe('NodeStateDao (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Run, Item, NodeState],
         ignoreUndefinedInQuery: true,
@@ -53,6 +55,18 @@ describe('NodeStateDao (in-memory sqlite)', () => {
   beforeEach(async () => {
     await orm.schema.clear();
     dao = new NodeStateDao(orm.em.fork());
+  });
+
+  it('names each run with a member still running once', async () => {
+    await dao.setStatus('run-1', 'a', { status: 'running' });
+    await dao.setStatus('run-1', 'b', { status: 'running' });
+    await dao.setStatus('run-2', 'a', { status: 'completed' });
+    await dao.setStatus('run-3', 'a', { status: 'running' });
+
+    expect((await dao.runIdsWithRunningMembers()).sort()).toEqual([
+      'run-1',
+      'run-3',
+    ]);
   });
 
   it('stamps agentKind at the running transition and round-trips it', async () => {

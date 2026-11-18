@@ -178,6 +178,7 @@ import { ThreadTimelineService } from './services/thread-timeline.service';
 import { UnrecordedSpendStore } from './services/unrecorded-spend.store';
 import { UserQuestionBroker } from './services/user-question.broker';
 import { WallWorkService } from './services/wall-work.service';
+import { WriteFailureNotices } from './services/write-failure.notices';
 import { CHILD_JOURNAL_FILE_NAME } from './utils/child-journal';
 import { defaultSpawn } from './utils/spawn-cli';
 
@@ -314,6 +315,7 @@ import { defaultSpawn } from './utils/spawn-cli';
       inject: [HostWakeBus],
     },
     RunNoticeWriter,
+    WriteFailureNotices,
     RunLiveWork,
     ArtifactPageService,
     PlanBroker,
@@ -699,6 +701,7 @@ import { defaultSpawn } from './utils/spawn-cli';
     HostWakeBus,
     // For the team executor, which wakes a member whose command ended after its turn.
     CommandEndWakeService,
+    WriteFailureNotices,
     // For the team module, which reports its runs' blocked conversations.
     AgentActivityService,
     // For the task board, which keeps a card's worktree while its run works

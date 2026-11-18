@@ -18,6 +18,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { type RunWire } from '../../agents/chat.types';
 import { RunDao } from '../../agents/dao/run.dao';
 import { RunGroupDao } from '../../agents/dao/run-group.dao';
@@ -176,6 +177,7 @@ describe('TaskRunsService (in-memory sqlite)', () => {
     worktree = realpathSync(mkdtempSync(join(tmpdir(), 'geniro-task-run-')));
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Project, Task, Run, RunGroup],
         ignoreUndefinedInQuery: true,

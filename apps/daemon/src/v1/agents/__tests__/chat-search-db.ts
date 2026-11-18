@@ -5,6 +5,7 @@ import {
 } from '@mikro-orm/sqlite';
 
 import mikroOrmConfig from '../../../db/mikro-orm.config';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Item } from '../../runs/entity/item.entity';
 import { Run } from '../../runs/entity/run.entity';
 import { ChatSearchIndexDao } from '../dao/chat-search-index.dao';
@@ -26,6 +27,7 @@ export async function chatSearchDb(): Promise<{
 }> {
   const orm = await MikroORM.init(
     defineConfig({
+      ...GENIRO_ORM_RUNTIME,
       dbName: ':memory:',
       entities: [Run, Item],
       allowGlobalContext: true,

@@ -19,6 +19,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import type { AgentAdapterRegistry } from '../../agents/services/agent-adapter.registry';
 import { member, teamOf } from '../../teams/__tests__/team-builders';
 import { TeamChangeLogDao } from '../../teams/dao/team-change-log.dao';
@@ -58,6 +59,7 @@ describe('TeamVersionsService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [UsageActivity, UsageEvent, TeamVersion, TeamChangeLogEntry],
         ignoreUndefinedInQuery: true,

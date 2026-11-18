@@ -14,6 +14,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { clearSecrets, registerSecret } from '../../diagnostics/utils/redact';
 import { CallContext } from '../../runs/entity/call-context.entity';
 import { Item } from '../../runs/entity/item.entity';
@@ -142,6 +143,7 @@ describe('RunIdleReapService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Run, Item, NodeState, CallContext],
         ignoreUndefinedInQuery: true,

@@ -19,6 +19,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import type { HostWake, RunWire } from '../../agents/chat.types';
 import type { AgentEventBus } from '../../agents/services/agent-events.bus';
 import type { ArtifactPageService } from '../../agents/services/artifact-page.service';
@@ -130,6 +131,7 @@ describe('ShareService', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [ArtifactShare],
         allowGlobalContext: true,

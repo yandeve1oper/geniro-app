@@ -11,6 +11,7 @@ import {
 import type { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { Project } from '../../projects/entity/project.entity';
 import { MigrationRunnerService } from '../services/migration-runner.service';
 import { appMigrationsJournal } from './m0001-app-migrations-journal';
@@ -106,6 +107,7 @@ describe('0002-workflow-to-team-names', () => {
   beforeEach(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [Project],
         allowGlobalContext: true,

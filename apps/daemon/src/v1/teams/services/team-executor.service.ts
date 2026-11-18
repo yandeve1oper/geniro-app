@@ -114,6 +114,7 @@ import { TeamProposalBroker } from '../../agents/services/team-proposal.broker';
 import { ThreadInboxService } from '../../agents/services/thread-inbox.service';
 import { UserQuestionBroker } from '../../agents/services/user-question.broker';
 import { WallWorkService } from '../../agents/services/wall-work.service';
+import { WriteFailureNotices } from '../../agents/services/write-failure.notices';
 import { SPAN_ROW_KINDS } from '../../agents/utils/active-spans';
 import {
   type AgentOptionsSnapshot,
@@ -255,6 +256,7 @@ import { KnowledgeService } from '../../knowledge/services/knowledge.service';
 import { MemoryService } from '../../memory/services/memory.service';
 import { ProjectScopeService } from '../../projects/services/project-scope.service';
 import { placedFacts } from '../../projects/utils/placed-facts';
+import type { Item } from '../../runs/entity/item.entity';
 import {
   AgentKind,
   type ItemKind,
@@ -954,6 +956,8 @@ export class TeamExecutorService
     @Optional() private readonly commandEndWakes?: CommandEndWakeService,
     /** geniro's own `ask_user_question`, optional on `artifacts`' terms. */
     @Optional() private readonly userQuestions?: UserQuestionBroker,
+    /** Tells the thread when its events were not saved, optional on `artifacts`' terms. */
+    @Optional() private readonly writeFailures?: WriteFailureNotices,
   ) {
     this.parallelism = parallelism ?? MAX_PARALLEL_AGENTS;
   }
@@ -3483,52 +3487,10 @@ export class TeamExecutorService
             },
           );
         }
-        // The renderer reads a member's liveness and a call block's status off
-        // the TRANSCRIPT before node_state, so failing the member rows below
-        // alone left the card and the call block spinning under a failed run.
-        // Settle both where the renderer looks.
-        for (const turn of openNodeTurns(history)) {
-          await this.persist(em, run.id, turn.memberId, seq++, 'status', null, {
-            nodeId: turn.memberId,
-            status: 'failed',
-            ...(turn.callId !== null ? { callId: turn.callId } : {}),
-          });
-        }
-        for (const call of openCalls(history)) {
-          await this.persist(
-            em,
-            run.id,
-            call.callerMemberId,
-            seq++,
-            'call_result',
-            null,
-            {
-              callId: call.callId,
-              callerNodeId: call.callerMemberId,
-              calleeNodeId: call.calleeMemberId,
-              mode: call.mode,
-              status: 'error',
-              error: `CALLEE_FAILED: interrupted — ${interruptCauseClause(cause)} before the call finished`,
-            },
-          );
-        }
-        for (const node of await this.nodeStateDao.listByRun(run.id, em)) {
-          if (node.status === 'running') {
-            await this.nodeStateDao.setStatus(
-              run.id,
-              node.memberId,
-              { status: 'failed', endedAt: Date.now(), error: 'interrupted' },
-              em,
-            );
-          } else if (node.status === 'pending') {
-            await this.nodeStateDao.setStatus(
-              run.id,
-              node.memberId,
-              { status: 'skipped', endedAt: Date.now() },
-              em,
-            );
-          }
-        }
+        await this.closeOpenMemberWork(em, run.id, history, seq, {
+          member: 'interrupted',
+          call: `CALLEE_FAILED: interrupted — ${interruptCauseClause(cause)} before the call finished`,
+        });
         await this.setRunStatus(em, run.id, 'failed');
         reconciled += 1;
       }
@@ -3537,12 +3499,113 @@ export class TeamExecutorService
           `reconciled ${reconciled} orphaned team run(s) to failed on boot`,
         );
       }
+      await this.closeStrayMembers(em);
     } catch (err) {
       // Best-effort cleanup — never block daemon boot.
       this.logger.error(
         `boot reconcile of orphaned team runs failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
+
+  /**
+   * Settle the members of runs that already ended but still read as working:
+   * a member left `running`, its turn's `running` row with no ending, a call
+   * with no result. Only a lost write leaves that behind (the ending row or
+   * status the database refused), and at boot nothing of the run can still be
+   * live, so each is closed where the renderer reads it. The run keeps its own
+   * status: it did end.
+   */
+  private async closeStrayMembers(em: EntityManager): Promise<void> {
+    const runs = await this.runDao.listEndedTeamRuns(
+      await this.nodeStateDao.runIdsWithRunningMembers(em),
+      em,
+    );
+    for (const run of runs) {
+      if (this.registry.has(run.id)) {
+        continue;
+      }
+      const history = await this.itemDao.rowsOfKinds(
+        run.id,
+        [...OPEN_WORK_KINDS],
+        undefined,
+        em,
+      );
+      await this.closeOpenMemberWork(
+        em,
+        run.id,
+        history,
+        (await this.itemDao.maxSeq(run.id, em)) + 1,
+        {
+          member: 'its ending was not saved',
+          call: 'CALLEE_FAILED: the call ended, but its result was not saved',
+        },
+      );
+    }
+    if (runs.length > 0) {
+      this.logger.warn(
+        `settled the members of ${runs.length} ended team run(s) still shown as working`,
+      );
+    }
+  }
+
+  /**
+   * Close what a run's rows leave open — each member turn with no ending, each
+   * call with no result — and fail every member still `running`. The renderer
+   * reads a member's liveness and a call block's status off the TRANSCRIPT
+   * before node_state, so both are settled. Answers the next free seq.
+   */
+  private async closeOpenMemberWork(
+    em: EntityManager,
+    runId: string,
+    history: readonly Item[],
+    from: number,
+    reason: { member: string; call: string },
+  ): Promise<number> {
+    let seq = from;
+    for (const turn of openNodeTurns(history)) {
+      await this.persist(em, runId, turn.memberId, seq++, 'status', null, {
+        nodeId: turn.memberId,
+        status: 'failed',
+        ...(turn.callId !== null ? { callId: turn.callId } : {}),
+      });
+    }
+    for (const call of openCalls(history)) {
+      await this.persist(
+        em,
+        runId,
+        call.callerMemberId,
+        seq++,
+        'call_result',
+        null,
+        {
+          callId: call.callId,
+          callerNodeId: call.callerMemberId,
+          calleeNodeId: call.calleeMemberId,
+          mode: call.mode,
+          status: 'error',
+          error: reason.call,
+        },
+      );
+    }
+    for (const node of await this.nodeStateDao.listByRun(runId, em)) {
+      if (node.status === 'running') {
+        await this.nodeStateDao.setStatus(
+          runId,
+          node.memberId,
+          { status: 'failed', endedAt: Date.now(), error: reason.member },
+          em,
+        );
+      } else if (node.status === 'pending') {
+        await this.nodeStateDao.setStatus(
+          runId,
+          node.memberId,
+          { status: 'skipped', endedAt: Date.now() },
+          em,
+        );
+      }
+    }
+    return seq;
   }
 
   /**
@@ -4136,6 +4199,7 @@ export class TeamExecutorService
     const enqueue = (work: () => Promise<void> | void): void => {
       chain = chain.then(work).catch((err: unknown) => {
         persistenceFailed = true;
+        this.writeFailures?.note(runId, err);
         this.logger.error(
           `team run ${runId} event handling failed: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -4655,6 +4719,7 @@ export class TeamExecutorService
       } catch (err) {
         persistenceFailed = true;
         passPersistenceFailed = true;
+        this.writeFailures?.note(runId, err);
         this.logger.error(
           `team run ${runId} finalization failed: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -7466,6 +7531,7 @@ export class TeamExecutorService
             settled.set(node.id, outcome);
           } catch (err) {
             persistenceFailed = true;
+            this.writeFailures?.note(runId, err);
             settled.set(node.id, 'failed');
             const message = `member bookkeeping failed: ${err instanceof Error ? err.message : String(err)}`;
             await this.nodeStateDao
@@ -8452,6 +8518,7 @@ export class TeamExecutorService
             });
           } catch (err) {
             persistenceFailed = true;
+            this.writeFailures?.note(runId, err);
             this.logger.error(
               `team run ${runId} member ${node.id} follow-up bookkeeping failed: ${err instanceof Error ? err.message : String(err)}`,
             );

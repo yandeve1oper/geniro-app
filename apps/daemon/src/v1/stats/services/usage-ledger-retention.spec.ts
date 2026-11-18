@@ -14,6 +14,7 @@ import {
 } from 'vitest';
 
 import type { CallTokenRegistry } from '../../../auth/call-token.registry';
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { freshVocabularyStore } from '../../agents/adapters/__tests__/fresh-vocabulary-store';
 import { CursorAcpAdapter } from '../../agents/adapters/cursor-acp/cursor-acp.adapter';
 import { CallContextDao } from '../../agents/dao/call-context.dao';
@@ -77,6 +78,7 @@ describe('usage ledger retention across a run delete', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [
           Run,

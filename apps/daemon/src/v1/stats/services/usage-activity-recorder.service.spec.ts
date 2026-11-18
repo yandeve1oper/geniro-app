@@ -15,6 +15,7 @@ import {
   vi,
 } from 'vitest';
 
+import { GENIRO_ORM_RUNTIME } from '../../../db/sqlite.driver';
 import { AgentEventBus } from '../../agents/services/agent-events.bus';
 import { UsageActivityDao } from '../dao/usage-activity.dao';
 import { UsageActivity } from '../entity/usage-activity.entity';
@@ -33,6 +34,7 @@ describe('UsageActivityRecorderService (in-memory sqlite)', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(
       defineConfig({
+        ...GENIRO_ORM_RUNTIME,
         dbName: ':memory:',
         entities: [UsageActivity],
         ignoreUndefinedInQuery: true,

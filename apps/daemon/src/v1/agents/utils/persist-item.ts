@@ -75,7 +75,9 @@ export async function persistItemAndEmit(
         searchText: searchIndexText(row.payload),
         inCall,
       },
-      em,
+      // A fork of its own: the insert flushes this row alone, never another
+      // writer's pending change on the caller's manager.
+      em.fork(),
     );
   } finally {
     deps.seqs.settle(row.runId, row.seq);
